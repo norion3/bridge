@@ -36,13 +36,6 @@
     .hidden {
       display: none !important;
     }
-    @keyframes pulse-bounce {
-      0%, 100% { transform: scale(1); }
-      50% { transform: scale(1.06); }
-    }
-    .anim-pulse {
-      animation: pulse-bounce 1.4s infinite ease-in-out;
-    }
     .safe-padding {
       padding-top: env(safe-area-inset-top, 16px);
       padding-bottom: env(safe-area-inset-bottom, 16px);
@@ -59,69 +52,49 @@
   <!-- Virtual Touch Input Layer (全画面スワイプ操作) -->
   <div id="touch-control-layer"></div>
 
-  <!-- HUD Interface Overlay -->
-  <div class="relative z-20 pointer-events-none w-full h-full flex flex-col justify-between p-3 sm:p-5 safe-padding">
-    <div class="flex items-center justify-between w-full max-w-lg mx-auto bg-slate-900/85 backdrop-blur-md px-4 py-2.5 rounded-2xl border border-white/10 shadow-xl pointer-events-auto">
-      <!-- Score -->
-      <div class="flex items-center gap-2">
-        <div class="w-9 h-9 rounded-xl bg-blue-600 shadow-md shadow-blue-500/40 flex items-center justify-center font-black text-lg">
-          🪜
-        </div>
-        <div>
-          <div class="text-[10px] font-semibold text-blue-300 uppercase tracking-wider">段数</div>
-          <div id="hud-score" class="text-lg sm:text-xl font-black text-white leading-none">0</div>
-        </div>
-      </div>
-
-      <!-- Timer Display -->
-      <div class="flex-1 text-center mx-3 flex items-center justify-center">
-        <div>
-          <div class="text-[10px] font-bold text-cyan-300 uppercase tracking-wider">⏱ タイムアタック</div>
-          <div id="hud-timer" class="text-2xl sm:text-3xl font-black text-amber-400 font-mono tracking-wider leading-none">02:00</div>
-        </div>
-      </div>
-
-      <!-- Stack Count -->
-      <div class="flex items-center gap-2 text-right flex-row-reverse">
-        <div class="w-9 h-9 rounded-xl bg-slate-700 shadow-inner flex items-center justify-center font-black text-lg">
-          🧱
-        </div>
-        <div>
-          <div class="text-[10px] font-semibold text-slate-300 uppercase tracking-wider">所持</div>
-          <div id="hud-stack-count" class="text-base sm:text-lg font-black text-white leading-none">0</div>
-        </div>
-      </div>
+  <!-- HUD Interface Overlay (完全オープン視界・数字＋単位直結) -->
+  <div class="fixed top-0 inset-x-0 z-20 pointer-events-none p-4 sm:p-6 safe-padding flex justify-between items-start">
+    <!-- スコア (特大ゴールド数字 + 段) -->
+    <div class="flex items-baseline drop-shadow-[0_2px_10px_rgba(0,0,0,0.85)] select-none">
+      <span id="hud-score" class="text-3xl sm:text-4xl font-black text-amber-300 font-mono tracking-tight leading-none">0</span>
+      <span class="text-sm sm:text-base font-black text-amber-200 ml-1">段</span>
     </div>
 
-    <!-- Bottom Right Floating Controls (SVG Sound Button) -->
-    <div class="flex justify-end items-end w-full pointer-events-none">
-      <button id="btn-sound" type="button" aria-label="Toggle Sound" class="pointer-events-auto w-11 h-11 rounded-full bg-slate-900/80 backdrop-blur-md border border-white/15 flex items-center justify-center shadow-lg hover:bg-slate-800 active:scale-90 transition cursor-pointer">
-        <!-- Muted Speaker Icon (Default) -->
-        <svg id="icon-sound-off" class="w-5 h-5 text-slate-400 fill-current" viewBox="0 0 24 24">
-          <path d="M3.63 3.63a.996.996 0 000 1.41L7.29 8.7 7 9H4c-.55 0-1 .45-1 1v4c0 .55.45 1 1 1h3l3.29 3.29c.63.63 1.71.18 1.71-.71v-4.17l4.18 4.18c-.49.37-1.02.68-1.6.91-.36.15-.58.53-.58.92 0 .69.67 1.2 1.33.97.8-.29 1.53-.72 2.18-1.25l1.39 1.39a.996.996 0 101.41-1.41L5.05 3.63a.996.996 0 00-1.42 0zM19 12c0 .82-.15 1.61-.41 2.34l1.53 1.53c.56-1.17.88-2.48.88-3.87 0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zm-7-8l-1.88 1.88L12 7.76zm4.5 8A4.5 4.5 0 0014 7.97v1.79l2.48 2.48c.01-.08.02-.16.02-.24z"/>
-        </svg>
-        <!-- Unmuted Speaker Icon -->
-        <svg id="icon-sound-on" class="w-5 h-5 text-cyan-400 fill-current hidden" viewBox="0 0 24 24">
-          <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
-        </svg>
-      </button>
+    <!-- タイマー (中央上・控えめデジタル数字のみ：5分) -->
+    <div class="flex items-center drop-shadow-[0_2px_8px_rgba(0,0,0,0.85)] select-none pt-0.5">
+      <span id="hud-timer" class="text-base sm:text-lg font-bold text-white/90 font-mono tracking-widest leading-none">05:00</span>
     </div>
+
+    <!-- 所持数 (手持ちリソース・白数字 + 個) -->
+    <div class="flex items-baseline drop-shadow-[0_2px_10px_rgba(0,0,0,0.85)] select-none">
+      <span id="hud-stack-count" class="text-2xl sm:text-3xl font-black text-white font-mono tracking-tight leading-none">0</span>
+      <span class="text-sm sm:text-base font-black text-slate-200 ml-1">個</span>
+    </div>
+  </div>
+
+  <!-- Floating Sound Button -->
+  <div class="fixed bottom-0 right-0 z-20 p-4 sm:p-6 safe-padding pointer-events-none flex justify-end items-end">
+    <button id="btn-sound" type="button" aria-label="Toggle Sound" class="pointer-events-auto w-11 h-11 rounded-full bg-slate-900/80 backdrop-blur-md border border-white/15 flex items-center justify-center shadow-lg hover:bg-slate-800 active:scale-90 transition cursor-pointer">
+      <svg id="icon-sound-off" class="w-5 h-5 text-slate-400 fill-current" viewBox="0 0 24 24">
+        <path d="M3.63 3.63a.996.996 0 000 1.41L7.29 8.7 7 9H4c-.55 0-1 .45-1 1v4c0 .55.45 1 1 1h3l3.29 3.29c.63.63 1.71.18 1.71-.71v-4.17l4.18 4.18c-.49.37-1.02.68-1.6.91-.36.15-.58.53-.58.92 0 .69.67 1.2 1.33.97.8-.29 1.53-.72 2.18-1.25l1.39 1.39a.996.996 0 101.41-1.41L5.05 3.63a.996.996 0 00-1.42 0zM19 12c0 .82-.15 1.61-.41 2.34l1.53 1.53c.56-1.17.88-2.48.88-3.87 0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zm-7-8l-1.88 1.88L12 7.76zm4.5 8A4.5 4.5 0 0014 7.97v1.79l2.48 2.48c.01-.08.02-.16.02-.24z"/>
+      </svg>
+      <svg id="icon-sound-on" class="w-5 h-5 text-cyan-400 fill-current hidden" viewBox="0 0 24 24">
+        <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
+      </svg>
+    </button>
   </div>
 
   <!-- Start Screen Modal -->
   <div id="modal-start" class="fixed inset-0 z-50 bg-slate-950/40 backdrop-blur-sm flex items-center justify-center p-4">
     <div class="bg-slate-950/80 backdrop-blur-md border border-cyan-400/25 p-7 sm:p-8 rounded-[28px] max-w-xs sm:max-w-sm w-full text-center shadow-[0_15px_40px_rgba(0,0,0,0.5)] pointer-events-auto">
-      
       <h2 class="text-2xl sm:text-3xl font-black text-cyan-400 tracking-wider mb-4">
         階段を架けろ！
       </h2>
-
       <div class="space-y-2 text-slate-200 text-xs sm:text-sm font-medium leading-relaxed mb-6">
         <p>画面をなぞってブロックを集める</p>
         <p>青いブロックで階段を架けて登る</p>
-        <p class="text-cyan-200/80 text-[11px] sm:text-xs">ゲートをくぐるとブロックが増加</p>
+        <p class="text-cyan-200/80 text-[11px] sm:text-xs">スライダー＆ジップラインで爽快立体レース！</p>
       </div>
-
       <button id="btn-start" type="button" class="w-full py-3.5 rounded-full border-2 border-cyan-400/80 bg-cyan-950/30 hover:bg-cyan-900/50 active:scale-95 text-cyan-300 font-extrabold text-sm sm:text-base tracking-[0.2em] shadow-[0_0_20px_rgba(6,182,212,0.3)] transition duration-200 cursor-pointer">
         TAP TO START
       </button>
@@ -148,6 +121,7 @@
         this.ctx = null;
         this.muted = true;
         this.lastSlideSound = 0;
+        this.lastZipSound = 0;
       }
       init() {
         if (!this.ctx) {
@@ -197,6 +171,35 @@
           });
         } catch(e) {}
       }
+      playItemGet() {
+        if (this.muted || !this.ctx) return;
+        try {
+          const now = this.ctx.currentTime;
+          const osc1 = this.ctx.createOscillator();
+          const gain1 = this.ctx.createGain();
+          osc1.type = 'triangle';
+          osc1.frequency.setValueAtTime(587.33, now);
+          osc1.frequency.exponentialRampToValueAtTime(1174.66, now + 0.12);
+          gain1.gain.setValueAtTime(0.28, now);
+          gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+          osc1.connect(gain1);
+          gain1.connect(this.ctx.destination);
+          osc1.start(now);
+          osc1.stop(now + 0.23);
+
+          const osc2 = this.ctx.createOscillator();
+          const gain2 = this.ctx.createGain();
+          osc2.type = 'sine';
+          osc2.frequency.setValueAtTime(880, now + 0.04);
+          osc2.frequency.exponentialRampToValueAtTime(1760, now + 0.2);
+          gain2.gain.setValueAtTime(0.32, now + 0.04);
+          gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
+          osc2.connect(gain2);
+          gain2.connect(this.ctx.destination);
+          osc2.start(now + 0.04);
+          osc2.stop(now + 0.29);
+        } catch(e) {}
+      }
       playBuildPlank() {
         if (this.muted || !this.ctx) return;
         try {
@@ -231,6 +234,55 @@
           gain.connect(this.ctx.destination);
           osc.start(now);
           osc.stop(now + 0.11);
+        } catch(e) {}
+      }
+      playZipline(speedProgress = 0.5) {
+        if (this.muted || !this.ctx) return;
+        const now = this.ctx.currentTime;
+        if (now - this.lastZipSound < 0.08) return;
+        this.lastZipSound = now;
+        try {
+          const osc = this.ctx.createOscillator();
+          const gain = this.ctx.createGain();
+          osc.type = 'sawtooth';
+          const baseFreq = 480 + speedProgress * 320 + Math.random() * 60;
+          osc.frequency.setValueAtTime(baseFreq, now);
+          osc.frequency.linearRampToValueAtTime(baseFreq + 120, now + 0.075);
+          gain.gain.setValueAtTime(0.08, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.075);
+          osc.connect(gain);
+          gain.connect(this.ctx.destination);
+          osc.start(now);
+          osc.stop(now + 0.08);
+        } catch(e) {}
+      }
+      playLanding() {
+        if (this.muted || !this.ctx) return;
+        try {
+          const now = this.ctx.currentTime;
+          const osc1 = this.ctx.createOscillator();
+          const gain1 = this.ctx.createGain();
+          osc1.type = 'triangle';
+          osc1.frequency.setValueAtTime(220, now);
+          osc1.frequency.exponentialRampToValueAtTime(75, now + 0.18);
+          gain1.gain.setValueAtTime(0.42, now);
+          gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+          osc1.connect(gain1);
+          gain1.connect(this.ctx.destination);
+          osc1.start(now);
+          osc1.stop(now + 0.19);
+
+          const osc2 = this.ctx.createOscillator();
+          const gain2 = this.ctx.createGain();
+          osc2.type = 'sine';
+          osc2.frequency.setValueAtTime(880, now + 0.02);
+          osc2.frequency.exponentialRampToValueAtTime(1320, now + 0.24);
+          gain2.gain.setValueAtTime(0.28, now + 0.02);
+          gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.24);
+          osc2.connect(gain2);
+          gain2.connect(this.ctx.destination);
+          osc2.start(now + 0.02);
+          osc2.stop(now + 0.25);
         } catch(e) {}
       }
       playJump() {
@@ -296,15 +348,23 @@
       NEUTRAL: { id: 'neutral', name: '中立', hex: 0x94a3b8, emissive: 0x475569 }
     };
     const BLOCK_TYPES = [TEAMS.BLUE, TEAMS.RED, TEAMS.YELLOW];
-
     const MAX_VISUAL_STACK = 20;
 
-    const blockGeometry = new THREE.BoxGeometry(0.95, 0.42, 0.6);
+    const blockGeometry = new THREE.BoxGeometry(0.95, 0.36, 0.60);
     const plankGeo = new THREE.BoxGeometry(3.6, 0.65, 1.6);
     const verticalPlankGeo = new THREE.BoxGeometry(3.6, 1.25, 1.8);
     const islandGeo = new THREE.CylinderGeometry(1, 1, 0.5, 36);
 
-    // 海面ウェーブテクスチャのプロシージャル生成（テクスチャロード待ちゼロ）
+    // アイテム用ジオメトリ（大粒クリスタル＆床の誘導サークル）
+    const itemCrystalGeo = new THREE.OctahedronGeometry(0.68, 0);
+    const itemBeaconRingGeo = new THREE.RingGeometry(0.55, 0.95, 32);
+    itemBeaconRingGeo.rotateX(-Math.PI / 2);
+
+    // スピードUPエフェクト用ジオメトリ（足元ステップ波紋＆砂煙パフ）
+    const speedStepRingGeo = new THREE.RingGeometry(0.35, 0.68, 24);
+    speedStepRingGeo.rotateX(-Math.PI / 2);
+    const puffCloudGeo = new THREE.SphereGeometry(0.24, 8, 8);
+
     function createSeaTexture() {
       const cvs = document.createElement('canvas');
       cvs.width = 512; cvs.height = 512;
@@ -312,9 +372,8 @@
       ctx.fillStyle = '#0284c7';
       ctx.fillRect(0, 0, 512, 512);
 
-      // コースティクス・淡い波紋模様の格子
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
-      ctx.lineWidth = 4;
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.16)';
+      ctx.lineWidth = 3.5;
       for (let x = 0; x < 512; x += 64) {
         ctx.beginPath();
         for (let y = 0; y <= 512; y += 32) {
@@ -354,7 +413,6 @@
         roughness: 0.1,
         metalness: 0.05
       }),
-      // 海面のローポリ小島用マテリアル
       oceanSand: new THREE.MeshStandardMaterial({ color: 0xfef08a, roughness: 0.85 }),
       oceanGrass: new THREE.MeshStandardMaterial({ color: 0x22c55e, roughness: 0.6 }),
       oceanRock: new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.75 }),
@@ -362,29 +420,130 @@
       oceanPalmLeaf: new THREE.MeshStandardMaterial({ color: 0x15803d, roughness: 0.5 }),
 
       neutralPlank: new THREE.MeshStandardMaterial({ color: 0xd1d5db, roughness: 0.7, transparent: true, opacity: 0.45 }),
-      slideSurface: new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.08, metalness: 0.15, emissive: 0x0284c7, emissiveIntensity: 0.2 }),
+      slideSurface: new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.08, metalness: 0.15, emissive: 0x0284c7, emissiveIntensity: 0.2, side: THREE.DoubleSide }),
       slideRail: new THREE.MeshStandardMaterial({ color: 0xf97316, roughness: 0.3 }),
       gateFrame: new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.2 }),
       bluePlank: new THREE.MeshStandardMaterial({ color: TEAMS.BLUE.hex, emissive: TEAMS.BLUE.emissive, emissiveIntensity: 0.15, roughness: 0.3 }),
       redPlank: new THREE.MeshStandardMaterial({ color: TEAMS.RED.hex, emissive: TEAMS.RED.emissive, emissiveIntensity: 0.15, roughness: 0.3 }),
       yellowPlank: new THREE.MeshStandardMaterial({ color: TEAMS.YELLOW.hex, emissive: TEAMS.YELLOW.emissive, emissiveIntensity: 0.15, roughness: 0.3 }),
-      blockBlue: new THREE.MeshStandardMaterial({ color: TEAMS.BLUE.hex, emissive: TEAMS.BLUE.emissive, emissiveIntensity: 0.2, roughness: 0.35 }),
+      
+      blockBlue: new THREE.MeshStandardMaterial({ color: 0x2563eb, emissive: 0x1d4ed8, emissiveIntensity: 0.2, roughness: 0.35, metalness: 0.05 }),
       blockRed: new THREE.MeshStandardMaterial({ color: TEAMS.RED.hex, emissive: TEAMS.RED.emissive, emissiveIntensity: 0.2, roughness: 0.35 }),
       blockYellow: new THREE.MeshStandardMaterial({ color: TEAMS.YELLOW.hex, emissive: TEAMS.YELLOW.emissive, emissiveIntensity: 0.2, roughness: 0.35 }),
       blockNeutral: new THREE.MeshStandardMaterial({ color: TEAMS.NEUTRAL.hex, emissive: TEAMS.NEUTRAL.emissive, emissiveIntensity: 0.2, roughness: 0.35 }),
+
       charBlue: new THREE.MeshStandardMaterial({ color: TEAMS.BLUE.hex, roughness: 0.25, metalness: 0.05 }),
       charRed: new THREE.MeshStandardMaterial({ color: TEAMS.RED.hex, roughness: 0.25, metalness: 0.05 }),
-      charYellow: new THREE.MeshStandardMaterial({ color: TEAMS.YELLOW.hex, roughness: 0.25, metalness: 0.05 })
+      charYellow: new THREE.MeshStandardMaterial({ color: TEAMS.YELLOW.hex, roughness: 0.25, metalness: 0.05 }),
+
+      ziplinePylonPost: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.18, metalness: 0.05 }),
+      ziplinePylonTrim: new THREE.MeshStandardMaterial({ color: 0xf97316, roughness: 0.25, metalness: 0.15 }),
+      ziplineCable: new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        emissive: 0xf1f5f9,
+        emissiveIntensity: 0.35,
+        roughness: 0.32,
+        metalness: 0.12
+      }),
+      ziplineTrolley: new THREE.MeshStandardMaterial({ color: 0xfacc15, roughness: 0.2, metalness: 0.5 }),
+
+      landingShockwave: new THREE.MeshBasicMaterial({
+        color: 0x38bdf8,
+        transparent: true,
+        opacity: 0.85,
+        side: THREE.DoubleSide
+      }),
+
+      // スピードUP大粒クリスタル＆床サークル用マテリアル
+      itemCrystal: new THREE.MeshStandardMaterial({
+        color: 0xfde047,
+        emissive: 0xeab308,
+        emissiveIntensity: 0.55,
+        roughness: 0.1,
+        metalness: 0.15
+      }),
+      itemBeaconRing: new THREE.MeshBasicMaterial({
+        color: 0xfacc15,
+        transparent: true,
+        opacity: 0.65,
+        side: THREE.DoubleSide
+      }),
+
+      // スピードUP用ゴールド波紋＆砂煙パフマテリアル
+      speedStepRing: new THREE.MeshBasicMaterial({
+        color: 0xfacc15,
+        transparent: true,
+        opacity: 0.75,
+        side: THREE.DoubleSide
+      }),
+      puffCloud: new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        roughness: 0.15,
+        transparent: true,
+        opacity: 0.88
+      })
     };
+
+    const playerStackMaterials = [];
+    for (let i = 0; i < MAX_VISUAL_STACK; i++) {
+      playerStackMaterials.push(new THREE.MeshStandardMaterial({
+        roughness: 0.3,
+        metalness: 0.1
+      }));
+    }
+
+    function updatePlayerStackMaterials(stackCount) {
+      const bColor = new THREE.Color();
+      const tColor = new THREE.Color();
+      const emColor = new THREE.Color();
+      let emIntensity = 0.2;
+      let rough = 0.3;
+      let metal = 0.1;
+
+      if (stackCount < 30) {
+        bColor.setHex(0x2563eb);
+        tColor.setHex(0x60a5fa);
+        emColor.setHex(0x1d4ed8);
+        emIntensity = 0.15;
+        rough = 0.35;
+        metal = 0.05;
+      } else if (stackCount < 60) {
+        bColor.setHex(0x0284c7);
+        tColor.setHex(0x38bdf8);
+        emColor.setHex(0x0369a1);
+        emIntensity = 0.20;
+        rough = 0.25;
+        metal = 0.10;
+      } else {
+        bColor.setHex(0x0ea5e9);
+        tColor.setHex(0xa5f3fc);
+        emColor.setHex(0x38bdf8);
+        emIntensity = 0.25;
+        rough = 0.15;
+        metal = 0.15;
+      }
+
+      for (let i = 0; i < MAX_VISUAL_STACK; i++) {
+        const t = i / (MAX_VISUAL_STACK - 1);
+        const mat = playerStackMaterials[i];
+        mat.color.copy(bColor).lerp(tColor, t);
+        mat.emissive.copy(emColor);
+        mat.emissiveIntensity = emIntensity;
+        mat.roughness = rough;
+        mat.metalness = metal;
+      }
+    }
+    updatePlayerStackMaterials(0);
 
     let STAGES = [];
     let CONNECTIONS = [];
     let stageMeshes = [];
     let modifierGates = [];
     let cloudObjects = [];
-    let oceanIslands = []; // 海面のローポリ小島群
+    let oceanIslands = [];
+    let landingShockwaves = [];
     let seaMesh = null;
-    let timeLeft = 120;
+    let timeLeft = 300;
     const LANES = [-4.0, 0, 4.0];
     const PLANK_LENGTH = 1.6;
 
@@ -392,10 +551,17 @@
     let characters = [];
     let player = null;
     let floorBlocks = [];
+    let floorItems = [];
     let bridges = [];
     let isGameOver = false;
     let gameStarted = false;
     let placedPlankCount = 0;
+    
+    let curvedSlideBonusBlocks = [];
+    let ziplineBonusBlocks = [];
+    let puffClouds = [];
+    let speedStepRings = [];
+    let speedItemIslandCounter = 0; // スピードアイテム出現保証サイクル用カウンター
     
     const input = { x: 0, y: 0, active: false };
 
@@ -545,6 +711,134 @@
       return { group, net, ring };
     }
 
+    function createZiplinePylonMesh(x, y, z, topAnchorY, isDeparture = true) {
+      const group = new THREE.Group();
+      const pylonH = topAnchorY - y;
+
+      const postRadius = 0.18;
+      const legGeo = new THREE.CylinderGeometry(postRadius, postRadius, pylonH, 16);
+
+      const leftLeg = new THREE.Mesh(legGeo, sharedMats.ziplinePylonPost);
+      leftLeg.position.set(-1.35, pylonH / 2, 0);
+      leftLeg.castShadow = true;
+      group.add(leftLeg);
+
+      const rightLeg = new THREE.Mesh(legGeo, sharedMats.ziplinePylonPost);
+      rightLeg.position.set(1.35, pylonH / 2, 0);
+      rightLeg.castShadow = true;
+      group.add(rightLeg);
+
+      const baseGeo = new THREE.CylinderGeometry(0.32, 0.36, 0.45, 16);
+      const bLeft = new THREE.Mesh(baseGeo, sharedMats.ziplinePylonTrim);
+      bLeft.position.set(-1.35, 0.22, 0);
+      group.add(bLeft);
+      const bRight = bLeft.clone();
+      bRight.position.x = 1.35;
+      group.add(bRight);
+
+      const topBarGeo = new THREE.CylinderGeometry(0.18, 0.18, 3.2, 16);
+      topBarGeo.rotateZ(Math.PI / 2);
+      const topBar = new THREE.Mesh(topBarGeo, sharedMats.ziplinePylonTrim);
+      topBar.position.set(0, pylonH - 0.08, 0);
+      topBar.castShadow = true;
+      group.add(topBar);
+
+      const midBarGeo = new THREE.CylinderGeometry(0.10, 0.10, 2.7, 12);
+      midBarGeo.rotateZ(Math.PI / 2);
+      const midBar = new THREE.Mesh(midBarGeo, sharedMats.ziplinePylonPost);
+      midBar.position.set(0, pylonH * 0.42, 0);
+      group.add(midBar);
+
+      const pulleyBoxGeo = new THREE.BoxGeometry(0.60, 0.45, 0.60);
+      const pulleyBox = new THREE.Mesh(pulleyBoxGeo, sharedMats.ziplineTrolley);
+      pulleyBox.position.set(0, pylonH - 0.15, 0);
+      pulleyBox.castShadow = true;
+      group.add(pulleyBox);
+
+      const ringDecoGeo = new THREE.TorusGeometry(0.24, 0.06, 12, 24);
+      const ringDeco = new THREE.Mesh(ringDecoGeo, sharedMats.ziplinePylonTrim);
+      ringDeco.position.set(0, pylonH - 0.15, 0.32);
+      group.add(ringDeco);
+
+      group.position.set(x, y, z);
+      return group;
+    }
+
+    function createZiplineTrolleyMesh() {
+      const group = new THREE.Group();
+
+      const wheelGeo = new THREE.CylinderGeometry(0.16, 0.16, 0.10, 12);
+      wheelGeo.rotateZ(Math.PI / 2);
+      const w1 = new THREE.Mesh(wheelGeo, sharedMats.ziplineTrolley);
+      w1.position.set(0, 0.12, -0.22);
+      group.add(w1);
+      const w2 = w1.clone();
+      w2.position.z = 0.22;
+      group.add(w2);
+
+      const houseMesh = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.16, 0.70), sharedMats.ziplinePylonTrim);
+      houseMesh.position.set(0, 0.16, 0);
+      group.add(houseMesh);
+
+      const rodGeo = new THREE.CylinderGeometry(0.05, 0.05, 0.95, 8);
+      const rod = new THREE.Mesh(rodGeo, sharedMats.gateFrame);
+      rod.position.set(0, -0.45, 0);
+      group.add(rod);
+
+      const handleGeo = new THREE.CylinderGeometry(0.06, 0.06, 1.25, 8);
+      handleGeo.rotateZ(Math.PI / 2);
+      const handle = new THREE.Mesh(handleGeo, sharedMats.ziplineTrolley);
+      handle.position.set(0, -0.92, 0);
+      group.add(handle);
+
+      return group;
+    }
+
+    function triggerLandingShockwave(x, y, z) {
+      const ringGeo = new THREE.RingGeometry(0.3, 0.65, 32);
+      ringGeo.rotateX(-Math.PI / 2);
+      const ringMat = sharedMats.landingShockwave.clone();
+      const mesh = new THREE.Mesh(ringGeo, ringMat);
+      mesh.position.set(x, y + 0.08, z);
+      scene.add(mesh);
+
+      landingShockwaves.push({
+        mesh: mesh,
+        scale: 1.0,
+        opacity: 0.9,
+        life: 0
+      });
+    }
+
+    function spawnPuffCloud(x, y, z) {
+      const puffMesh = new THREE.Mesh(puffCloudGeo, sharedMats.puffCloud);
+      puffMesh.position.set(x + (Math.random() - 0.5) * 0.35, y + 0.12, z + (Math.random() - 0.5) * 0.2);
+      const baseScale = 0.8 + Math.random() * 0.4;
+      puffMesh.scale.set(baseScale, baseScale, baseScale);
+      scene.add(puffMesh);
+
+      puffClouds.push({
+        mesh: puffMesh,
+        life: 0,
+        maxLife: 0.34,
+        initScale: baseScale
+      });
+    }
+
+    // スピードUP中：足元に外側へ広がるゴールドステップ波紋を放出
+    function spawnSpeedStepRing(x, y, z) {
+      const ringMesh = new THREE.Mesh(speedStepRingGeo, sharedMats.speedStepRing.clone());
+      ringMesh.position.set(x, y + 0.05, z);
+      scene.add(ringMesh);
+
+      speedStepRings.push({
+        mesh: ringMesh,
+        scale: 0.6,
+        life: 0,
+        maxLife: 0.35
+      });
+    }
+
     function createCharacterMesh(team) {
       const root = new THREE.Group();
       let mat;
@@ -584,14 +878,32 @@
       rightArm.castShadow = true;
       root.add(rightArm);
 
+      // 足元のゴールド・パルスリング（接地光輪オーラ：身体の棒突起を完全撤去し足元へ配置）
+      const footAuraGeo = new THREE.RingGeometry(0.38, 0.64, 24);
+      footAuraGeo.rotateX(-Math.PI / 2);
+      const footAuraMat = new THREE.MeshBasicMaterial({
+        color: 0xfacc15,
+        transparent: true,
+        opacity: 0.65,
+        side: THREE.DoubleSide
+      });
+      const footAura = new THREE.Mesh(footAuraGeo, footAuraMat);
+      footAura.position.y = 0.05;
+      footAura.visible = false;
+      root.add(footAura);
+
       const stackGroup = new THREE.Group();
       stackGroup.position.set(0, 0.65, -0.42);
       root.add(stackGroup);
 
-      return { root, body, head, leftLeg, rightLeg, leftArm, rightArm, stackGroup };
+      const trolleyGroup = createZiplineTrolleyMesh();
+      trolleyGroup.position.set(0, 2.35, 0);
+      trolleyGroup.visible = false;
+      root.add(trolleyGroup);
+
+      return { root, body, head, leftLeg, rightLeg, leftArm, rightArm, stackGroup, trolleyGroup, footAura };
     }
 
-    // 視認性を邪魔しないローポリ雲の生成
     function createCloudMesh() {
       const cloud = new THREE.Group();
       const p1 = new THREE.Mesh(new THREE.SphereGeometry(1.8, 12, 12), sharedMats.cloud);
@@ -611,28 +923,24 @@
       return cloud;
     }
 
-    // 【提案①：高度の物差し】海面に浮かぶローポリ小島（砂浜＋緑＋ヤシの木／岩礁）
     function createOceanIsletMesh(scale = 1.0, type = 'tropical') {
       const group = new THREE.Group();
 
-      // 砂浜ベース
       const sandR = (4.0 + Math.random() * 2.0) * scale;
       const sandGeo = new THREE.CylinderGeometry(sandR * 0.9, sandR, 0.8, 14);
       const sandMesh = new THREE.Mesh(sandGeo, sharedMats.oceanSand);
       sandMesh.position.y = 0.35;
-      sandMesh.receiveShadow = true;
+      sandMesh.receiveShadow = false;
       group.add(sandMesh);
 
-      // 中央の緑の小山
       const grassR = sandR * 0.62;
       const grassGeo = new THREE.CylinderGeometry(grassR * 0.8, grassR, 0.55, 12);
       const grassMesh = new THREE.Mesh(grassGeo, sharedMats.oceanGrass);
       grassMesh.position.y = 0.85;
-      grassMesh.receiveShadow = true;
+      grassMesh.receiveShadow = false;
       group.add(grassMesh);
 
       if (type === 'tropical') {
-        // ヤシの木
         const trunkH = (3.2 + Math.random() * 1.5) * scale;
         const trunkGeo = new THREE.CylinderGeometry(0.18 * scale, 0.28 * scale, trunkH, 6);
         const trunk = new THREE.Mesh(trunkGeo, sharedMats.oceanPalmTrunk);
@@ -640,7 +948,6 @@
         trunk.rotation.z = 0.12;
         group.add(trunk);
 
-        // ヤシの葉
         const topY = 1.0 + trunkH;
         for (let a = 0; a < 5; a++) {
           const leafAng = (a * Math.PI * 2) / 5;
@@ -656,7 +963,6 @@
           group.add(leaf);
         }
       } else {
-        // 岩礁・丸岩
         const rockGeo = new THREE.DodecahedronGeometry(1.3 * scale, 0);
         const rock = new THREE.Mesh(rockGeo, sharedMats.oceanRock);
         rock.position.set(0.2 * scale, 1.2 * scale, 0.2 * scale);
@@ -685,7 +991,6 @@
       border.position.set(0, y, z);
       group.add(border);
 
-      // 垂直係留ワイヤー（パースペクティブ強化）
       const wireHeight = Math.max(12, y - (-45));
       const wireGeo = new THREE.CylinderGeometry(0.08, 0.08, wireHeight, 6);
       const wireOffsets = [
@@ -702,6 +1007,69 @@
       return group;
     }
 
+    // アイテム（大粒クリスタル＆床サークル）のスポーン関数
+    function spawnItem(stageIdx, type = 'speed') {
+      const stageInfo = STAGES[stageIdx];
+      if (!stageInfo) return;
+
+      const minClearanceSq = 1.6 * 1.6;
+      let validPos = null;
+      let attempts = 0;
+      while (attempts < 20) {
+        const r = Math.sqrt(Math.random()) * (stageInfo.r - 2.8);
+        const theta = Math.random() * Math.PI * 2;
+        const candX = Math.cos(theta) * r;
+        const candZ = stageInfo.z + Math.sin(theta) * r;
+
+        let isOverlapping = false;
+        for (let i = 0; i < floorBlocks.length; i++) {
+          const b = floorBlocks[i];
+          if (b.active && b.stageIdx === stageIdx) {
+            const dx = b.pos.x - candX;
+            const dz = b.pos.z - candZ;
+            if (dx * dx + dz * dz < minClearanceSq) {
+              isOverlapping = true;
+              break;
+            }
+          }
+        }
+        if (!isOverlapping) {
+          validPos = { x: candX, z: candZ };
+          break;
+        }
+        attempts++;
+      }
+      if (!validPos) return;
+
+      const itemGroup = new THREE.Group();
+
+      // 大粒のひし形クリスタル（頭の高さで目立つゴールド）
+      const crystal = new THREE.Mesh(itemCrystalGeo, sharedMats.itemCrystal);
+      crystal.position.y = 1.35;
+      crystal.castShadow = true;
+      itemGroup.add(crystal);
+
+      // 床に敷かれる脈動する光のサークル
+      const beaconRing = new THREE.Mesh(itemBeaconRingGeo, sharedMats.itemBeaconRing);
+      beaconRing.position.y = 0.04;
+      itemGroup.add(beaconRing);
+
+      itemGroup.position.set(validPos.x, stageInfo.y, validPos.z);
+      scene.add(itemGroup);
+
+      floorItems.push({
+        group: itemGroup,
+        crystal: crystal,
+        beaconRing: beaconRing,
+        mesh: itemGroup,
+        type: type,
+        pos: itemGroup.position,
+        active: true,
+        stageIdx: stageIdx,
+        baseY: stageInfo.y
+      });
+    }
+
     function extendCourse() {
       const idx = STAGES.length;
       let prev = STAGES[idx - 1];
@@ -712,30 +1080,67 @@
         nextY = prev.y + 7.0;
         distZ = 34;
         r = 10;
+      } else if (idx === 3) {
+        type = 'curved_slide';
+        nextY = prev.y - 8.5;
+        distZ = 46;
+        r = 11;
+      } else if (idx === 4) {
+        type = 'vertical';
+        nextY = prev.y + 12.0;
+        distZ = 24;
+        r = 10;
+      } else if (idx === 5) {
+        type = 'zipline';
+        nextY = Math.max(7.0, prev.y - 10.5);
+        distZ = 68;
+        r = 10.5;
       } else {
         const rand = Math.random();
-        if (rand < 0.25) { 
-          type = 'slide';
-          nextY = prev.y - 6.5;
-          distZ = 36;
-          r = 10;
-        } else if (rand < 0.40) { 
-          type = 'vertical';
-          nextY = prev.y + 9.5;
-          distZ = 24;
-          r = 10;
-        } else if (rand < 0.55) {
-          type = 'jump';
-          nextY = prev.y + 0.5; 
-          distZ = 30;
-          r = 9.5;
+        
+        if (prev.y >= 14.0) {
+          if (rand < 0.35) {
+            type = 'zipline';
+            nextY = Math.max(7.0, prev.y - 10.5);
+            distZ = 68;
+            r = 10.5;
+          } else if (rand < 0.70) {
+            type = 'curved_slide';
+            nextY = Math.max(6.0, prev.y - 8.0);
+            distZ = 46;
+            r = 11;
+          } else {
+            type = 'slide';
+            nextY = Math.max(6.0, prev.y - 6.5);
+            distZ = 36;
+            r = 10;
+          }
         } else {
-          type = 'bridge';
-          nextY = prev.y + 7.0;
-          distZ = 34;
-          r = 10;
+          if (rand < 0.25) {
+            type = 'vertical';
+            nextY = prev.y + 10.0;
+            distZ = 24;
+            r = 10;
+          } else if (rand < 0.40) {
+            type = 'jump';
+            nextY = prev.y + 1.0;
+            distZ = 30;
+            r = 9.5;
+          } else if (rand < 0.65) {
+            type = 'bridge';
+            nextY = prev.y + 7.0;
+            distZ = 34;
+            r = 10;
+          } else {
+            type = 'curved_slide';
+            nextY = Math.max(6.0, prev.y - 4.0);
+            distZ = 46;
+            r = 11;
+          }
         }
       }
+
+      nextY = Math.max(6.0, nextY);
       
       const nextZ = prev.z - distZ; 
       const stageInfo = { z: nextZ, y: nextY, r: r, type: type };
@@ -750,9 +1155,32 @@
 
       if (idx >= 1) {
         spawnGatesOnIsland(idx, nextZ, nextY);
+
+        // スピードUP出現率再設計：完全ランダム廃止 ＆ 2〜3島ごとのサイクル保証方式
+        speedItemIslandCounter++;
+        let shouldSpawnSpeedItem = false;
+
+        if (idx === 1) {
+          // 最初の島は導入として確実に体験提供
+          shouldSpawnSpeedItem = true;
+          speedItemIslandCounter = 0;
+        } else if (speedItemIslandCounter >= 3) {
+          // 3島空いたら100%保証出現
+          shouldSpawnSpeedItem = true;
+          speedItemIslandCounter = 0;
+        } else if (speedItemIslandCounter >= 2) {
+          // 2島空いた後は65%の高確率で出現
+          if (Math.random() < 0.65) {
+            shouldSpawnSpeedItem = true;
+            speedItemIslandCounter = 0;
+          }
+        }
+
+        if (shouldSpawnSpeedItem) {
+          spawnItem(idx, 'speed');
+        }
       }
 
-      // 高度を直感させる浮遊雲
       if (idx % 2 === 0) {
         const cloudSide = (idx % 4 === 0) ? 1 : -1;
         const cloudMesh = createCloudMesh();
@@ -764,8 +1192,6 @@
         cloudObjects.push({ mesh: cloudMesh, stageIdx: idx, baseY: cloudY, offset: Math.random() * 10 });
       }
 
-      // 【提案①：海面に浮かぶローポリ小島の自動配置】
-      // プレイヤーコースの左右外側にバランスよく配置し、高度感を演出
       const isletSides = [-1, 1];
       isletSides.forEach(side => {
         if (Math.random() < 0.65) {
@@ -783,20 +1209,245 @@
     }
 
     function spawnGatesOnIsland(stageIdx, islandZ, islandY) {
+      if (stageIdx % 2 !== 1) return;
+
       const gateZ = islandZ - 2.8;
-      const patterns = [
-        { left: { op: 'multiply', val: 2, label: '×2' }, right: { op: 'subtract', val: 5, label: '-5' } },
-        { left: { op: 'add', val: 6, label: '+6' }, right: { op: 'add', val: 2, label: '+2' } },
-        { left: { op: 'subtract', val: 4, label: '-4' }, right: { op: 'multiply', val: 2, label: '×2' } },
-        { left: { op: 'add', val: 8, label: '+8' }, right: { op: 'subtract', val: 6, label: '-6' } }
-      ];
-      const p = patterns[Math.floor(Math.random() * patterns.length)];
+      const playerCount = player ? player.stackCount : 0;
+      let p;
+
+      if (playerCount >= 51) {
+        const cautionPatterns = [
+          { left: { op: 'add', val: 4, label: '+4' }, right: { op: 'divide', val: 2, label: '÷2' } },
+          { left: { op: 'divide', val: 2, label: '÷2' }, right: { op: 'add', val: 6, label: '+6' } },
+          { left: { op: 'subtract', val: 6, label: '-6' }, right: { op: 'add', val: 4, label: '+4' } },
+          { left: { op: 'add', val: 6, label: '+6' }, right: { op: 'subtract', val: 8, label: '-8' } },
+          { left: { op: 'divide', val: 2, label: '÷2' }, right: { op: 'subtract', val: 4, label: '-4' } }
+        ];
+        p = cautionPatterns[Math.floor(Math.random() * cautionPatterns.length)];
+      } else if (playerCount >= 26) {
+        if (Math.random() < 0.15) {
+          if (Math.random() < 0.5) {
+            p = { left: { op: 'multiply', val: 2, label: '×2' }, right: { op: 'divide', val: 2, label: '÷2' } };
+          } else {
+            p = { left: { op: 'divide', val: 2, label: '÷2' }, right: { op: 'multiply', val: 2, label: '×2' } };
+          }
+        } else {
+          const stablePatterns = [
+            { left: { op: 'add', val: 6, label: '+6' }, right: { op: 'subtract', val: 4, label: '-4' } },
+            { left: { op: 'subtract', val: 6, label: '-6' }, right: { op: 'add', val: 6, label: '+6' } },
+            { left: { op: 'add', val: 4, label: '+4' }, right: { op: 'subtract', val: 4, label: '-4' } },
+            { left: { op: 'add', val: 6, label: '+6' }, right: { op: 'add', val: 4, label: '+4' } }
+          ];
+          p = stablePatterns[Math.floor(Math.random() * stablePatterns.length)];
+        }
+      } else {
+        if (Math.random() < 0.05) {
+          if (Math.random() < 0.5) {
+            p = { left: { op: 'multiply', val: 2, label: '×2' }, right: { op: 'subtract', val: 4, label: '-4' } };
+          } else {
+            p = { left: { op: 'add', val: 4, label: '+4' }, right: { op: 'multiply', val: 2, label: '×2' } };
+          }
+        } else {
+          const boostPatterns = [
+            { left: { op: 'add', val: 6, label: '+6' }, right: { op: 'add', val: 4, label: '+4' } },
+            { left: { op: 'add', val: 8, label: '+8' }, right: { op: 'subtract', val: 4, label: '-4' } },
+            { left: { op: 'subtract', val: 4, label: '-4' }, right: { op: 'add', val: 6, label: '+6' } },
+            { left: { op: 'add', val: 4, label: '+4' }, right: { op: 'subtract', val: 2, label: '-2' } }
+          ];
+          p = boostPatterns[Math.floor(Math.random() * boostPatterns.length)];
+        }
+      }
 
       createModifierGate(stageIdx, -3.2, gateZ, islandY, p.left.op, p.left.val, p.left.label);
       createModifierGate(stageIdx, 3.2, gateZ, islandY, p.right.op, p.right.val, p.right.label);
     }
 
     function createBridgeLinks(stageIdx, nextStageIdx, prevIslandZ, nextIslandZ, prevR, nextR, startY, endY, type) {
+      if (type === 'zipline') {
+        const startZ = prevIslandZ - prevR + 1.2;
+        const endZ = nextIslandZ + nextR - 1.2;
+
+        const departureTopY = startY + 5.5;
+        const arrivalTopY = endY + 4.5;
+
+        const depPylon = createZiplinePylonMesh(0, startY, startZ, departureTopY, true);
+        scene.add(depPylon);
+
+        const arrPylon = createZiplinePylonMesh(0, endY, endZ, arrivalTopY, false);
+        scene.add(arrPylon);
+
+        const startPt = new THREE.Vector3(0, departureTopY - 0.2, startZ);
+        const endPt = new THREE.Vector3(0, arrivalTopY - 0.2, endZ);
+        const cableVec = new THREE.Vector3().subVectors(endPt, startPt);
+        const cableLen = cableVec.length();
+
+        const cableGeo = new THREE.CylinderGeometry(0.042, 0.042, cableLen, 8);
+        const cableMesh = new THREE.Mesh(cableGeo, sharedMats.ziplineCable);
+        
+        const midPt = new THREE.Vector3().addVectors(startPt, endPt).multiplyScalar(0.5);
+        cableMesh.position.copy(midPt);
+        cableMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), cableVec.clone().normalize());
+        scene.add(cableMesh);
+
+        const stationTrolley = createZiplineTrolleyMesh();
+        stationTrolley.position.copy(startPt);
+        scene.add(stationTrolley);
+
+        const ziplineBridge = {
+          stageIdx, nextStageIdx, laneIdx: 1, planks: [],
+          visualMeshes: [depPylon, arrPylon, cableMesh, stationTrolley],
+          startZ, endZ, startPt, endPt, cableLen,
+          isJump: false, isSlide: false, isVertical: false, isCurvedSlide: false,
+          isZipline: true,
+          bonusBlocks: []
+        };
+
+        const numZiplineBlocks = 6;
+        for (let zi = 0; zi < numZiplineBlocks; zi++) {
+          const t = 0.20 + (zi / (numZiplineBlocks - 1)) * 0.62;
+          const bPos = new THREE.Vector3().lerpVectors(startPt, endPt, t);
+          bPos.y -= 1.45;
+          bPos.x += Math.sin(zi * 2.2) * 0.35;
+
+          const bMesh = new THREE.Mesh(blockGeometry, sharedMats.blockNeutral);
+          bMesh.position.copy(bPos);
+          bMesh.castShadow = true;
+          scene.add(bMesh);
+
+          const bonusData = {
+            mesh: bMesh,
+            t: t,
+            baseY: bPos.y,
+            zi: zi,
+            collected: false,
+            stageIdx: stageIdx
+          };
+          ziplineBridge.bonusBlocks.push(bonusData);
+          ziplineBonusBlocks.push(bonusData);
+        }
+
+        bridges.push(ziplineBridge);
+        return;
+      }
+
+      if (type === 'curved_slide') {
+        const startZ = prevIslandZ - prevR + 1.2;
+        const endZ = nextIslandZ + nextR - 1.2;
+        const distZ = startZ - endZ;
+        const dropY = startY - endY;
+        const sDir = (stageIdx % 2 === 0 ? 1 : -1);
+
+        const p0 = new THREE.Vector3(0, startY + 0.15, startZ);
+        const p1 = new THREE.Vector3(sDir * 7.5, startY - dropY * 0.28, startZ - distZ * 0.28);
+        const p2 = new THREE.Vector3(-sDir * 5.8, startY - dropY * 0.72, startZ - distZ * 0.72);
+        const p3 = new THREE.Vector3(0, endY + 0.15, endZ);
+        const spline = new THREE.CatmullRomCurve3([p0, p1, p2, p3]);
+
+        const steps = 55;
+        const points = spline.getPoints(steps);
+        const curveLength = spline.getLength();
+
+        const posArr = [];
+        const normArr = [];
+        const idxArr = [];
+        const leftRailPts = [];
+        rightRailPts = [];
+
+        const profile = [
+          { x: -2.4, y: 0.85 },
+          { x: -2.0, y: 0.0 },
+          { x: 2.0, y: 0.0 },
+          { x: 2.4, y: 0.85 }
+        ];
+
+        for (let i = 0; i <= steps; i++) {
+          const t = i / steps;
+          const center = points[i];
+          const tangent = spline.getTangent(t).normalize();
+          const normal = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize();
+
+          profile.forEach(p => {
+            const vx = center.x + normal.x * p.x;
+            const vy = center.y + p.y;
+            const vz = center.z + normal.z * p.x;
+            posArr.push(vx, vy, vz);
+            normArr.push(0, 1, 0);
+          });
+
+          leftRailPts.push(new THREE.Vector3(center.x - normal.x * 2.4, center.y + 0.85, center.z - normal.z * 2.4));
+          rightRailPts.push(new THREE.Vector3(center.x + normal.x * 2.4, center.y + 0.85, center.z + normal.z * 2.4));
+        }
+
+        for (let i = 0; i < steps; i++) {
+          for (let j = 0; j < 3; j++) {
+            const a = i * 4 + j;
+            const b = (i + 1) * 4 + j;
+            const c = (i + 1) * 4 + (j + 1);
+            const d = i * 4 + (j + 1);
+            idxArr.push(a, b, d);
+            idxArr.push(b, c, d);
+          }
+        }
+
+        const troughGeo = new THREE.BufferGeometry();
+        troughGeo.setAttribute('position', new THREE.Float32BufferAttribute(posArr, 3));
+        troughGeo.setAttribute('normal', new THREE.Float32BufferAttribute(normArr, 3));
+        troughGeo.setIndex(idxArr);
+        troughGeo.computeVertexNormals();
+
+        const troughMesh = new THREE.Mesh(troughGeo, sharedMats.slideSurface);
+        troughMesh.receiveShadow = true;
+        scene.add(troughMesh);
+
+        const leftRailCurve = new THREE.CatmullRomCurve3(leftRailPts);
+        const rightRailCurve = new THREE.CatmullRomCurve3(rightRailPts);
+        const railGeoLeft = new THREE.TubeGeometry(leftRailCurve, 50, 0.16, 8, false);
+        const railGeoRight = new THREE.TubeGeometry(rightRailCurve, 50, 0.16, 8, false);
+
+        const leftRailMesh = new THREE.Mesh(railGeoLeft, sharedMats.slideRail);
+        const rightRailMesh = new THREE.Mesh(railGeoRight, sharedMats.slideRail);
+        scene.add(leftRailMesh);
+        scene.add(rightRailMesh);
+
+        const curvedBridge = {
+          stageIdx, nextStageIdx, laneIdx: 1, planks: [],
+          visualMeshes: [troughMesh, leftRailMesh, rightRailMesh],
+          startZ, endZ, isJump: false, isSlide: false, isVertical: false,
+          isCurvedSlide: true, isZipline: false, curve: spline, curveLength: curveLength,
+          bonusBlocks: []
+        };
+
+        const numBonuses = 8;
+        for (let bi = 0; bi < numBonuses; bi++) {
+          const t = 0.22 + (bi / (numBonuses - 1)) * 0.58;
+          const pt = spline.getPointAt(t);
+          const tangent = spline.getTangentAt(t).normalize();
+          const normal = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize();
+
+          const offsetVal = Math.sin(bi * 1.55) * 1.1;
+          const bPos = pt.clone().addScaledVector(normal, offsetVal);
+          bPos.y += 0.42;
+
+          const bMesh = new THREE.Mesh(blockGeometry, sharedMats.blockNeutral);
+          bMesh.position.copy(bPos);
+          bMesh.castShadow = true;
+          scene.add(bMesh);
+
+          const bonusData = {
+            mesh: bMesh,
+            t: t,
+            offset: offsetVal,
+            collected: false,
+            stageIdx: stageIdx
+          };
+          curvedBridge.bonusBlocks.push(bonusData);
+          curvedSlideBonusBlocks.push(bonusData);
+        }
+
+        bridges.push(curvedBridge);
+        return;
+      }
+
       const isJump = (type === 'jump');
       const isSlide = (type === 'slide');
       const isVertical = (type === 'vertical');
@@ -814,7 +1465,7 @@
 
         const bridge = { 
           stageIdx, nextStageIdx, laneIdx, planks: [], visualMeshes: [], 
-          startZ, endZ, isJump, isSlide, isVertical
+          startZ, endZ, isJump, isSlide, isVertical, isCurvedSlide: false, isZipline: false
         };
         
         if (isSlide) {
@@ -892,27 +1543,38 @@
       modifierGates.forEach(g => scene.remove(g.meshGroup));
       cloudObjects.forEach(c => scene.remove(c.mesh));
       oceanIslands.forEach(oi => scene.remove(oi.meshGroup));
+      landingShockwaves.forEach(sw => scene.remove(sw.mesh));
       if (seaMesh) scene.remove(seaMesh);
+      curvedSlideBonusBlocks.forEach(b => { if (b.mesh) scene.remove(b.mesh); });
+      ziplineBonusBlocks.forEach(b => { if (b.mesh) scene.remove(b.mesh); });
+      floorItems.forEach(item => { if (item.group) scene.remove(item.group); });
+      puffClouds.forEach(p => { if (p.mesh) scene.remove(p.mesh); });
+      speedStepRings.forEach(sr => { if (sr.mesh) scene.remove(sr.mesh); });
 
+      floorItems = [];
+      landingShockwaves = [];
       modifierGates = [];
       bridges = [];
       stageMeshes = [];
       cloudObjects = [];
       oceanIslands = [];
+      curvedSlideBonusBlocks = [];
+      ziplineBonusBlocks = [];
+      puffClouds = [];
+      speedStepRings = [];
+      speedItemIslandCounter = 0;
       STAGES = [{ z: 0, y: 0, r: 12 }];
 
       scene.background = new THREE.Color(0x7dd3fc);
       scene.fog = new THREE.FogExp2(0x7dd3fc, 0.0032);
 
-      // 遥か下方の絶対基準面・大海原
       const seaGeo = new THREE.PlaneGeometry(1600, 2400);
       seaMesh = new THREE.Mesh(seaGeo, sharedMats.sea);
       seaMesh.rotation.x = -Math.PI / 2;
       seaMesh.position.set(0, -42, -500);
-      seaMesh.receiveShadow = true;
+      seaMesh.receiveShadow = false;
       scene.add(seaMesh);
 
-      // 初期ステージ周辺の海面小島
       const initialIslets = [
         { x: -30, z: -15, scale: 1.2, type: 'tropical' },
         { x: 32, z: 10, scale: 1.0, type: 'rocky' },
@@ -956,6 +1618,12 @@
           floorBlocks.splice(i, 1);
         }
       }
+      for (let i = floorItems.length - 1; i >= 0; i--) {
+        if (floorItems[i].stageIdx < safeStage) {
+          if (floorItems[i].group) scene.remove(floorItems[i].group);
+          floorItems.splice(i, 1);
+        }
+      }
       for (let i = modifierGates.length - 1; i >= 0; i--) {
         if (modifierGates[i].stageIdx < safeStage) {
           scene.remove(modifierGates[i].meshGroup);
@@ -974,6 +1642,18 @@
           oceanIslands.splice(i, 1);
         }
       }
+      for (let i = curvedSlideBonusBlocks.length - 1; i >= 0; i--) {
+        if (curvedSlideBonusBlocks[i].stageIdx < safeStage) {
+          if (curvedSlideBonusBlocks[i].mesh) scene.remove(curvedSlideBonusBlocks[i].mesh);
+          curvedSlideBonusBlocks.splice(i, 1);
+        }
+      }
+      for (let i = ziplineBonusBlocks.length - 1; i >= 0; i--) {
+        if (ziplineBonusBlocks[i].stageIdx < safeStage) {
+          if (ziplineBonusBlocks[i].mesh) scene.remove(ziplineBonusBlocks[i].mesh);
+          ziplineBonusBlocks.splice(i, 1);
+        }
+      }
     }
 
     function setupCharacters() {
@@ -984,7 +1664,10 @@
         isPlayer: true, team: TEAMS.BLUE, meshObj: pMesh,
         pos: new THREE.Vector3(0, STAGES[0].y, STAGES[0].z + 4),
         rotation: 0, stackCount: 0, stackBricks: [], currentStage: 0, stunTimer: 0, invulnerableTimer: 0, walkCycle: 0,
-        isJumping: false, onSlide: false, jumpProgress: 0, lastPlankIdx: -1
+        isJumping: false, onSlide: false, onCurvedSlide: false, curvedSlideProgress: 0, curvedSlideOffset: 0, slideCooldown: 0,
+        onZipline: false, ziplineProgress: 0, activeZipline: null,
+        jumpProgress: 0, lastPlankIdx: -1,
+        speedBoostActive: false, speedBoostUntilStage: -1, puffTimer: 0
       };
       characters.push(player);
 
@@ -995,7 +1678,10 @@
         pos: new THREE.Vector3(-4.0, STAGES[0].y, STAGES[0].z + 4),
         rotation: 0, stackCount: 0, stackBricks: [], currentStage: 0,
         aiState: 'COLLECT', aiCapacityGoal: 10, stunTimer: 0, invulnerableTimer: 0, walkCycle: 0,
-        isJumping: false, onSlide: false, jumpProgress: 0, lastPlankIdx: -1
+        isJumping: false, onSlide: false, onCurvedSlide: false, curvedSlideProgress: 0, curvedSlideOffset: 0, slideCooldown: 0,
+        onZipline: false, ziplineProgress: 0, activeZipline: null,
+        jumpProgress: 0, lastPlankIdx: -1, botSlideOffsetTarget: 0,
+        speedBoostActive: false, speedBoostUntilStage: -1, puffTimer: 0
       });
 
       const b2Mesh = createCharacterMesh(TEAMS.YELLOW);
@@ -1005,16 +1691,18 @@
         pos: new THREE.Vector3(4.0, STAGES[0].y, STAGES[0].z + 4),
         rotation: 0, stackCount: 0, stackBricks: [], currentStage: 0,
         aiState: 'COLLECT', aiCapacityGoal: 12, stunTimer: 0, invulnerableTimer: 0, walkCycle: 0,
-        isJumping: false, onSlide: false, jumpProgress: 0, lastPlankIdx: -1
+        isJumping: false, onSlide: false, onCurvedSlide: false, curvedSlideProgress: 0, curvedSlideOffset: 0, slideCooldown: 0,
+        onZipline: false, ziplineProgress: 0, activeZipline: null,
+        jumpProgress: 0, lastPlankIdx: -1, botSlideOffsetTarget: 0,
+        speedBoostActive: false, speedBoostUntilStage: -1, puffTimer: 0
       });
     }
 
-    // 【提案②：ブロック同士の重なり・Zファイティングチラつき完全防止スポーン】
     function spawnSingleBlock(stageIdx, targetTeam = null) {
       const stageInfo = STAGES[stageIdx];
       if (!stageInfo) return;
 
-      const minClearance = 1.35; // ブロック中心間の最小排他距離（重なり完全ゼロ）
+      const minClearance = 1.35;
       const minClearanceSq = minClearance * minClearance;
 
       let validPos = null;
@@ -1025,7 +1713,6 @@
         const candX = Math.cos(theta) * r;
         const candZ = stageInfo.z + Math.sin(theta) * r;
 
-        // 既存のアクティブブロックとの距離を判定
         let isOverlapping = false;
         for (let i = 0; i < floorBlocks.length; i++) {
           const b = floorBlocks[i];
@@ -1046,7 +1733,6 @@
         attempts++;
       }
 
-      // 重なりを回避できない場合は無理にスポーンせずスキップ（チラつき防止最優先）
       if (!validPos) return;
 
       const team = targetTeam || BLOCK_TYPES[Math.floor(Math.random() * BLOCK_TYPES.length)];
@@ -1077,25 +1763,43 @@
       });
     }
 
+    function getBrickMaterialForStackIndex(char, index) {
+      if (!char.isPlayer) {
+        if (char.team.id === 'red') return sharedMats.blockRed;
+        if (char.team.id === 'yellow') return sharedMats.blockYellow;
+        return sharedMats.blockNeutral;
+      }
+      return playerStackMaterials[Math.min(index, MAX_VISUAL_STACK - 1)];
+    }
+
+    function refreshCharacterStackVisuals(char) {
+      if (char.isPlayer) {
+        updatePlayerStackMaterials(char.stackCount);
+      }
+      for (let i = 0; i < char.stackBricks.length; i++) {
+        char.stackBricks[i].material = getBrickMaterialForStackIndex(char, i);
+      }
+    }
+
     function addBrickToCharacter(char, team, count = 1) {
       for (let i = 0; i < count; i++) {
         char.stackCount++;
         
         if (char.stackBricks.length < MAX_VISUAL_STACK) {
-          let mat;
-          if (team.id === 'blue') mat = sharedMats.blockBlue;
-          else if (team.id === 'red') mat = sharedMats.blockRed;
-          else if (team.id === 'yellow') mat = sharedMats.blockYellow;
-          else mat = sharedMats.blockNeutral;
-
+          const idx = char.stackBricks.length;
+          const mat = getBrickMaterialForStackIndex(char, idx);
           const brickMesh = new THREE.Mesh(blockGeometry, mat);
           brickMesh.castShadow = true;
-          const stackHeight = char.stackBricks.length * 0.44;
-          brickMesh.position.set(0, stackHeight, 0);
+          
+          const stackHeight = idx * 0.44;
+          const xOffset = (idx % 2 === 0) ? -0.015 : 0.015;
+          brickMesh.position.set(xOffset, stackHeight, 0);
+          
           char.meshObj.stackGroup.add(brickMesh);
           char.stackBricks.push(brickMesh);
         }
       }
+      refreshCharacterStackVisuals(char);
       if (char.isPlayer) {
         sound.playCollect(1 + Math.min(char.stackCount * 0.015, 0.8));
         updateHUD();
@@ -1109,11 +1813,11 @@
         const brickMesh = char.stackBricks.pop();
         if (brickMesh) char.meshObj.stackGroup.remove(brickMesh);
       }
+      refreshCharacterStackVisuals(char);
       if (char.isPlayer) updateHUD();
       return true;
     }
 
-    // 【提案②：タックル散乱ブロックの重なり防止・安全配置】
     function scatterBricks(char, countToDrop) {
       const count = Math.min(char.stackCount, countToDrop);
       const stage = STAGES[char.currentStage] || STAGES[0];
@@ -1123,7 +1827,6 @@
       for (let i = 0; i < count; i++) {
         removeBrickFromCharacter(char);
 
-        // 重ならない安全な散乱位置を探索
         let dropX = char.pos.x;
         let dropZ = char.pos.z;
 
@@ -1133,7 +1836,6 @@
           const candX = char.pos.x + Math.cos(ang) * dist;
           const candZ = char.pos.z + Math.sin(ang) * dist;
 
-          // 島からはみ出さない範囲内
           if (Math.hypot(candX, candZ - stage.z) > stage.r - 1.2) continue;
 
           let overlap = false;
@@ -1183,9 +1885,21 @@
           scene.remove(gate.meshGroup);
 
           if (gate.opType === 'multiply') {
-            const boostCount = Math.min(Math.max(char.stackCount, 3), 10);
-            addBrickToCharacter(char, char.team, boostCount);
-            sound.playGateBoost();
+            const currentCount = char.stackCount;
+            const targetCount = currentCount * gate.value;
+            const addCount = targetCount - currentCount;
+            if (addCount > 0) {
+              addBrickToCharacter(char, char.team, addCount);
+              sound.playGateBoost();
+            }
+          } else if (gate.opType === 'divide') {
+            const currentCount = char.stackCount;
+            const targetCount = Math.floor(currentCount / gate.value);
+            const dropCount = currentCount - targetCount;
+            if (dropCount > 0) {
+              scatterBricks(char, dropCount);
+              sound.playTackle();
+            }
           } else if (gate.opType === 'add') {
             addBrickToCharacter(char, char.team, gate.value);
             sound.playGateBoost();
@@ -1213,6 +1927,16 @@
         char.meshObj.root.visible = (Math.floor(Date.now() / 90) % 2 === 0);
       } else {
         char.meshObj.root.visible = true;
+      }
+
+      if (char.slideCooldown > 0) {
+        char.slideCooldown -= dt;
+      }
+
+      // スピードUP持続管理（1島走破＋次の島へ着地した瞬間に解除）
+      if (char.speedBoostActive && char.currentStage >= char.speedBoostUntilStage) {
+        char.speedBoostActive = false;
+        if (char.meshObj.footAura) char.meshObj.footAura.visible = false;
       }
 
       if (char.isJumping) {
@@ -1245,7 +1969,172 @@
       }
       char.meshObj.root.rotation.z = 0;
 
-      let speed = 10.5;
+      // ジップライン滑空＆着地処理
+      if (char.onZipline && char.activeZipline) {
+        const zip = char.activeZipline;
+        const totalFlyTime = 3.25;
+        char.ziplineProgress += dt / totalFlyTime;
+
+        char.meshObj.stackGroup.scale.set(0.45, 0.45, 0.45);
+        char.meshObj.stackGroup.position.set(0, 0.45, -0.42);
+
+        if (char.meshObj.trolleyGroup) {
+          char.meshObj.trolleyGroup.visible = true;
+        }
+
+        if (zip.bonusBlocks && zip.bonusBlocks.length > 0) {
+          for (let bi = 0; bi < zip.bonusBlocks.length; bi++) {
+            const blk = zip.bonusBlocks[bi];
+            if (!blk.collected) {
+              if (Math.abs(blk.t - char.ziplineProgress) < 0.048) {
+                blk.collected = true;
+                scene.remove(blk.mesh);
+                addBrickToCharacter(char, char.team, 1);
+                if (char.isPlayer) {
+                  sound.playCollect(1.25 + blk.t * 0.65);
+                }
+              }
+            }
+          }
+        }
+
+        if (char.ziplineProgress >= 1.0) {
+          char.onZipline = false;
+          char.currentStage = zip.nextStageIdx;
+          const nextStageObj = STAGES[zip.nextStageIdx];
+          
+          const landZ = nextStageObj.z + nextStageObj.r * 0.45;
+          char.pos.set(char.pos.x * 0.3, nextStageObj.y, landZ);
+          char.slideCooldown = 0.5;
+          char.lastPlankIdx = -1;
+          char.activeZipline = null;
+
+          if (char.meshObj.trolleyGroup) {
+            char.meshObj.trolleyGroup.visible = false;
+          }
+          char.meshObj.stackGroup.scale.set(1.0, 1.0, 1.0);
+          char.meshObj.stackGroup.position.set(0, 0.65, -0.42);
+
+          char.meshObj.leftArm.position.set(-0.48, 0.68, 0);
+          char.meshObj.rightArm.position.set(0.48, 0.68, 0);
+          char.meshObj.leftArm.rotation.set(0, 0, 0);
+          char.meshObj.rightArm.rotation.set(0, 0, 0);
+          char.meshObj.leftLeg.rotation.set(0, 0, 0);
+          char.meshObj.rightLeg.rotation.set(0, 0, 0);
+          char.meshObj.body.position.y = 0.65;
+          char.meshObj.head.position.y = 1.25;
+
+          triggerLandingShockwave(char.pos.x, nextStageObj.y, landZ);
+          if (char.isPlayer) {
+            sound.playLanding();
+          }
+
+          if (!char.isPlayer) {
+            char.aiState = 'COLLECT';
+            char.targetLane = undefined;
+            char.aiCapacityGoal = 8 + Math.floor(Math.random() * 5);
+          }
+        } else {
+          const t = Math.min(0.999, Math.max(0, char.ziplineProgress));
+          const cablePt = new THREE.Vector3().lerpVectors(zip.startPt, zip.endPt, t);
+
+          char.pos.set(cablePt.x, cablePt.y - 1.45, cablePt.z);
+
+          const nowSec = performance.now() * 0.001;
+          const legKick = Math.sin(nowSec * 24) * 0.75;
+          char.meshObj.leftLeg.rotation.x = legKick;
+          char.meshObj.rightLeg.rotation.x = -legKick;
+
+          char.meshObj.leftArm.position.set(-0.35, 1.35, 0);
+          char.meshObj.rightArm.position.set(0.35, 1.35, 0);
+          char.meshObj.leftArm.rotation.set(-Math.PI * 0.72, 0, -0.22);
+          char.meshObj.rightArm.rotation.set(-Math.PI * 0.72, 0, 0.22);
+
+          char.meshObj.root.rotation.y = Math.PI;
+          char.meshObj.root.rotation.z = Math.sin(nowSec * 9) * 0.14;
+          char.meshObj.root.rotation.x = 0.12;
+
+          if (char.isPlayer) {
+            sound.playZipline(t);
+          }
+        }
+
+        char.meshObj.root.position.copy(char.pos);
+        return;
+      }
+
+      // 立体U字カーブスライダーの乗車物理
+      if (char.onCurvedSlide && char.activeCurvedBridge) {
+        const b = char.activeCurvedBridge;
+        const slideSpeed = 31.0;
+        const progressDelta = (slideSpeed * dt) / Math.max(10, b.curveLength);
+        char.curvedSlideProgress += progressDelta;
+
+        if (char.curvedSlideProgress >= 1.0) {
+          char.onCurvedSlide = false;
+          char.currentStage = b.nextStageIdx;
+          const nextStageObj = STAGES[b.nextStageIdx];
+          char.pos.set(char.curvedSlideOffset * 0.6, nextStageObj.y, nextStageObj.z + nextStageObj.r * 0.4);
+          char.slideCooldown = 1.4;
+          char.lastPlankIdx = -1;
+          char.activeCurvedBridge = null;
+
+          if (!char.isPlayer) {
+            char.aiState = 'COLLECT';
+            char.targetLane = undefined;
+            char.aiCapacityGoal = 8 + Math.floor(Math.random() * 5);
+          }
+        } else {
+          const t = Math.min(0.999, Math.max(0, char.curvedSlideProgress));
+          const pt = b.curve.getPointAt(t);
+          const tangent = b.curve.getTangentAt(t).normalize();
+          const normal = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize();
+
+          char.curvedSlideOffset = Math.max(-1.6, Math.min(1.6, char.curvedSlideOffset + dirX * 12 * dt));
+
+          char.pos.copy(pt).addScaledVector(normal, char.curvedSlideOffset);
+          char.pos.y = pt.y + 0.18;
+
+          if (b.bonusBlocks && b.bonusBlocks.length > 0) {
+            for (let bi = 0; bi < b.bonusBlocks.length; bi++) {
+              const blk = b.bonusBlocks[bi];
+              if (!blk.collected) {
+                const progDiff = Math.abs(blk.t - char.curvedSlideProgress);
+                const offsetDiff = Math.abs(blk.offset - char.curvedSlideOffset);
+                if (progDiff < 0.045 && offsetDiff < 0.95) {
+                  blk.collected = true;
+                  scene.remove(blk.mesh);
+                  addBrickToCharacter(char, char.team, 1);
+                  if (char.isPlayer) {
+                    sound.playCollect(1.2 + blk.t * 0.6);
+                  }
+                }
+              }
+            }
+          }
+
+          char.rotation = Math.atan2(tangent.x, tangent.z);
+          char.meshObj.root.rotation.y = char.rotation;
+          char.meshObj.root.rotation.z = -dirX * 0.35 - (normal.x * 0.2);
+          char.meshObj.root.rotation.x = 0.25;
+
+          char.meshObj.leftLeg.rotation.x = -0.35;
+          char.meshObj.rightLeg.rotation.x = -0.35;
+          char.meshObj.leftArm.rotation.x = -0.65;
+          char.meshObj.rightArm.rotation.x = -0.65;
+          char.meshObj.body.position.y = 0.50;
+          char.meshObj.head.position.y = 1.15;
+
+          if (char.isPlayer) sound.playSlide();
+        }
+
+        char.meshObj.root.position.copy(char.pos);
+        return;
+      }
+
+      // 通常移動（再調整：通常10.5、ブースト時は「13.2」で小回り・拾いやすさを最大化）
+      let speed = char.speedBoostActive ? 13.2 : 10.5;
+
       if (char.onSlide) {
         speed = 28;
         if (char.isPlayer) sound.playSlide();
@@ -1260,7 +2149,9 @@
 
       const moveMag = Math.hypot(effectiveDirX, effectiveDirZ);
       if (moveMag > 0.08 || char.onSlide) {
-        char.rotation = THREE.MathUtils.lerp(char.rotation, Math.atan2(effectiveDirX, effectiveDirZ), 0.22);
+        // 旋回レスポンス：ブースト中は通常0.22から0.36へ引き上げクイック追従
+        const turnLerp = (char.speedBoostActive && !char.onSlide) ? 0.36 : 0.22;
+        char.rotation = THREE.MathUtils.lerp(char.rotation, Math.atan2(effectiveDirX, effectiveDirZ), turnLerp);
         char.meshObj.root.rotation.y = char.rotation;
 
         const nextX = char.pos.x + effectiveDirX * speed * dt;
@@ -1268,7 +2159,9 @@
 
         handleCourseMovement(char, nextX, nextZ, effectiveDirX, effectiveDirZ);
 
-        char.walkCycle += dt * (char.onSlide ? 0 : 16); 
+        // スピードUP中は足のピッチも早くなりダッシュ感を強調
+        const walkCycleSpeed = (char.onSlide ? 0 : 16) * (char.speedBoostActive ? 1.55 : 1.0);
+        char.walkCycle += dt * walkCycleSpeed; 
         
         if (char.onSlide) {
           char.meshObj.leftLeg.rotation.x = -0.3;
@@ -1280,7 +2173,7 @@
           char.meshObj.root.rotation.x = 0.22;
           char.meshObj.root.rotation.z = -effectiveDirX * 0.35;
         } else {
-          const swing = Math.sin(char.walkCycle) * 0.7;
+          const swing = Math.sin(char.walkCycle) * 0.75;
           char.meshObj.leftLeg.rotation.x = swing;
           char.meshObj.rightLeg.rotation.x = -swing;
           char.meshObj.leftArm.rotation.x = -swing;
@@ -1289,10 +2182,25 @@
           const bounce = Math.abs(Math.sin(char.walkCycle * 2)) * 0.12; 
           char.meshObj.body.position.y = 0.65 + bounce;
           char.meshObj.head.position.y = 1.25 + bounce;
-          char.meshObj.root.rotation.x = 0;
+
+          // スピードUP中はスポーティな前傾姿勢
+          char.meshObj.root.rotation.x = char.speedBoostActive ? 0.20 : 0;
           char.meshObj.root.rotation.z = 0;
         }
         char.meshObj.stackGroup.rotation.z = Math.sin(char.walkCycle) * 0.05;
+
+        // スピードUP演出：走行中のみ足元後方から「ミニ砂煙（ちぎれ雲）」＋「ゴールドステップ波紋」を放出
+        if (char.speedBoostActive && !char.onSlide) {
+          char.puffTimer = (char.puffTimer || 0) + dt;
+          if (char.puffTimer > 0.085) {
+            char.puffTimer = 0;
+            const backDist = 0.45;
+            const puffX = char.pos.x - Math.sin(char.rotation) * backDist;
+            const puffZ = char.pos.z - Math.cos(char.rotation) * backDist;
+            spawnPuffCloud(puffX, char.pos.y, puffZ);
+            spawnSpeedStepRing(char.pos.x, char.pos.y, char.pos.z);
+          }
+        }
       } else {
         char.meshObj.leftLeg.rotation.x = THREE.MathUtils.lerp(char.meshObj.leftLeg.rotation.x, 0, 0.2);
         char.meshObj.rightLeg.rotation.x = THREE.MathUtils.lerp(char.meshObj.rightLeg.rotation.x, 0, 0.2);
@@ -1302,7 +2210,19 @@
         char.meshObj.root.rotation.z = 0;
       }
 
-      if (!char.onSlide) {
+      // 足元オーラリングの脈動更新（ブースト中のみ足元に常時接地表示）
+      if (char.meshObj.footAura) {
+        if (char.speedBoostActive) {
+          char.meshObj.footAura.visible = true;
+          const auraPulse = 1.0 + Math.sin(performance.now() * 0.008) * 0.12;
+          char.meshObj.footAura.scale.set(auraPulse, auraPulse, auraPulse);
+        } else {
+          char.meshObj.footAura.visible = false;
+        }
+      }
+
+      if (!char.onSlide && !char.onCurvedSlide && !char.onZipline) {
+        // 通常ブロック回収
         for (let i = floorBlocks.length - 1; i >= 0; i--) {
           const blk = floorBlocks[i];
           if (!blk.active || blk.stageIdx !== char.currentStage) continue;
@@ -1315,6 +2235,26 @@
             }
           }
         }
+
+        // アイテム（大粒クリスタル）回収判定
+        for (let i = floorItems.length - 1; i >= 0; i--) {
+          const item = floorItems[i];
+          if (!item.active || item.stageIdx !== char.currentStage) continue;
+          if (Math.abs(char.pos.y - item.pos.y) < 2.2 && Math.hypot(char.pos.x - item.pos.x, char.pos.z - item.pos.z) < 1.7) {
+            item.active = false;
+            if (item.group) scene.remove(item.group);
+            floorItems.splice(i, 1);
+
+            if (item.type === 'speed') {
+              char.speedBoostActive = true;
+              // 1島走破＋次の島へ着地した瞬間に解除（使い切りブースト）
+              char.speedBoostUntilStage = char.currentStage + 1;
+              if (char.meshObj.footAura) char.meshObj.footAura.visible = true;
+              if (char.isPlayer) sound.playItemGet();
+            }
+          }
+        }
+
         checkGateCollisions(char);
       }
 
@@ -1325,7 +2265,7 @@
         nextStageObj ? nextStageObj.y : 0
       ) - 10.0;
 
-      if (!char.isJumping && char.pos.y < lowestAllowedY) {
+      if (!char.isJumping && !char.onCurvedSlide && !char.onZipline && char.pos.y < lowestAllowedY) {
         if (currentStageObj) {
           char.pos.set(0, currentStageObj.y, currentStageObj.z);
           char.onSlide = false;
@@ -1338,10 +2278,38 @@
 
     function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
       char.onSlide = false;
-      const isForwardIntent = (inputDirZ < 0);
+      const isMovingDownwardOrBackward = (nextZ >= char.pos.z - 0.001) || (inputDirZ >= -0.05);
+      const isForwardIntent = !isMovingDownwardOrBackward && (inputDirZ < -0.05);
+
+      const zipB = bridges.find(b => b.isZipline && b.stageIdx === char.currentStage);
+      if (zipB && char.slideCooldown <= 0) {
+        const distToStart = Math.hypot(nextX, nextZ - zipB.startZ);
+        if (distToStart < 3.2 && isForwardIntent) {
+          char.onZipline = true;
+          char.ziplineProgress = 0;
+          char.activeZipline = zipB;
+          return;
+        }
+      }
+
+      const curvedB = bridges.find(b => b.isCurvedSlide && b.stageIdx === char.currentStage);
+      if (curvedB && char.slideCooldown <= 0) {
+        const distToStart = Math.hypot(nextX, nextZ - curvedB.startZ);
+        if (distToStart < 3.2 && isForwardIntent) {
+          char.onCurvedSlide = true;
+          char.curvedSlideProgress = 0;
+          char.curvedSlideOffset = Math.max(-1.5, Math.min(1.5, nextX));
+          char.activeCurvedBridge = curvedB;
+          if (!char.isPlayer) {
+            char.botSlideOffsetTarget = (Math.random() - 0.5) * 1.5;
+          }
+          return;
+        }
+      }
 
       let onBridge = null;
       for (let b of bridges) {
+        if (b.isCurvedSlide || b.isZipline) continue;
         if (nextZ <= b.startZ + 0.8 && nextZ >= b.endZ - 0.8) {
           if (Math.abs(nextX - LANES[b.laneIdx]) < 2.5) {
             onBridge = b;
@@ -1351,6 +2319,14 @@
       }
 
       if (onBridge) {
+        if (char.pos.z <= onBridge.endZ + 0.2 && isMovingDownwardOrBackward) {
+          const isBridgeOpen = onBridge.isSlide || onBridge.planks.every(p => p.teamId !== null);
+          if (!isBridgeOpen) {
+            char.pos.z = onBridge.endZ - 0.2;
+            return;
+          }
+        }
+
         if (nextZ <= onBridge.endZ + 0.8) {
           const lastPlank = onBridge.planks[onBridge.planks.length - 1];
           const canPassEnd = onBridge.isSlide || (lastPlank && lastPlank.teamId === char.team.id);
@@ -1366,6 +2342,12 @@
             char.pos.y = STAGES[onBridge.nextStageIdx].y;
             char.lastPlankIdx = -1;
             char.onSlide = false;
+            
+            if (!char.isPlayer) {
+              char.aiState = 'COLLECT';
+              char.targetLane = undefined;
+              char.aiCapacityGoal = 8 + Math.floor(Math.random() * 5);
+            }
             return;
           }
         }
@@ -1422,7 +2404,7 @@
           }
 
           if (isForwardIntent) {
-            const startIdx = (char.lastPlankIdx >= 0 && char.lastPlankIdx <= plankIdx) ? char.lastPlankIdx : 0;
+            const startIdx = (char.lastPlankIdx >= 0 && char.lastPlankIdx <= plankIdx) ? char.lastPlankIdx : plankIdx;
             let blocked = false;
 
             for (let pIndex = startIdx; pIndex <= plankIdx; pIndex++) {
@@ -1447,7 +2429,10 @@
                   char.pos.x = LANES[onBridge.laneIdx];
                   char.pos.z = blockedZ + 0.2; 
                   char.pos.y = currentP.y;
-                  if (!char.isPlayer) char.aiState = 'COLLECT';
+                  if (!char.isPlayer) {
+                    char.aiState = 'COLLECT';
+                    char.targetLane = undefined;
+                  }
                   break;
                 }
               }
@@ -1493,7 +2478,7 @@
     }
 
     function evaluateBestLaneForBot(bot) {
-      const stageBridges = bridges.filter(b => b.stageIdx === bot.currentStage && !b.isJump && !b.isSlide);
+      const stageBridges = bridges.filter(b => b.stageIdx === bot.currentStage && !b.isJump && !b.isSlide && !b.isCurvedSlide && !b.isZipline);
       if (stageBridges.length === 0) return Math.floor(Math.random() * 3);
 
       const laneScores = [0, 0, 0];
@@ -1548,6 +2533,19 @@
     }
 
     function updateAICharacter(bot, dt) {
+      if (bot.onCurvedSlide) {
+        const targetOffset = bot.botSlideOffsetTarget || 0;
+        const diff = targetOffset - bot.curvedSlideOffset;
+        const steerX = Math.abs(diff) > 0.08 ? Math.sign(diff) * 0.45 : 0;
+        updateSingleCharacter(bot, steerX, -1.0, dt);
+        return;
+      }
+
+      if (bot.onZipline) {
+        updateSingleCharacter(bot, 0, -1.0, dt);
+        return;
+      }
+
       if (bot.currentStage < player.currentStage - 1) {
         bot.currentStage = player.currentStage;
         const stage = STAGES[bot.currentStage];
@@ -1566,7 +2564,13 @@
       const stage = STAGES[bot.currentStage];
       if (!stage) return;
       
-      const onBridge = bot.pos.z < stage.z - stage.r * 0.9;
+      const activeBridge = bridges.find(b => 
+        !b.isCurvedSlide && !b.isZipline &&
+        b.stageIdx === bot.currentStage &&
+        bot.pos.z <= b.startZ + 1.5 &&
+        bot.pos.z >= b.endZ - 0.5 &&
+        Math.abs(bot.pos.x - LANES[b.laneIdx]) < 2.5
+      );
       const nextConn = CONNECTIONS.find(c => c.from === bot.currentStage);
       const isVerticalNext = (nextConn && nextConn.type === 'vertical');
 
@@ -1574,6 +2578,14 @@
         if (nextConn.type === 'slide') {
           bot.aiState = 'BUILD';
           if (bot.targetLane === undefined) bot.targetLane = Math.floor(Math.random() * 3);
+        } else if (nextConn.type === 'curved_slide') {
+          bot.aiState = 'BUILD';
+          bot.targetLane = 1;
+          bot.aiCapacityGoal = 0;
+        } else if (nextConn.type === 'zipline') {
+          bot.aiState = 'BUILD';
+          bot.targetLane = 1;
+          bot.aiCapacityGoal = 0;
         } else if (isVerticalNext) {
           if (bot.aiCapacityGoal < 18) bot.aiCapacityGoal = 18 + Math.floor(Math.random() * 4);
         }
@@ -1587,7 +2599,10 @@
           return;
         }
 
-        if (onBridge) { updateSingleCharacter(bot, 0, 1, dt); return; }
+        if (activeBridge) { 
+          updateSingleCharacter(bot, 0, 1, dt); 
+          return; 
+        }
         if (bot.pos.z > stage.z + stage.r * 0.85) { updateSingleCharacter(bot, 0, -1, dt); return; }
 
         let best = null, minDist = 999;
@@ -1611,9 +2626,9 @@
         updateSingleCharacter(bot, steer.x, steer.z, dt);
 
       } else if (bot.aiState === 'BUILD') {
-        const b = bridges.find(br => br.stageIdx === bot.currentStage && br.laneIdx === bot.targetLane);
+        const b = bridges.find(br => br.stageIdx === bot.currentStage && (br.isCurvedSlide || br.isZipline || br.laneIdx === bot.targetLane));
         if (b) {
-          const targetX = LANES[b.laneIdx];
+          const targetX = (b.isCurvedSlide || b.isZipline) ? 0 : LANES[b.laneIdx];
           const targetZ = bot.pos.z < b.startZ ? bot.pos.z - 2 : b.startZ - 0.5;
           const dx = targetX - bot.pos.x, dz = targetZ - bot.pos.z;
           const len = Math.hypot(dx, dz) || 1;
@@ -1661,8 +2676,26 @@
       scatterBricks(loser, drops);
       const kx = loser.pos.x - winner.pos.x, kz = loser.pos.z - winner.pos.z;
       const mag = Math.hypot(kx, kz) || 1;
-      loser.pos.x += (kx / mag) * 2.0;
-      loser.pos.z += (kz / mag) * 2.0;
+      const pushX = (kx / mag) * 2.0;
+      const pushZ = (kz / mag) * 2.0;
+      const stage = STAGES[loser.currentStage];
+      if (stage) {
+        const nextX = loser.pos.x + pushX;
+        const nextZ = loser.pos.z + pushZ;
+        const distToCenter = Math.hypot(nextX, nextZ - stage.z);
+        if (distToCenter > stage.r) {
+          const normX = nextX / distToCenter;
+          const normZ = (nextZ - stage.z) / distToCenter;
+          loser.pos.x = normX * (stage.r - 0.5);
+          loser.pos.z = stage.z + normZ * (stage.r - 0.5);
+        } else {
+          loser.pos.x = nextX;
+          loser.pos.z = nextZ;
+        }
+      } else {
+        loser.pos.x += pushX;
+        loser.pos.z += pushZ;
+      }
     }
 
     function updateHUD() {
@@ -1698,15 +2731,47 @@
         resultModal.classList.add('hidden');
         resultModal.style.display = 'none';
       }
-      isGameOver = false; placedPlankCount = 0; timeLeft = 120;
+      isGameOver = false; placedPlankCount = 0; timeLeft = 300;
       floorBlocks.forEach(b => scene.remove(b.mesh)); floorBlocks = [];
+      floorItems.forEach(item => { if (item.group) scene.remove(item.group); }); floorItems = [];
+      curvedSlideBonusBlocks.forEach(b => { if (b.mesh) scene.remove(b.mesh); });
+      curvedSlideBonusBlocks = [];
+      ziplineBonusBlocks.forEach(b => { if (b.mesh) scene.remove(b.mesh); });
+      ziplineBonusBlocks = [];
+      landingShockwaves.forEach(sw => scene.remove(sw.mesh));
+      landingShockwaves = [];
+      puffClouds.forEach(p => scene.remove(p.mesh));
+      puffClouds = [];
+      speedStepRings.forEach(sr => scene.remove(sr.mesh));
+      speedStepRings = [];
+      speedItemIslandCounter = 0;
       buildWorld();
       
       characters.forEach(c => {
         while (c.stackCount > 0) removeBrickFromCharacter(c);
         c.stunTimer = 0; c.invulnerableTimer = 0; c.currentStage = 0; c.isJumping = false; c.onSlide = false;
+        c.onCurvedSlide = false; c.curvedSlideProgress = 0; c.curvedSlideOffset = 0; c.slideCooldown = 0;
+        c.onZipline = false; c.ziplineProgress = 0; c.activeZipline = null;
         c.lastPlankIdx = -1;
+        c.speedBoostActive = false;
+        c.speedBoostUntilStage = -1;
+        c.puffTimer = 0;
+        if (c.meshObj.footAura) c.meshObj.footAura.visible = false;
+        if (!c.isPlayer) c.botSlideOffsetTarget = 0;
         c.meshObj.root.visible = true;
+
+        if (c.meshObj.trolleyGroup) c.meshObj.trolleyGroup.visible = false;
+        c.meshObj.stackGroup.scale.set(1.0, 1.0, 1.0);
+        c.meshObj.stackGroup.position.set(0, 0.65, -0.42);
+
+        c.meshObj.leftArm.position.set(-0.48, 0.68, 0);
+        c.meshObj.rightArm.position.set(0.48, 0.68, 0);
+        c.meshObj.leftArm.rotation.set(0, 0, 0);
+        c.meshObj.rightArm.rotation.set(0, 0, 0);
+        c.meshObj.leftLeg.rotation.set(0, 0, 0);
+        c.meshObj.rightLeg.rotation.set(0, 0, 0);
+        c.meshObj.body.position.y = 0.65;
+        c.meshObj.head.position.y = 1.25;
       });
       player.pos.set(0, STAGES[0].y, STAGES[0].z + 4);
       characters[1].pos.set(-4.0, STAGES[0].y, STAGES[0].z + 4);
@@ -1859,12 +2924,82 @@
         if (timeLeft <= 0) { timeLeft = 0; onTimeUp(); }
         updateTimerHUD();
 
-        // 浮遊雲のゆっくりとした自然な漂いアニメーション
         const timeSec = currentTime * 0.001;
+
+        // アイテム（大粒クリスタル＆床サークル）の回転・浮遊・脈動アニメーション
+        floorItems.forEach(item => {
+          if (item.active && item.group) {
+            if (item.crystal) {
+              item.crystal.rotation.y = timeSec * 3.2;
+              item.crystal.rotation.z = Math.sin(timeSec * 2.5) * 0.25;
+              item.crystal.position.y = 1.35 + Math.sin(timeSec * 4.5 + item.stageIdx) * 0.22;
+            }
+            if (item.beaconRing) {
+              const pulse = 1.0 + Math.sin(timeSec * 5.0) * 0.25;
+              item.beaconRing.scale.set(pulse, pulse, pulse);
+            }
+          }
+        });
+
+        // ミニちぎれ雲（砂煙パフ）のフェード＆縮小更新
+        for (let i = puffClouds.length - 1; i >= 0; i--) {
+          const puff = puffClouds[i];
+          puff.life += dt;
+          const prog = puff.life / puff.maxLife;
+          if (prog >= 1.0) {
+            scene.remove(puff.mesh);
+            puffClouds.splice(i, 1);
+          } else {
+            const currentScale = puff.initScale * (1.0 - prog * 0.85);
+            puff.mesh.scale.set(currentScale, currentScale, currentScale);
+            puff.mesh.position.y += dt * 0.45;
+          }
+        }
+
+        // スピードUP中：足元ゴールド波紋（ステップリング）の拡散・フェード更新
+        for (let i = speedStepRings.length - 1; i >= 0; i--) {
+          const sRing = speedStepRings[i];
+          sRing.life += dt;
+          const prog = sRing.life / sRing.maxLife;
+          if (prog >= 1.0) {
+            scene.remove(sRing.mesh);
+            speedStepRings.splice(i, 1);
+          } else {
+            sRing.scale += dt * 3.4;
+            sRing.mesh.scale.set(sRing.scale, sRing.scale, sRing.scale);
+            sRing.mesh.material.opacity = (1.0 - prog) * 0.75;
+          }
+        }
+
+        curvedSlideBonusBlocks.forEach(blk => {
+          if (!blk.collected && blk.mesh) {
+            blk.mesh.rotation.y = timeSec * 2.8 + blk.t * 4.0;
+          }
+        });
+
+        ziplineBonusBlocks.forEach(blk => {
+          if (!blk.collected && blk.mesh) {
+            blk.mesh.rotation.y = timeSec * 3.2 + blk.t * 4.5;
+            blk.mesh.position.y = blk.baseY + Math.sin(timeSec * 3.5 + blk.zi) * 0.14;
+          }
+        });
+
         cloudObjects.forEach(c => {
           c.mesh.position.y = c.baseY + Math.sin(timeSec + c.offset) * 0.4;
           c.mesh.rotation.y = Math.sin(timeSec * 0.3 + c.offset) * 0.08;
         });
+
+        for (let i = landingShockwaves.length - 1; i >= 0; i--) {
+          const sw = landingShockwaves[i];
+          sw.life += dt;
+          sw.scale += dt * 6.5;
+          sw.mesh.scale.set(sw.scale, sw.scale, sw.scale);
+          sw.mesh.material.opacity = Math.max(0, 0.9 - sw.life * 2.2);
+          if (sw.life > 0.45) {
+            scene.remove(sw.mesh);
+            landingShockwaves.splice(i, 1);
+          }
+        }
       }
 
       if (player && camera) {
@@ -1872,19 +3007,36 @@
         const nextConn = CONNECTIONS.find(c => c.from === player.currentStage);
         const isVerticalClimb = (nextConn && nextConn.type === 'vertical' && player.pos.z < (currentStageObj ? currentStageObj.z - currentStageObj.r * 0.8 : 0));
         const isSlideRiding = player.onSlide;
+        const isCurvedRiding = player.onCurvedSlide;
+        const isZiplining = player.onZipline;
 
-        // 高度とアクションに応じた動的カメラワーク
         let targetCamX = player.pos.x * 0.2;
         let targetCamY = player.pos.y + 24; 
         let targetCamZ = player.pos.z + 12;
+        let targetLookX = player.pos.x * 0.1;
         let targetLookY = player.pos.y;
-        let targetFOV = 60;
+        let targetLookAheadZ = player.pos.z - 5;
+        // スピードUP中は画面が自然に広々とする程度（FOV 60 -> 63）に調整
+        let targetFOV = player.speedBoostActive ? 63 : 60;
 
         if (isVerticalClimb) {
           targetCamY = player.pos.y + 26;
           targetCamZ = player.pos.z + 16;
           targetLookY = player.pos.y + 4;
           targetFOV = 65;
+        } else if (isZiplining) {
+          targetCamX = player.pos.x + 5.6;
+          targetCamY = player.pos.y + 4.2;
+          targetCamZ = player.pos.z + 11.5;
+          targetLookX = player.pos.x - 0.4;
+          targetLookY = player.pos.y + 0.6;
+          targetLookAheadZ = player.pos.z - 18;
+          targetFOV = 68;
+        } else if (isCurvedRiding) {
+          targetCamY = player.pos.y + 16;
+          targetCamZ = player.pos.z + 9;
+          targetLookY = player.pos.y - 1.2;
+          targetFOV = 67;
         } else if (isSlideRiding) {
           targetCamY = player.pos.y + 18;
           targetCamZ = player.pos.z + 9;
@@ -1892,18 +3044,17 @@
           targetFOV = 63;
         }
 
-        camera.position.x = THREE.MathUtils.lerp(camera.position.x, targetCamX, 0.18);
-        camera.position.y = THREE.MathUtils.lerp(camera.position.y, targetCamY, 0.25);
-        camera.position.z = THREE.MathUtils.lerp(camera.position.z, targetCamZ, 0.18);
+        camera.position.x = THREE.MathUtils.lerp(camera.position.x, targetCamX, 0.14);
+        camera.position.y = THREE.MathUtils.lerp(camera.position.y, targetCamY, 0.16);
+        camera.position.z = THREE.MathUtils.lerp(camera.position.z, targetCamZ, 0.14);
 
         if (Math.abs(camera.fov - targetFOV) > 0.1) {
-          camera.fov = THREE.MathUtils.lerp(camera.fov, targetFOV, 0.1);
+          camera.fov = THREE.MathUtils.lerp(camera.fov, targetFOV, 0.08);
           camera.updateProjectionMatrix();
         }
         
-        camera.lookAt(player.pos.x * 0.1, targetLookY, player.pos.z - 5);
+        camera.lookAt(targetLookX, targetLookY, targetLookAheadZ);
 
-        // 海面メッシュをプレイヤーの進行に合わせて広大に追従
         if (seaMesh) {
           seaMesh.position.z = player.pos.z - 200;
         }
