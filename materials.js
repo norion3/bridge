@@ -12,7 +12,11 @@ export const plankGeo = new THREE.BoxGeometry(3.6, 0.65, 1.6);
 export const verticalPlankGeo = new THREE.BoxGeometry(3.6, 1.25, 1.8);
 export const islandGeo = new THREE.CylinderGeometry(1, 1, 0.5, 36);
 
-export const itemCrystalGeo = new THREE.OctahedronGeometry(0.68, 0);
+// 【フェーズ1】アイテム形状の差別化用ジオメトリを追加
+export const itemCrystalGeo = new THREE.OctahedronGeometry(0.68, 0); // 攻撃用
+export const itemSpeedGeo = new THREE.TetrahedronGeometry(0.75, 1); // スピード用 (稲妻・星型の代用)
+export const itemMagnetGeo = new THREE.TorusGeometry(0.55, 0.15, 8, 16, Math.PI); // マグネット用 (U字型)
+
 export const itemBeaconRingGeo = new THREE.RingGeometry(0.55, 0.95, 32);
 itemBeaconRingGeo.rotateX(-Math.PI / 2);
 
@@ -109,7 +113,7 @@ export const sharedMats = {
   redPlank: new THREE.MeshStandardMaterial({ color: TEAMS.RED.hex, emissive: TEAMS.RED.emissive, emissiveIntensity: 0.15, roughness: 0.3 }),
   yellowPlank: new THREE.MeshStandardMaterial({ color: TEAMS.YELLOW.hex, emissive: TEAMS.YELLOW.emissive, emissiveIntensity: 0.15, roughness: 0.3 }),
 
-  blockBlue: new THREE.MeshStandardMaterial({ color: 0x2563eb, emissive: 0x1d4ed8, emissiveIntensity: 0.2, roughness: 0.35, metalness: 0.05 }),
+  blockBlue: new THREE.MeshStandardMaterial({ color: TEAMS.BLUE.hex, emissive: TEAMS.BLUE.emissive, emissiveIntensity: 0.2, roughness: 0.35, metalness: 0.05 }),
   blockRed: new THREE.MeshStandardMaterial({ color: TEAMS.RED.hex, emissive: TEAMS.RED.emissive, emissiveIntensity: 0.2, roughness: 0.35 }),
   blockYellow: new THREE.MeshStandardMaterial({ color: TEAMS.YELLOW.hex, emissive: TEAMS.YELLOW.emissive, emissiveIntensity: 0.2, roughness: 0.35 }),
   blockNeutral: new THREE.MeshStandardMaterial({ color: TEAMS.NEUTRAL.hex, emissive: TEAMS.NEUTRAL.emissive, emissiveIntensity: 0.2, roughness: 0.35 }),
@@ -248,9 +252,9 @@ export function updatePlayerStackMaterials(stackCount) {
   let metal = 0.1;
 
   if (stackCount < 30) {
-    bColor.setHex(0x2563eb);
-    tColor.setHex(0x60a5fa);
-    emColor.setHex(0x1d4ed8);
+    bColor.setHex(TEAMS.BLUE.hex);
+    tColor.setHex(0x22d3ee);
+    emColor.setHex(TEAMS.BLUE.emissive);
     emIntensity = 0.15;
     rough = 0.35;
     metal = 0.05;
@@ -292,6 +296,8 @@ export const sharedGeometriesSet = new Set([
   verticalPlankGeo,
   islandGeo,
   itemCrystalGeo,
+  itemSpeedGeo,
+  itemMagnetGeo,
   itemBeaconRingGeo,
   speedStepRingGeo,
   puffCloudGeo,

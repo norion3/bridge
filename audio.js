@@ -2,33 +2,59 @@
 export class SoundEngine {
   constructor() {
     this.ctx = null;
+    this.masterGain = null;
+    this.compressor = null;
     this.muted = true;
     this.lastSlideSound = 0;
     this.lastZipSound = 0;
   }
+
   init() {
     if (!this.ctx) {
       const AudioContext = window.AudioContext || window.webkitAudioContext;
-      if (AudioContext) this.ctx = new AudioContext();
+      if (AudioContext) {
+        this.ctx = new AudioContext();
+        
+        // コンプレッサーの導入によるクリッピング（音割れ）の完全防止
+        this.masterGain = this.ctx.createGain();
+        this.masterGain.gain.value = 0.8;
+        
+        this.compressor = this.ctx.createDynamicsCompressor();
+        this.compressor.threshold.value = -24;
+        this.compressor.knee.value = 30;
+        this.compressor.ratio.value = 12;
+        this.compressor.attack.value = 0.003;
+        this.compressor.release.value = 0.25;
+
+        this.masterGain.connect(this.compressor);
+        this.compressor.connect(this.ctx.destination);
+      }
     }
-    if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume();
+    if (this.ctx && this.ctx.state === 'suspended') {
+      this.ctx.resume();
+    }
   }
+
   toggleMute() {
     this.muted = !this.muted;
     return this.muted;
   }
+
   autoDisconnect(osc, ...nodes) {
     if (!osc) return;
     osc.onended = () => {
       try {
         osc.disconnect();
         nodes.forEach(n => {
-          if (n && n.disconnect) n.disconnect();
+          if (n && typeof n.disconnect === 'function') n.disconnect();
         });
         osc.onended = null;
-      } catch(e) {}
+      } catch (e) {
+        // 例外キャッチによるクラッシュ防止
+      }
     };
   }
+
   playCollect(pitch = 1) {
     if (this.muted || !this.ctx) return;
     try {
@@ -41,12 +67,13 @@ export class SoundEngine {
       gain.gain.setValueAtTime(0.2, now);
       gain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
       osc.connect(gain);
-      gain.connect(this.ctx.destination);
+      gain.connect(this.masterGain);
       this.autoDisconnect(osc, gain);
       osc.start(now);
       osc.stop(now + 0.09);
     } catch(e) {}
   }
+
   playGateBoost() {
     if (this.muted || !this.ctx) return;
     try {
@@ -61,13 +88,14 @@ export class SoundEngine {
         gain.gain.setValueAtTime(0.25, start);
         gain.gain.exponentialRampToValueAtTime(0.001, start + 0.16);
         osc.connect(gain);
-        gain.connect(this.ctx.destination);
+        gain.connect(this.masterGain);
         this.autoDisconnect(osc, gain);
         osc.start(start);
         osc.stop(start + 0.17);
       });
     } catch(e) {}
   }
+
   playItemGet() {
     if (this.muted || !this.ctx) return;
     try {
@@ -80,7 +108,7 @@ export class SoundEngine {
       gain1.gain.setValueAtTime(0.28, now);
       gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
       osc1.connect(gain1);
-      gain1.connect(this.ctx.destination);
+      gain1.connect(this.masterGain);
       this.autoDisconnect(osc1, gain1);
       osc1.start(now);
       osc1.stop(now + 0.23);
@@ -93,12 +121,13 @@ export class SoundEngine {
       gain2.gain.setValueAtTime(0.32, now + 0.04);
       gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
       osc2.connect(gain2);
-      gain2.connect(this.ctx.destination);
+      gain2.connect(this.masterGain);
       this.autoDisconnect(osc2, gain2);
       osc2.start(now + 0.04);
       osc2.stop(now + 0.29);
     } catch(e) {}
   }
+
   playAttackShoot() {
     if (this.muted || !this.ctx) return;
     try {
@@ -111,7 +140,7 @@ export class SoundEngine {
       gain1.gain.setValueAtTime(0.26, now);
       gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.13);
       osc1.connect(gain1);
-      gain1.connect(this.ctx.destination);
+      gain1.connect(this.masterGain);
       this.autoDisconnect(osc1, gain1);
       osc1.start(now);
       osc1.stop(now + 0.14);
@@ -124,12 +153,13 @@ export class SoundEngine {
       gain2.gain.setValueAtTime(0.24, now + 0.02);
       gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
       osc2.connect(gain2);
-      gain2.connect(this.ctx.destination);
+      gain2.connect(this.masterGain);
       this.autoDisconnect(osc2, gain2);
       osc2.start(now + 0.02);
       osc2.stop(now + 0.16);
     } catch(e) {}
   }
+
   playAttackHit() {
     if (this.muted || !this.ctx) return;
     try {
@@ -142,7 +172,7 @@ export class SoundEngine {
       gain1.gain.setValueAtTime(0.42, now);
       gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
       osc1.connect(gain1);
-      gain1.connect(this.ctx.destination);
+      gain1.connect(this.masterGain);
       this.autoDisconnect(osc1, gain1);
       osc1.start(now);
       osc1.stop(now + 0.26);
@@ -155,12 +185,13 @@ export class SoundEngine {
       gain2.gain.setValueAtTime(0.26, now);
       gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
       osc2.connect(gain2);
-      gain2.connect(this.ctx.destination);
+      gain2.connect(this.masterGain);
       this.autoDisconnect(osc2, gain2);
       osc2.start(now);
       osc2.stop(now + 0.17);
     } catch(e) {}
   }
+
   playDrainCollect(pitchStep = 0) {
     if (this.muted || !this.ctx) return;
     try {
@@ -176,7 +207,7 @@ export class SoundEngine {
       gain.gain.setValueAtTime(0.32, now);
       gain.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
       osc.connect(gain);
-      gain.connect(this.ctx.destination);
+      gain.connect(this.masterGain);
       this.autoDisconnect(osc, gain);
       osc.start(now);
       osc.stop(now + 0.16);
@@ -189,12 +220,13 @@ export class SoundEngine {
       cGain.gain.setValueAtTime(0.20, now + 0.02);
       cGain.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
       chime.connect(cGain);
-      cGain.connect(this.ctx.destination);
+      cGain.connect(this.masterGain);
       this.autoDisconnect(chime, cGain);
       chime.start(now + 0.02);
       chime.stop(now + 0.15);
     } catch(e) {}
   }
+
   playMagnetCharge() {
     if (this.muted || !this.ctx) return;
     try {
@@ -207,7 +239,7 @@ export class SoundEngine {
       gain1.gain.setValueAtTime(0.24, now);
       gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
       osc1.connect(gain1);
-      gain1.connect(this.ctx.destination);
+      gain1.connect(this.masterGain);
       this.autoDisconnect(osc1, gain1);
       osc1.start(now);
       osc1.stop(now + 0.36);
@@ -220,12 +252,13 @@ export class SoundEngine {
       gain2.gain.setValueAtTime(0.18, now + 0.05);
       gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
       osc2.connect(gain2);
-      gain2.connect(this.ctx.destination);
+      gain2.connect(this.masterGain);
       this.autoDisconnect(osc2, gain2);
       osc2.start(now + 0.05);
       osc2.stop(now + 0.36);
     } catch(e) {}
   }
+
   playMagnetDock(step = 0) {
     if (this.muted || !this.ctx) return;
     try {
@@ -241,12 +274,13 @@ export class SoundEngine {
       gain.gain.setValueAtTime(0.24, now);
       gain.gain.exponentialRampToValueAtTime(0.001, now + 0.07);
       osc.connect(gain);
-      gain.connect(this.ctx.destination);
+      gain.connect(this.masterGain);
       this.autoDisconnect(osc, gain);
       osc.start(now);
       osc.stop(now + 0.08);
     } catch(e) {}
   }
+
   playBuildPlank() {
     if (this.muted || !this.ctx) return;
     try {
@@ -259,12 +293,13 @@ export class SoundEngine {
       gain.gain.setValueAtTime(0.25, now);
       gain.gain.exponentialRampToValueAtTime(0.001, now + 0.07);
       osc.connect(gain);
-      gain.connect(this.ctx.destination);
+      gain.connect(this.masterGain);
       this.autoDisconnect(osc, gain);
       osc.start(now);
       osc.stop(now + 0.08);
     } catch(e) {}
   }
+
   playSlide() {
     if (this.muted || !this.ctx) return;
     const now = this.ctx.currentTime;
@@ -279,12 +314,13 @@ export class SoundEngine {
       gain.gain.setValueAtTime(0.08, now);
       gain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
       osc.connect(gain);
-      gain.connect(this.ctx.destination);
+      gain.connect(this.masterGain);
       this.autoDisconnect(osc, gain);
       osc.start(now);
       osc.stop(now + 0.11);
     } catch(e) {}
   }
+
   playZipline(speedProgress = 0.5) {
     if (this.muted || !this.ctx) return;
     const now = this.ctx.currentTime;
@@ -300,12 +336,13 @@ export class SoundEngine {
       gain.gain.setValueAtTime(0.08, now);
       gain.gain.exponentialRampToValueAtTime(0.001, now + 0.075);
       osc.connect(gain);
-      gain.connect(this.ctx.destination);
+      gain.connect(this.masterGain);
       this.autoDisconnect(osc, gain);
       osc.start(now);
       osc.stop(now + 0.08);
     } catch(e) {}
   }
+
   playLanding() {
     if (this.muted || !this.ctx) return;
     try {
@@ -318,7 +355,7 @@ export class SoundEngine {
       gain1.gain.setValueAtTime(0.42, now);
       gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
       osc1.connect(gain1);
-      gain1.connect(this.ctx.destination);
+      gain1.connect(this.masterGain);
       this.autoDisconnect(osc1, gain1);
       osc1.start(now);
       osc1.stop(now + 0.19);
@@ -331,12 +368,13 @@ export class SoundEngine {
       gain2.gain.setValueAtTime(0.28, now + 0.02);
       gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.24);
       osc2.connect(gain2);
-      gain2.connect(this.ctx.destination);
+      gain2.connect(this.masterGain);
       this.autoDisconnect(osc2, gain2);
       osc2.start(now + 0.02);
       osc2.stop(now + 0.25);
     } catch(e) {}
   }
+
   playJump(tierId = 'normal') {
     if (this.muted || !this.ctx) return;
     try {
@@ -350,7 +388,7 @@ export class SoundEngine {
         gain.gain.setValueAtTime(0.35, now);
         gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
         osc.connect(gain);
-        gain.connect(this.ctx.destination);
+        gain.connect(this.masterGain);
         this.autoDisconnect(osc, gain);
         osc.start(now);
         osc.stop(now + 0.26);
@@ -363,7 +401,7 @@ export class SoundEngine {
         gain1.gain.setValueAtTime(0.34, now);
         gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.42);
         osc1.connect(gain1);
-        gain1.connect(this.ctx.destination);
+        gain1.connect(this.masterGain);
         this.autoDisconnect(osc1, gain1);
         osc1.start(now);
         osc1.stop(now + 0.43);
@@ -376,7 +414,7 @@ export class SoundEngine {
         gain2.gain.setValueAtTime(0.25, now);
         gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.42);
         osc2.connect(gain2);
-        gain2.connect(this.ctx.destination);
+        gain2.connect(this.masterGain);
         this.autoDisconnect(osc2, gain2);
         osc2.start(now);
         osc2.stop(now + 0.43);
@@ -389,7 +427,7 @@ export class SoundEngine {
         subGain.gain.setValueAtTime(0.58, now);
         subGain.gain.exponentialRampToValueAtTime(0.001, now + 0.32);
         subOsc.connect(subGain);
-        subGain.connect(this.ctx.destination);
+        subGain.connect(this.masterGain);
         this.autoDisconnect(subOsc, subGain);
         subOsc.start(now);
         subOsc.stop(now + 0.33);
@@ -408,7 +446,7 @@ export class SoundEngine {
         sawGain.gain.exponentialRampToValueAtTime(0.001, now + 0.65);
         sawOsc.connect(filter);
         filter.connect(sawGain);
-        sawGain.connect(this.ctx.destination);
+        sawGain.connect(this.masterGain);
         this.autoDisconnect(sawOsc, filter, sawGain);
         sawOsc.start(now);
         sawOsc.stop(now + 0.66);
@@ -423,7 +461,7 @@ export class SoundEngine {
           chGain.gain.setValueAtTime(0.24, startT);
           chGain.gain.exponentialRampToValueAtTime(0.001, startT + 0.30);
           chOsc.connect(chGain);
-          chGain.connect(this.ctx.destination);
+          chGain.connect(this.masterGain);
           this.autoDisconnect(chOsc, chGain);
           chOsc.start(startT);
           chOsc.stop(startT + 0.32);
@@ -431,6 +469,7 @@ export class SoundEngine {
       }
     } catch(e) {}
   }
+
   playTackle() {
     if (this.muted || !this.ctx) return;
     try {
@@ -443,12 +482,13 @@ export class SoundEngine {
       gain.gain.setValueAtTime(0.3, now);
       gain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
       osc.connect(gain);
-      gain.connect(this.ctx.destination);
+      gain.connect(this.masterGain);
       this.autoDisconnect(osc, gain);
       osc.start(now);
       osc.stop(now + 0.19);
     } catch(e) {}
   }
+
   playVictory() {
     if (this.muted || !this.ctx) return;
     try {
@@ -462,7 +502,7 @@ export class SoundEngine {
         gain.gain.setValueAtTime(0.25, start);
         gain.gain.exponentialRampToValueAtTime(0.001, start + 0.35);
         osc.connect(gain);
-        gain.connect(this.ctx.destination);
+        gain.connect(this.masterGain);
         this.autoDisconnect(osc, gain);
         osc.start(start);
         osc.stop(start + 0.37);

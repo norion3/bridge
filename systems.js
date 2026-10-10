@@ -216,7 +216,6 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
 
   const curStageObj = STAGES[char.currentStage];
 
-  // AABB Early Exit：島の中央〜奥側にいる間は橋判定ループをスキップ
   const isFarFromBridges = curStageObj &&
     char.lastPlankIdx < 0 &&
     !char.onSlide && !char.onCurvedSlide && !char.onZipline &&
@@ -384,7 +383,7 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
               blocked = true;
               const blockedZ = onBridge.startZ - ((pIndex - 1) / onBridge.planks.length) * (onBridge.startZ - onBridge.endZ);
               char.pos.x = LANES[onBridge.laneIdx];
-              char.pos.z = blockedZ + 0.12; // 0.2 -> 0.12 へ平滑化
+              char.pos.z = blockedZ + 0.12; 
               char.pos.y = onBridge.planks[pIndex - 1].y;
               if (!char.isPlayer) {
                 char.aiState = 'COLLECT';
@@ -429,7 +428,7 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
                 blocked = true;
                 const blockedZ = onBridge.startZ - (pIndex / onBridge.planks.length) * (onBridge.startZ - onBridge.endZ);
                 char.pos.x = LANES[onBridge.laneIdx];
-                char.pos.z = blockedZ + 0.12; // 0.2 -> 0.12 へ平滑化
+                char.pos.z = blockedZ + 0.12; 
                 char.pos.y = currentP.y;
                 if (!char.isPlayer) {
                   char.aiState = 'COLLECT';
@@ -554,7 +553,7 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
               team: blk.team,
               startPos: startVec,
               progress: 0,
-              duration: 0.55 // 0.36 -> 0.55 に統一
+              duration: 0.55 // 【フェーズ2】0.36 -> 0.55 に延長
             });
           }
         }
@@ -582,8 +581,25 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
       char.meshObj.rightLeg.rotation.x = 0;
 
       triggerLandingShockwave(char.pos.x, char.pos.y, char.pos.z, tier.shockRadius);
-      // トランポリン着地直後の理不尽タックル被弾を防ぐ保護無敵時間（0.6秒）
-      char.invulnerableTimer = Math.max(char.invulnerableTimer, 0.6);
+      
+      // 【フェーズ2】トランポリン着地直後の理不尽タックル被弾を防ぐ保護無敵時間（0.6秒 -> 1.5秒へ延長）
+      char.invulnerableTimer = Math.max(char.invulnerableTimer, 1.5);
+      
+      // 【フェーズ2】リスキル防止のための着地ノックバック処理
+      for (let i = 0; i < characters.length; i++) {
+        const other = characters[i];
+        if (other !== char && other.currentStage === char.currentStage) {
+          const dx = other.pos.x - char.pos.x;
+          const dz = other.pos.z - char.pos.z;
+          const distSq = dx * dx + dz * dz;
+          if (distSq < 9.0) { // 半径3m以内を安全地帯として押し出す
+            const dist = Math.sqrt(distSq) || 1;
+            other.pos.x += (dx / dist) * 1.5;
+            other.pos.z += (dz / dist) * 1.5;
+            other.stunTimer = Math.max(other.stunTimer, 0.8);
+          }
+        }
+      }
 
       if (char.isPlayer) {
         if (soundRef) soundRef.playLanding();
@@ -758,7 +774,6 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     } else {
       const t = Math.min(0.999, Math.max(0, char.curvedSlideProgress));
 
-      // LUT事前補間
       let ptX, ptY, ptZ, tanX, tanZ;
       if (b.lutSamples && b.lutSamples.length > 1) {
         const lutCount = b.lutSamples.length - 1;

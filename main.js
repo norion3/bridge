@@ -133,10 +133,15 @@ export function setupControls() {
     if (!input.active) return;
     const dx = x - startX, dy = y - startY;
     const dist = Math.hypot(dx, dy), maxDist = 55;
-    if (dist > 0) {
+    
+    // 【フェーズ1】デッドゾーンの追加（指を中心に少し戻した時は完全に停止する）
+    if (dist > 5) {
       const clamped = Math.min(dist, maxDist);
       input.x = Math.cos(Math.atan2(dy, dx)) * (clamped / maxDist);
       input.y = Math.sin(Math.atan2(dy, dx)) * (clamped / maxDist);
+    } else {
+      input.x = 0;
+      input.y = 0;
     }
   }
   function onPointerEnd() {
@@ -338,7 +343,11 @@ export function animate(currentTime) {
         if (item.crystal) {
           item.crystal.rotation.y = timeSec * 3.2;
           item.crystal.rotation.z = Math.sin(timeSec * 2.5) * 0.25;
-          item.crystal.position.y = 1.35 + Math.sin(timeSec * 4.5 + item.stageIdx) * 0.22;
+          if (item.type !== 'magnet') {
+            item.crystal.position.y = 1.35 + Math.sin(timeSec * 4.5 + item.stageIdx) * 0.22;
+          } else {
+            item.crystal.position.y = 1.15 + Math.sin(timeSec * 4.5 + item.stageIdx) * 0.22;
+          }
         }
         if (item.beaconRing) {
           const pulse = 1.0 + Math.sin(timeSec * 5.0) * 0.25;
@@ -408,7 +417,7 @@ export function animate(currentTime) {
               db.index = spawned;
               db.delay = spawned * 0.09;
               db.progress = 0;
-              db.duration = 0.75; // ★ 視認性向上のため 0.55s -> 0.75s に延長
+              db.duration = 0.75;
 
               const sOffset = _tempVec3B.set(
                 (Math.random() - 0.5) * 1.5,
@@ -417,7 +426,7 @@ export function animate(currentTime) {
               );
               db.startPos.copy(p.target.pos).add(sOffset);
               db.mesh.position.copy(db.startPos);
-              db.mesh.scale.set(1.15, 1.15, 1.15); // フワッと目立つサイズ
+              db.mesh.scale.set(1.15, 1.15, 1.15);
               db.mesh.visible = true;
               spawned++;
             }
@@ -449,13 +458,11 @@ export function animate(currentTime) {
       _tempVec3A.y += 1.4;
       _tempVec3A.z += 0.2;
 
-      // ★ イージングによる緩急と高いアーチ軌道（上空 3.6m までフワッと浮上）
       const easeT = prog * prog * (3 - 2 * prog);
       _tempVec3B.lerpVectors(d.startPos, _tempVec3A, easeT);
       _tempVec3B.y += Math.sin(prog * Math.PI) * 3.6;
       d.mesh.position.copy(_tempVec3B);
 
-      // 飛翔中の回転とふっくらスケール
       const flightScale = 1.0 + Math.sin(prog * Math.PI) * 0.25;
       d.mesh.scale.set(flightScale, flightScale, flightScale);
       d.mesh.rotation.y += dt * 14;
@@ -465,7 +472,6 @@ export function animate(currentTime) {
         addBrickToCharacter(d.targetChar, d.targetChar.team, 1);
         if (d.targetChar.isPlayer) {
           sound.playDrainCollect(d.index || 0);
-          // ★ 吸着完了時の光リングポップ演出（マゼンタ）
           triggerLandingShockwave(_tempVec3A.x, _tempVec3A.y, _tempVec3A.z, 0.9, 0xf472b6);
         }
         d.active = false;
@@ -475,7 +481,7 @@ export function animate(currentTime) {
 
     for (let i = activeMagnetBlocks.length - 1; i >= 0; i--) {
       const mb = activeMagnetBlocks[i];
-      const flightDuration = Math.max(mb.duration || 0.36, 0.55); // ★ 0.36s -> 0.55s に延長
+      const flightDuration = Math.max(mb.duration || 0.36, 0.55);
       mb.progress += dt / flightDuration;
       const prog = Math.min(1.0, mb.progress);
 
@@ -484,13 +490,11 @@ export function animate(currentTime) {
       _tempVec3A.y += 0.85 + stackH;
       _tempVec3A.z -= 0.35;
 
-      // ★ 高い放物線アーチ（1.35m -> 3.2m）と滑らかな加速イージング
       const easeT = prog * prog * (3 - 2 * prog);
       _tempVec3B.lerpVectors(mb.startPos, _tempVec3A, easeT);
       _tempVec3B.y += Math.sin(prog * Math.PI) * 3.2;
       mb.mesh.position.copy(_tempVec3B);
 
-      // 飛翔中の目立つ拡大パルス
       const pulseScale = 1.0 + Math.sin(prog * Math.PI) * 0.28;
       mb.mesh.scale.set(pulseScale, pulseScale, pulseScale);
       mb.mesh.rotation.y += dt * 12;
@@ -500,7 +504,6 @@ export function animate(currentTime) {
         addBrickToCharacter(mb.targetChar, mb.targetChar.team, 1);
         if (mb.targetChar.isPlayer) {
           sound.playMagnetDock(incMagnetDockStep());
-          // ★ 吸着完了時の光リングポップ演出（エメラルドグリーン）
           triggerLandingShockwave(_tempVec3A.x, _tempVec3A.y, _tempVec3A.z, 0.95, 0x34d399);
         }
         mb.targetChar.dockBounceTimer = 0.085;

@@ -12,6 +12,8 @@ import {
   verticalPlankGeo,
   islandGeo,
   itemCrystalGeo,
+  itemSpeedGeo,
+  itemMagnetGeo,
   itemBeaconRingGeo,
   COLOR_NEUTRAL_PLANK,
   COLOR_BLUE_PLANK,
@@ -292,7 +294,6 @@ export function createIslandMesh(r, y, z) {
   border.position.set(0, y, z);
   group.add(border);
 
-  // 3本のアンカーワイヤーをInstancedMeshに集約（ドローコール削減）
   const wireHeight = Math.max(12, y - (-45));
   const wireGeo = new THREE.CylinderGeometry(0.08, 0.08, wireHeight, 6);
   const wireInstanced = new THREE.InstancedMesh(wireGeo, sharedMats.anchorWire, 3);
@@ -349,19 +350,28 @@ export function spawnItem(scene, stageIdx, type = 'speed') {
 
   const itemGroup = new THREE.Group();
   let crystalMat, ringMat;
+  let crystalGeoToUse = itemCrystalGeo;
+
+  // 【フェーズ1】視認性向上のためのアイテム形状・マテリアル割り当て
   if (type === 'attack') {
     crystalMat = sharedMats.itemAttackCrystal;
     ringMat = sharedMats.itemAttackBeaconRing;
+    crystalGeoToUse = itemCrystalGeo;
   } else if (type === 'magnet') {
     crystalMat = sharedMats.itemMagnetCrystal;
     ringMat = sharedMats.itemMagnetBeaconRing;
+    crystalGeoToUse = itemMagnetGeo;
   } else {
     crystalMat = sharedMats.itemCrystal;
     ringMat = sharedMats.itemBeaconRing;
+    crystalGeoToUse = itemSpeedGeo;
   }
 
-  const crystal = new THREE.Mesh(itemCrystalGeo, crystalMat);
+  const crystal = new THREE.Mesh(crystalGeoToUse, crystalMat);
   crystal.position.y = 1.35;
+  if (type === 'magnet') {
+    crystal.rotation.x = -Math.PI / 2; // U字磁石形状を立てる
+  }
   crystal.castShadow = true;
   itemGroup.add(crystal);
 
@@ -880,7 +890,6 @@ export function extendCourse(scene) {
 }
 
 export function buildWorld(scene) {
-  // リトライ時にfloorBlocksByStage内の全ブロックメッシュをVRAMから完全に解放しMapをクリア
   floorBlocksByStage.forEach(bucket => {
     bucket.forEach(b => {
       disposeHierarchy(b.mesh);
@@ -933,6 +942,7 @@ export function buildWorld(scene) {
       scene.remove(item.group);
     }
   });
+  
   // ★ リトライ時のactiveMagnetBlocksメッシュも再帰的にVRAM完全解放
   activeMagnetBlocks.forEach(mb => {
     if (mb.mesh) {
@@ -992,6 +1002,18 @@ export function buildWorld(scene) {
 export function cleanupOldData(scene) {
   if (!player) return;
   const safeStage = Math.max(0, player.currentStage - 3);
+
+  // 【フェーズ2】アニメーション進行中のオブジェクトを参照から安全に切り離して破棄する
+  for (let i = activeMagnetBlocks.length - 1; i >= 0; i--) {
+    const mb = activeMagnetBlocks[i];
+    if (mb.targetChar && mb.targetChar.currentStage < safeStage) {
+      if (mb.mesh) {
+        disposeHierarchy(mb.mesh);
+        scene.remove(mb.mesh);
+      }
+      activeMagnetBlocks.splice(i, 1);
+    }
+  }
 
   for (let i = stageMeshes.length - 1; i >= 0; i--) {
     if (stageMeshes[i].stageIdx < safeStage) {

@@ -1,6 +1,6 @@
 // チーム設定および定数定義
 export const TEAMS = {
-  BLUE: { id: 'blue', name: 'あなた (青)', hex: 0x2563eb, emissive: 0x1d4ed8 },
+  BLUE: { id: 'blue', name: 'あなた (青)', hex: 0x06b6d4, emissive: 0x0891b2 },
   RED: { id: 'red', name: '赤Bot', hex: 0xef4444, emissive: 0xb91c1c },
   YELLOW: { id: 'yellow', name: '黄Bot', hex: 0xf59e0b, emissive: 0xb45309 },
   NEUTRAL: { id: 'neutral', name: '中立', hex: 0x94a3b8, emissive: 0x475569 }
