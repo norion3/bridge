@@ -26,6 +26,7 @@ import {
   curvedSlideBonusBlocks,
   ziplineBonusBlocks,
   activeMagnetBlocks,
+  cloudObjects,
   seaMesh,
   attackCamTimer,
   decrementAttackCamTimer,

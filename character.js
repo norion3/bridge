@@ -221,11 +221,12 @@ export function setupCharacters(scene, STAGES) {
     speedBoostActive: false, speedBoostTimer: 0, puffTimer: 0,
     magnetActive: false, magnetTimer: 0
   };
+  pMesh.root.position.copy(player.pos);
   characters.push(player);
 
   const b1Mesh = createCharacterMesh(TEAMS.RED);
   scene.add(b1Mesh.root);
-  characters.push({
+  const bot1 = {
     isPlayer: false, team: TEAMS.RED, meshObj: b1Mesh,
     pos: new THREE.Vector3(-4.0, STAGES[0].y, STAGES[0].z + 4),
     rotation: 0, stackCount: 0, currentStage: 0,
@@ -237,11 +238,13 @@ export function setupCharacters(scene, STAGES) {
     magnetActive: false, magnetTimer: 0,
     aiDirX: 0, aiDirZ: -1,
     searchCooldown: 0, targetBlock: null
-  });
+  };
+  b1Mesh.root.position.copy(bot1.pos);
+  characters.push(bot1);
 
   const b2Mesh = createCharacterMesh(TEAMS.YELLOW);
   scene.add(b2Mesh.root);
-  characters.push({
+  const bot2 = {
     isPlayer: false, team: TEAMS.YELLOW, meshObj: b2Mesh,
     pos: new THREE.Vector3(4.0, STAGES[0].y, STAGES[0].z + 4),
     rotation: 0, stackCount: 0, currentStage: 0,
@@ -253,7 +256,9 @@ export function setupCharacters(scene, STAGES) {
     magnetActive: false, magnetTimer: 0,
     aiDirX: 0, aiDirZ: -1,
     searchCooldown: 0.06, targetBlock: null
-  });
+  };
+  b2Mesh.root.position.copy(bot2.pos);
+  characters.push(bot2);
 
   return { player, characters };
 }
@@ -300,11 +305,14 @@ export function resetCharacters(STAGES) {
   });
   if (player && STAGES[0]) {
     player.pos.set(0, STAGES[0].y, STAGES[0].z + 4);
+    player.meshObj.root.position.copy(player.pos);
   }
   if (characters[1] && STAGES[0]) {
     characters[1].pos.set(-4.0, STAGES[0].y, STAGES[0].z + 4);
+    characters[1].meshObj.root.position.copy(characters[1].pos);
   }
   if (characters[2] && STAGES[0]) {
     characters[2].pos.set(4.0, STAGES[0].y, STAGES[0].z + 4);
+    characters[2].meshObj.root.position.copy(characters[2].pos);
   }
 }
