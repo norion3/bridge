@@ -933,8 +933,12 @@ export function buildWorld(scene) {
       scene.remove(item.group);
     }
   });
+  // ★ リトライ時のactiveMagnetBlocksメッシュも再帰的にVRAM完全解放
   activeMagnetBlocks.forEach(mb => {
-    if (mb.mesh) scene.remove(mb.mesh);
+    if (mb.mesh) {
+      disposeHierarchy(mb.mesh);
+      scene.remove(mb.mesh);
+    }
   });
   resetParticlePools();
 
@@ -1153,6 +1157,14 @@ export function manageBlockSpawns(scene, isGameOver = false) {
       for (let bIdx = 0; bIdx < stageBlocks.length; bIdx++) {
         const b = stageBlocks[bIdx];
         if (b.active && b.team.id === team.id) {
+          currentCount++;
+        }
+      }
+
+      // ★ マグネット吸引中ブロックも存在数として加算し、吸引中の異常な連続リスポーン（無限湧き）を抑止
+      for (let mIdx = 0; mIdx < activeMagnetBlocks.length; mIdx++) {
+        const mb = activeMagnetBlocks[mIdx];
+        if (mb.targetChar && mb.targetChar.currentStage === s && mb.team && mb.team.id === team.id) {
           currentCount++;
         }
       }

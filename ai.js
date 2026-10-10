@@ -103,6 +103,8 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
       bot.pos.x = (Math.random() - 0.5) * 6;
       bot.pos.z = stage.z + stage.r * 0.85;
       bot.pos.y = stage.y;
+      bot.meshObj.root.position.copy(bot.pos); // ★ ワープ時のメッシュ座標即時同期
+      bot.invulnerableTimer = 1.0; // ★ リスポーン無敵点滅付与で自然な復帰
       bot.aiState = 'COLLECT';
       bot.aiCapacityGoal = 14 + Math.floor(Math.random() * 5);
       bot.lastPlankIdx = -1;

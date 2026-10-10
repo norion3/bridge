@@ -293,7 +293,6 @@ export function animate(currentTime) {
       if (!c.isPlayer) {
         updateAICharacter(scene, c, dt, spawnPuffCloud, spawnSpeedStepRing);
       }
-      // 提案3：フレーム同期によるスタックバウンス減衰（setTimeoutの排除）
       if (c.dockBounceTimer > 0) {
         c.dockBounceTimer -= dt;
         if (c.dockBounceTimer <= 0) {
@@ -315,7 +314,6 @@ export function animate(currentTime) {
       cleanupTimer = 0;
     }
 
-    // 提案2：毎フレームのcharacters.map(...)配列アロケーションをインライン走査に変更（Zero-Allocation徹底）
     let maxStage = 0;
     for (let cIdx = 0; cIdx < characters.length; cIdx++) {
       if (characters[cIdx].currentStage > maxStage) {
@@ -408,9 +406,9 @@ export function animate(currentTime) {
               db.active = true;
               db.targetChar = p.shooter;
               db.index = spawned;
-              db.delay = spawned * 0.08;
+              db.delay = spawned * 0.09;
               db.progress = 0;
-              db.duration = 0.55;
+              db.duration = 0.75; // ★ 視認性向上のため 0.55s -> 0.75s に延長
 
               const sOffset = _tempVec3B.set(
                 (Math.random() - 0.5) * 1.5,
@@ -419,6 +417,7 @@ export function animate(currentTime) {
               );
               db.startPos.copy(p.target.pos).add(sOffset);
               db.mesh.position.copy(db.startPos);
+              db.mesh.scale.set(1.15, 1.15, 1.15); // フワッと目立つサイズ
               db.mesh.visible = true;
               spawned++;
             }
@@ -450,17 +449,24 @@ export function animate(currentTime) {
       _tempVec3A.y += 1.4;
       _tempVec3A.z += 0.2;
 
+      // ★ イージングによる緩急と高いアーチ軌道（上空 3.6m までフワッと浮上）
       const easeT = prog * prog * (3 - 2 * prog);
       _tempVec3B.lerpVectors(d.startPos, _tempVec3A, easeT);
-      _tempVec3B.y += Math.sin(prog * Math.PI) * 2.2;
+      _tempVec3B.y += Math.sin(prog * Math.PI) * 3.6;
       d.mesh.position.copy(_tempVec3B);
-      d.mesh.rotation.y += dt * 18;
-      d.mesh.rotation.x += dt * 14;
+
+      // 飛翔中の回転とふっくらスケール
+      const flightScale = 1.0 + Math.sin(prog * Math.PI) * 0.25;
+      d.mesh.scale.set(flightScale, flightScale, flightScale);
+      d.mesh.rotation.y += dt * 14;
+      d.mesh.rotation.x += dt * 10;
 
       if (d.progress >= 1.0) {
         addBrickToCharacter(d.targetChar, d.targetChar.team, 1);
         if (d.targetChar.isPlayer) {
           sound.playDrainCollect(d.index || 0);
+          // ★ 吸着完了時の光リングポップ演出（マゼンタ）
+          triggerLandingShockwave(_tempVec3A.x, _tempVec3A.y, _tempVec3A.z, 0.9, 0xf472b6);
         }
         d.active = false;
         d.mesh.visible = false;
@@ -469,7 +475,8 @@ export function animate(currentTime) {
 
     for (let i = activeMagnetBlocks.length - 1; i >= 0; i--) {
       const mb = activeMagnetBlocks[i];
-      mb.progress += dt / mb.duration;
+      const flightDuration = Math.max(mb.duration || 0.36, 0.55); // ★ 0.36s -> 0.55s に延長
+      mb.progress += dt / flightDuration;
       const prog = Math.min(1.0, mb.progress);
 
       _tempVec3A.copy(mb.targetChar.pos);
@@ -477,21 +484,27 @@ export function animate(currentTime) {
       _tempVec3A.y += 0.85 + stackH;
       _tempVec3A.z -= 0.35;
 
+      // ★ 高い放物線アーチ（1.35m -> 3.2m）と滑らかな加速イージング
       const easeT = prog * prog * (3 - 2 * prog);
       _tempVec3B.lerpVectors(mb.startPos, _tempVec3A, easeT);
-      _tempVec3B.y += Math.sin(prog * Math.PI) * 1.35;
+      _tempVec3B.y += Math.sin(prog * Math.PI) * 3.2;
       mb.mesh.position.copy(_tempVec3B);
-      mb.mesh.rotation.y += dt * 16;
-      mb.mesh.rotation.x += dt * 12;
+
+      // 飛翔中の目立つ拡大パルス
+      const pulseScale = 1.0 + Math.sin(prog * Math.PI) * 0.28;
+      mb.mesh.scale.set(pulseScale, pulseScale, pulseScale);
+      mb.mesh.rotation.y += dt * 12;
+      mb.mesh.rotation.x += dt * 9;
 
       if (mb.progress >= 1.0) {
         addBrickToCharacter(mb.targetChar, mb.targetChar.team, 1);
         if (mb.targetChar.isPlayer) {
           sound.playMagnetDock(incMagnetDockStep());
+          // ★ 吸着完了時の光リングポップ演出（エメラルドグリーン）
+          triggerLandingShockwave(_tempVec3A.x, _tempVec3A.y, _tempVec3A.z, 0.95, 0x34d399);
         }
-        // 提案3：タイマーオブジェクト(setTimeout)を排除し、フレーム同期フラグでバウンス制御
-        mb.targetChar.dockBounceTimer = 0.075;
-        mb.targetChar.meshObj.stackGroup.scale.set(1.08, 1.12, 1.08);
+        mb.targetChar.dockBounceTimer = 0.085;
+        mb.targetChar.meshObj.stackGroup.scale.set(1.10, 1.15, 1.10);
 
         disposeHierarchy(mb.mesh);
         scene.remove(mb.mesh);

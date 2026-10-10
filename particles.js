@@ -169,7 +169,7 @@ export function initParticlePools(scene) {
         index: 0,
         delay: 0,
         progress: 0,
-        duration: 0.55,
+        duration: 0.75, // ★ 視認性向上のため飛行時間を 0.55s から 0.75s に延長
         active: false
       });
     }
@@ -198,8 +198,10 @@ export function resetParticlePools() {
     }
   }
   for (let i = 0; i < drainBlockPool.length; i++) {
-    drainBlockPool[i].active = false;
-    drainBlockPool[i].mesh.visible = false;
+    const d = drainBlockPool[i];
+    d.active = false;
+    d.mesh.visible = false;
+    d.mesh.scale.set(1.0, 1.0, 1.0);
   }
 }
 

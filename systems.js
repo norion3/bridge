@@ -555,7 +555,7 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
               team: blk.team,
               startPos: startVec,
               progress: 0,
-              duration: 0.36
+              duration: 0.55
             });
           }
         }
@@ -583,6 +583,9 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
       char.meshObj.rightLeg.rotation.x = 0;
 
       triggerLandingShockwave(char.pos.x, char.pos.y, char.pos.z, tier.shockRadius);
+      // ★ トランポリン着地直後の理不尽タックル被弾を防ぐ保護無敵時間（0.6秒）
+      char.invulnerableTimer = Math.max(char.invulnerableTimer, 0.6);
+
       if (char.isPlayer) {
         if (soundRef) soundRef.playLanding();
         char.activeJumpTier = null;
