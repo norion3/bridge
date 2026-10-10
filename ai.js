@@ -103,8 +103,8 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
       bot.pos.x = (Math.random() - 0.5) * 6;
       bot.pos.z = stage.z + stage.r * 0.85;
       bot.pos.y = stage.y;
-      bot.meshObj.root.position.copy(bot.pos); // ★ ワープ時のメッシュ座標即時同期
-      bot.invulnerableTimer = 1.0; // ★ リスポーン無敵点滅付与で自然な復帰
+      bot.meshObj.root.position.copy(bot.pos); // ワープ時のメッシュ座標即時同期
+      bot.invulnerableTimer = 1.0; // リスポーン無敵点滅付与
       bot.aiState = 'COLLECT';
       bot.aiCapacityGoal = 14 + Math.floor(Math.random() * 5);
       bot.lastPlankIdx = -1;
@@ -158,8 +158,11 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
       return;
     }
 
-    if (activeBridge) {
-      updateSingleCharacter(scene, bot, 0, 1, dt, spawnPuffCloud, spawnSpeedStepRing);
+    // 橋の上にいる場合は、床ブロック探索を割り込ませず、完全に島（startZ）へ戻り切るまで後退（dirZ = 1.0）をロック
+    if (activeBridge && bot.pos.z < activeBridge.startZ) {
+      bot.aiDirX = 0;
+      bot.aiDirZ = 1.0;
+      updateSingleCharacter(scene, bot, 0, 1.0, dt, spawnPuffCloud, spawnSpeedStepRing);
       return;
     }
     if (bot.pos.z > stage.z + stage.r * 0.85) {
@@ -207,6 +210,14 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
     updateSingleCharacter(scene, bot, bot.aiDirX / dirMag, bot.aiDirZ / dirMag, dt, spawnPuffCloud, spawnSpeedStepRing);
 
   } else if (bot.aiState === 'BUILD') {
+    // 橋の建設中に手持ちブロックが尽きた場合、直ちにCOLLECTへ切り替えて後退準備
+    if (bot.stackCount === 0) {
+      bot.aiState = 'COLLECT';
+      bot.targetBlock = null;
+      bot.searchCooldown = (bot.team.id === 'red') ? 0 : 0.06;
+      return;
+    }
+
     const b = bridges.find(br => br.stageIdx === bot.currentStage && (br.isCurvedSlide || br.isZipline || br.laneIdx === bot.targetLane));
     if (b) {
       const targetX = (b.isCurvedSlide || b.isZipline) ? 0 : LANES[b.laneIdx];

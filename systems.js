@@ -196,7 +196,6 @@ export function fireHomingCrystal(char) {
     proj.history[h].copy(proj.startPos);
   }
 
-  // ★ 修正済み：p/t未定義エラーを解消し、proj自身を参照して安全に初期化
   for (let j = 0; j < proj.trailSpheres.length; j++) {
     const item = proj.trailSpheres[j];
     item.mesh.position.copy(proj.startPos);
@@ -217,7 +216,7 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
 
   const curStageObj = STAGES[char.currentStage];
 
-  // ★ AABB Early Exit：島の中央〜奥側にいる間は橋判定ループをスキップ
+  // AABB Early Exit：島の中央〜奥側にいる間は橋判定ループをスキップ
   const isFarFromBridges = curStageObj &&
     char.lastPlankIdx < 0 &&
     !char.onSlide && !char.onCurvedSlide && !char.onZipline &&
@@ -385,7 +384,7 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
               blocked = true;
               const blockedZ = onBridge.startZ - ((pIndex - 1) / onBridge.planks.length) * (onBridge.startZ - onBridge.endZ);
               char.pos.x = LANES[onBridge.laneIdx];
-              char.pos.z = blockedZ + 0.2;
+              char.pos.z = blockedZ + 0.12; // 0.2 -> 0.12 へ平滑化
               char.pos.y = onBridge.planks[pIndex - 1].y;
               if (!char.isPlayer) {
                 char.aiState = 'COLLECT';
@@ -430,7 +429,7 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
                 blocked = true;
                 const blockedZ = onBridge.startZ - (pIndex / onBridge.planks.length) * (onBridge.startZ - onBridge.endZ);
                 char.pos.x = LANES[onBridge.laneIdx];
-                char.pos.z = blockedZ + 0.2;
+                char.pos.z = blockedZ + 0.12; // 0.2 -> 0.12 へ平滑化
                 char.pos.y = currentP.y;
                 if (!char.isPlayer) {
                   char.aiState = 'COLLECT';
@@ -555,7 +554,7 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
               team: blk.team,
               startPos: startVec,
               progress: 0,
-              duration: 0.55
+              duration: 0.55 // 0.36 -> 0.55 に統一
             });
           }
         }
@@ -583,7 +582,7 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
       char.meshObj.rightLeg.rotation.x = 0;
 
       triggerLandingShockwave(char.pos.x, char.pos.y, char.pos.z, tier.shockRadius);
-      // ★ トランポリン着地直後の理不尽タックル被弾を防ぐ保護無敵時間（0.6秒）
+      // トランポリン着地直後の理不尽タックル被弾を防ぐ保護無敵時間（0.6秒）
       char.invulnerableTimer = Math.max(char.invulnerableTimer, 0.6);
 
       if (char.isPlayer) {
