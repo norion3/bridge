@@ -12,9 +12,9 @@ export const plankGeo = new THREE.BoxGeometry(3.6, 0.65, 1.6);
 export const verticalPlankGeo = new THREE.BoxGeometry(3.6, 1.25, 1.8);
 export const islandGeo = new THREE.CylinderGeometry(1, 1, 0.5, 36);
 
-// 【フェーズ1】アイテム形状の差別化用ジオメトリを追加
+// 復元: アイテム形状の差別化用ジオメトリ
 export const itemCrystalGeo = new THREE.OctahedronGeometry(0.68, 0); // 攻撃用
-export const itemSpeedGeo = new THREE.TetrahedronGeometry(0.75, 1); // スピード用 (稲妻・星型の代用)
+export const itemSpeedGeo = new THREE.TetrahedronGeometry(0.75, 1); // スピード用 (四面体)
 export const itemMagnetGeo = new THREE.TorusGeometry(0.55, 0.15, 8, 16, Math.PI); // マグネット用 (U字型)
 
 export const itemBeaconRingGeo = new THREE.RingGeometry(0.55, 0.95, 32);

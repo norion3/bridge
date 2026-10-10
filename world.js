@@ -349,10 +349,11 @@ export function spawnItem(scene, stageIdx, type = 'speed') {
   if (!validPos) return;
 
   const itemGroup = new THREE.Group();
+  
+  // 復元: 視認性向上のためのアイテム形状・マテリアル割り当て
   let crystalMat, ringMat;
   let crystalGeoToUse = itemCrystalGeo;
 
-  // 【フェーズ1】視認性向上のためのアイテム形状・マテリアル割り当て
   if (type === 'attack') {
     crystalMat = sharedMats.itemAttackCrystal;
     ringMat = sharedMats.itemAttackBeaconRing;
@@ -767,11 +768,18 @@ export function extendCourse(scene) {
   const prev = STAGES[idx - 1];
   let type, nextY, r, distZ;
 
-  if (idx <= 2) {
+  // ★ 復元: トランポリンを序盤の固定ルート (idx === 2) に復活！
+  // これにより「トランポリンが出なくなった」問題が完全に解決します。
+  if (idx === 1) {
     type = 'bridge';
     nextY = prev.y + 7.0;
     distZ = 34;
     r = 10;
+  } else if (idx === 2) {
+    type = 'jump';               // 確実にトランポリンが出る固定枠
+    nextY = prev.y + 1.0;
+    distZ = 30;
+    r = 9.5;
   } else if (idx === 3) {
     type = 'curved_slide';
     nextY = prev.y - 8.5;
@@ -942,8 +950,6 @@ export function buildWorld(scene) {
       scene.remove(item.group);
     }
   });
-  
-  // ★ リトライ時のactiveMagnetBlocksメッシュも再帰的にVRAM完全解放
   activeMagnetBlocks.forEach(mb => {
     if (mb.mesh) {
       disposeHierarchy(mb.mesh);
@@ -1003,7 +1009,6 @@ export function cleanupOldData(scene) {
   if (!player) return;
   const safeStage = Math.max(0, player.currentStage - 3);
 
-  // 【フェーズ2】アニメーション進行中のオブジェクトを参照から安全に切り離して破棄する
   for (let i = activeMagnetBlocks.length - 1; i >= 0; i--) {
     const mb = activeMagnetBlocks[i];
     if (mb.targetChar && mb.targetChar.currentStage < safeStage) {
@@ -1183,7 +1188,6 @@ export function manageBlockSpawns(scene, isGameOver = false) {
         }
       }
 
-      // ★ マグネット吸引中ブロックも存在数として加算し、吸引中の異常な連続リスポーン（無限湧き）を抑止
       for (let mIdx = 0; mIdx < activeMagnetBlocks.length; mIdx++) {
         const mb = activeMagnetBlocks[mIdx];
         if (mb.targetChar && mb.targetChar.currentStage === s && mb.team && mb.team.id === team.id) {

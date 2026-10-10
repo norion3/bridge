@@ -134,7 +134,7 @@ export function setupControls() {
     const dx = x - startX, dy = y - startY;
     const dist = Math.hypot(dx, dy), maxDist = 55;
     
-    // 【フェーズ1】デッドゾーンの追加（指を中心に少し戻した時は完全に停止する）
+    // 復元: デッドゾーンの追加（指を中心に少し戻した時は完全に停止する）
     if (dist > 5) {
       const clamped = Math.min(dist, maxDist);
       input.x = Math.cos(Math.atan2(dy, dx)) * (clamped / maxDist);

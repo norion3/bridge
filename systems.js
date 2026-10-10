@@ -553,7 +553,7 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
               team: blk.team,
               startPos: startVec,
               progress: 0,
-              duration: 0.55 // 【フェーズ2】0.36 -> 0.55 に延長
+              duration: 0.55
             });
           }
         }
@@ -582,10 +582,10 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
 
       triggerLandingShockwave(char.pos.x, char.pos.y, char.pos.z, tier.shockRadius);
       
-      // 【フェーズ2】トランポリン着地直後の理不尽タックル被弾を防ぐ保護無敵時間（0.6秒 -> 1.5秒へ延長）
+      // 復元: トランポリン着地直後の理不尽タックル被弾を防ぐ保護無敵時間（1.5秒へ延長）
       char.invulnerableTimer = Math.max(char.invulnerableTimer, 1.5);
       
-      // 【フェーズ2】リスキル防止のための着地ノックバック処理
+      // 復元: リスキル防止のための着地ノックバック処理
       for (let i = 0; i < characters.length; i++) {
         const other = characters[i];
         if (other !== char && other.currentStage === char.currentStage) {
