@@ -48,6 +48,7 @@ export function decrementAttackCamTimer(dt) { attackCamTimer = Math.max(0, attac
 export function incMagnetDockStep() { return magnetDockStepCounter++; }
 
 const dummyPlankObj = new THREE.Object3D();
+const dummyWireObj = new THREE.Object3D();
 
 export function getFloorBlocksForStage(stageIdx) {
   let bucket = floorBlocksByStage.get(stageIdx);
@@ -291,18 +292,22 @@ export function createIslandMesh(r, y, z) {
   border.position.set(0, y, z);
   group.add(border);
 
+  // 3本のアンカーワイヤーをInstancedMeshに集約（ドローコール削減）
   const wireHeight = Math.max(12, y - (-45));
   const wireGeo = new THREE.CylinderGeometry(0.08, 0.08, wireHeight, 6);
+  const wireInstanced = new THREE.InstancedMesh(wireGeo, sharedMats.anchorWire, 3);
   const wireOffsets = [
     [0, 0],
     [r * 0.65, 0],
     [-r * 0.65, 0]
   ];
-  wireOffsets.forEach(([ox, oz]) => {
-    const wire = new THREE.Mesh(wireGeo, sharedMats.anchorWire);
-    wire.position.set(ox, y - wireHeight / 2 - 0.5, z + oz);
-    group.add(wire);
+  wireOffsets.forEach(([ox, oz], i) => {
+    dummyWireObj.position.set(ox, y - wireHeight / 2 - 0.5, z + oz);
+    dummyWireObj.updateMatrix();
+    wireInstanced.setMatrixAt(i, dummyWireObj.matrix);
   });
+  wireInstanced.instanceMatrix.needsUpdate = true;
+  group.add(wireInstanced);
 
   return group;
 }
@@ -875,6 +880,15 @@ export function extendCourse(scene) {
 }
 
 export function buildWorld(scene) {
+  // リトライ時にfloorBlocksByStage内の全ブロックメッシュをVRAMから完全に解放しMapをクリア
+  floorBlocksByStage.forEach(bucket => {
+    bucket.forEach(b => {
+      disposeHierarchy(b.mesh);
+      scene.remove(b.mesh);
+    });
+  });
+  floorBlocksByStage.clear();
+
   stageMeshes.forEach(m => {
     disposeHierarchy(m.meshGroup);
     scene.remove(m.meshGroup);

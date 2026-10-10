@@ -293,6 +293,13 @@ export function animate(currentTime) {
       if (!c.isPlayer) {
         updateAICharacter(scene, c, dt, spawnPuffCloud, spawnSpeedStepRing);
       }
+      // 提案3：フレーム同期によるスタックバウンス減衰（setTimeoutの排除）
+      if (c.dockBounceTimer > 0) {
+        c.dockBounceTimer -= dt;
+        if (c.dockBounceTimer <= 0) {
+          c.meshObj.stackGroup.scale.set(1.0, 1.0, 1.0);
+        }
+      }
     }
     handleTackles(scene);
 
@@ -308,7 +315,13 @@ export function animate(currentTime) {
       cleanupTimer = 0;
     }
 
-    const maxStage = Math.max(...characters.map(c => c.currentStage));
+    // 提案2：毎フレームのcharacters.map(...)配列アロケーションをインライン走査に変更（Zero-Allocation徹底）
+    let maxStage = 0;
+    for (let cIdx = 0; cIdx < characters.length; cIdx++) {
+      if (characters[cIdx].currentStage > maxStage) {
+        maxStage = characters[cIdx].currentStage;
+      }
+    }
     if (maxStage >= STAGES.length - 3) extendCourse(scene);
 
     timeLeft -= dt;
@@ -476,12 +489,9 @@ export function animate(currentTime) {
         if (mb.targetChar.isPlayer) {
           sound.playMagnetDock(incMagnetDockStep());
         }
+        // 提案3：タイマーオブジェクト(setTimeout)を排除し、フレーム同期フラグでバウンス制御
+        mb.targetChar.dockBounceTimer = 0.075;
         mb.targetChar.meshObj.stackGroup.scale.set(1.08, 1.12, 1.08);
-        setTimeout(() => {
-          if (mb.targetChar && mb.targetChar.meshObj) {
-            mb.targetChar.meshObj.stackGroup.scale.set(1.0, 1.0, 1.0);
-          }
-        }, 75);
 
         disposeHierarchy(mb.mesh);
         scene.remove(mb.mesh);
