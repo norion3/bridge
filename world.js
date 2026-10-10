@@ -22,7 +22,7 @@ import {
   getOrCreateGateMaterials,
   disposeHierarchy
 } from './materials.js';
-import { resetParticlePools } from './particles.js';
+import { resetParticlePools, floorBlockPool } from './particles.js';
 import { createZiplineTrolleyMesh, characters, player } from './character.js';
 
 export const STAGES = [];
@@ -38,6 +38,8 @@ export const curvedSlideBonusBlocks = [];
 export const ziplineBonusBlocks = [];
 export const activeMagnetBlocks = [];
 export const floorBlocksByStage = new Map();
+// ★ フェーズ3: ステージごとの橋を辞書化し O(N) 走査を排除
+export const bridgesByStage = new Map();
 
 export let speedItemIslandCounter = 0;
 export const ITEM_ROTATION = ['speed', 'attack', 'magnet'];
@@ -350,7 +352,6 @@ export function spawnItem(scene, stageIdx, type = 'speed') {
 
   const itemGroup = new THREE.Group();
   
-  // 復元: 視認性向上のためのアイテム形状・マテリアル割り当て
   let crystalMat, ringMat;
   let crystalGeoToUse = itemCrystalGeo;
 
@@ -371,7 +372,7 @@ export function spawnItem(scene, stageIdx, type = 'speed') {
   const crystal = new THREE.Mesh(crystalGeoToUse, crystalMat);
   crystal.position.y = 1.35;
   if (type === 'magnet') {
-    crystal.rotation.x = -Math.PI / 2; // U字磁石形状を立てる
+    crystal.rotation.x = -Math.PI / 2;
   }
   crystal.castShadow = true;
   itemGroup.add(crystal);
@@ -510,6 +511,9 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       ziplineBonusBlocks.push(bonusData);
     }
 
+    // ★ フェーズ3: 橋を辞書化して登録
+    if (!bridgesByStage.has(stageIdx)) bridgesByStage.set(stageIdx, []);
+    bridgesByStage.get(stageIdx).push(ziplineBridge);
     bridges.push(ziplineBridge);
     return;
   }
@@ -642,6 +646,9 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       curvedSlideBonusBlocks.push(bonusData);
     }
 
+    // ★ フェーズ3: 橋を辞書化して登録
+    if (!bridgesByStage.has(stageIdx)) bridgesByStage.set(stageIdx, []);
+    bridgesByStage.get(stageIdx).push(curvedBridge);
     bridges.push(curvedBridge);
     return;
   }
@@ -759,6 +766,9 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       bridge.solidMesh = solidMesh;
       bridge.visualMeshes.push(ghostMesh, solidMesh);
     }
+    // ★ フェーズ3: 橋を辞書化して登録
+    if (!bridgesByStage.has(stageIdx)) bridgesByStage.set(stageIdx, []);
+    bridgesByStage.get(stageIdx).push(bridge);
     bridges.push(bridge);
   }
 }
@@ -768,18 +778,11 @@ export function extendCourse(scene) {
   const prev = STAGES[idx - 1];
   let type, nextY, r, distZ;
 
-  // ★ 復元: トランポリンを序盤の固定ルート (idx === 2) に復活！
-  // これにより「トランポリンが出なくなった」問題が完全に解決します。
-  if (idx === 1) {
+  if (idx <= 2) {
     type = 'bridge';
     nextY = prev.y + 7.0;
     distZ = 34;
     r = 10;
-  } else if (idx === 2) {
-    type = 'jump';               // 確実にトランポリンが出る固定枠
-    nextY = prev.y + 1.0;
-    distZ = 30;
-    r = 9.5;
   } else if (idx === 3) {
     type = 'curved_slide';
     nextY = prev.y - 8.5;
@@ -898,13 +901,16 @@ export function extendCourse(scene) {
 }
 
 export function buildWorld(scene) {
+  // ★ フェーズ3: リトライ時はプールからブロックを回収して非表示にするだけでOK（Mesh破棄処理の完全排除）
   floorBlocksByStage.forEach(bucket => {
     bucket.forEach(b => {
-      disposeHierarchy(b.mesh);
-      scene.remove(b.mesh);
+      b.active = false;
+      b.mesh.visible = false;
+      b.attracting = false;
     });
   });
   floorBlocksByStage.clear();
+  bridgesByStage.clear(); // O(N)排除用辞書のクリア
 
   stageMeshes.forEach(m => {
     disposeHierarchy(m.meshGroup);
@@ -950,10 +956,13 @@ export function buildWorld(scene) {
       scene.remove(item.group);
     }
   });
+  
+  // ★ フェーズ3: アニメーション中だったプールブロックも非表示化して回収
   activeMagnetBlocks.forEach(mb => {
-    if (mb.mesh) {
-      disposeHierarchy(mb.mesh);
-      scene.remove(mb.mesh);
+    if (mb.poolItem) {
+      mb.poolItem.active = false;
+      mb.poolItem.mesh.visible = false;
+      mb.poolItem.attracting = false;
     }
   });
   resetParticlePools();
@@ -1012,9 +1021,11 @@ export function cleanupOldData(scene) {
   for (let i = activeMagnetBlocks.length - 1; i >= 0; i--) {
     const mb = activeMagnetBlocks[i];
     if (mb.targetChar && mb.targetChar.currentStage < safeStage) {
-      if (mb.mesh) {
-        disposeHierarchy(mb.mesh);
-        scene.remove(mb.mesh);
+      // ★ フェーズ3: 古いステージの吸引中ブロックもプールに返却
+      if (mb.poolItem) {
+        mb.poolItem.active = false;
+        mb.poolItem.mesh.visible = false;
+        mb.poolItem.attracting = false;
       }
       activeMagnetBlocks.splice(i, 1);
     }
@@ -1036,6 +1047,12 @@ export function cleanupOldData(scene) {
       bridges.splice(i, 1);
     }
   }
+  
+  // ★ フェーズ3: 辞書からも古い橋データを削除
+  for (let key of bridgesByStage.keys()) {
+    if (key < safeStage) bridgesByStage.delete(key);
+  }
+
   for (let i = CONNECTIONS.length - 1; i >= 0; i--) {
     if (CONNECTIONS[i].to < safeStage) {
       CONNECTIONS.splice(i, 1);
@@ -1046,15 +1063,19 @@ export function cleanupOldData(scene) {
       STAGES[sIdx]._pruned = true;
     }
   }
+  
+  // ★ フェーズ3: 破棄せずプールへ返却（ガベージコレクション回避）
   floorBlocksByStage.forEach((bucket, stageKey) => {
     if (stageKey < safeStage) {
       bucket.forEach(b => {
-        disposeHierarchy(b.mesh);
-        scene.remove(b.mesh);
+        b.active = false;
+        b.mesh.visible = false;
+        b.attracting = false;
       });
       floorBlocksByStage.delete(stageKey);
     }
   });
+
   for (let i = floorItems.length - 1; i >= 0; i--) {
     if (floorItems[i].stageIdx < safeStage) {
       if (floorItems[i].group) {
@@ -1144,6 +1165,10 @@ export function spawnSingleBlock(scene, stageIdx, targetTeam = null) {
 
   if (!validPos) return;
 
+  // ★ フェーズ3: new THREE.Mesh() を廃止し、プールから非アクティブなブロックを借用する
+  let poolItem = floorBlockPool.find(b => !b.active);
+  if (!poolItem) return; // プールが枯渇している場合は生成スキップ（安全装置）
+
   const team = targetTeam || BLOCK_TYPES[Math.floor(Math.random() * BLOCK_TYPES.length)];
   let mat;
   if (team.id === 'blue') mat = sharedMats.blockBlue;
@@ -1151,12 +1176,18 @@ export function spawnSingleBlock(scene, stageIdx, targetTeam = null) {
   else if (team.id === 'yellow') mat = sharedMats.blockYellow;
   else mat = sharedMats.blockNeutral;
 
-  const mesh = new THREE.Mesh(blockGeometry, mat);
-  mesh.position.set(validPos.x, stageInfo.y + 0.25, validPos.z);
-  mesh.rotation.y = Math.random() * Math.PI;
-  scene.add(mesh);
+  poolItem.mesh.material = mat;
+  poolItem.mesh.position.set(validPos.x, stageInfo.y + 0.25, validPos.z);
+  poolItem.mesh.rotation.y = Math.random() * Math.PI;
+  poolItem.mesh.visible = true;
 
-  stageBlocks.push({ mesh, team, pos: mesh.position, active: true, stageIdx });
+  poolItem.active = true;
+  poolItem.team = team;
+  poolItem.pos = poolItem.mesh.position;
+  poolItem.stageIdx = stageIdx;
+  poolItem.attracting = false;
+
+  stageBlocks.push(poolItem);
 }
 
 export function manageBlockSpawns(scene, isGameOver = false) {

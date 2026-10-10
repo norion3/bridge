@@ -2,16 +2,19 @@
 import { LANES } from './constants.js';
 import { _tempAvoidResult } from './materials.js';
 import { characters, player, addBrickToCharacter } from './character.js';
-import { STAGES, CONNECTIONS, bridges, modifierGates, getFloorBlocksForStage } from './world.js';
+import { STAGES, CONNECTIONS, bridgesByStage, modifierGates, getFloorBlocksForStage } from './world.js';
 import { updateSingleCharacter } from './systems.js';
 
 export function evaluateBestLaneForBot(bot) {
   const laneScores = [0, 0, 0];
   let validBridgeCount = 0;
 
-  for (let bIdx = 0; bIdx < bridges.length; bIdx++) {
-    const b = bridges[bIdx];
-    if (b.stageIdx !== bot.currentStage || b.isJump || b.isSlide || b.isCurvedSlide || b.isZipline) {
+  // ★ フェーズ3: 全走査ではなく現在のステージに紐づく橋のみを評価
+  const stageBridges = bridgesByStage.get(bot.currentStage) || [];
+
+  for (let bIdx = 0; bIdx < stageBridges.length; bIdx++) {
+    const b = stageBridges[bIdx];
+    if (b.isJump || b.isSlide || b.isCurvedSlide || b.isZipline) {
       continue;
     }
 
@@ -118,13 +121,15 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
   const stage = STAGES[bot.currentStage];
   if (!stage) return;
 
-  const activeBridge = bridges.find(b =>
+  // ★ フェーズ3: AIの現在地に関する橋の検索をO(N)から辞書走査に最適化
+  const stageBridges = bridgesByStage.get(bot.currentStage) || [];
+  const activeBridge = stageBridges.find(b =>
     !b.isCurvedSlide && !b.isZipline &&
-    b.stageIdx === bot.currentStage &&
     bot.pos.z <= b.startZ + 1.5 &&
     bot.pos.z >= b.endZ - 0.5 &&
     Math.abs(bot.pos.x - LANES[b.laneIdx]) < 2.5
   );
+
   const nextConn = CONNECTIONS.find(c => c.from === bot.currentStage);
   const isVerticalNext = (nextConn && nextConn.type === 'vertical');
 
@@ -158,7 +163,6 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
       return;
     }
 
-    // 橋の上にいる場合は、床ブロック探索を割り込ませず、完全に島（startZ）へ戻り切るまで後退（dirZ = 1.0）をロック
     if (activeBridge && bot.pos.z < activeBridge.startZ) {
       bot.aiDirX = 0;
       bot.aiDirZ = 1.0;
@@ -210,7 +214,6 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
     updateSingleCharacter(scene, bot, bot.aiDirX / dirMag, bot.aiDirZ / dirMag, dt, spawnPuffCloud, spawnSpeedStepRing);
 
   } else if (bot.aiState === 'BUILD') {
-    // 橋の建設中に手持ちブロックが尽きた場合、直ちにCOLLECTへ切り替えて後退準備
     if (bot.stackCount === 0) {
       bot.aiState = 'COLLECT';
       bot.targetBlock = null;
@@ -218,7 +221,8 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
       return;
     }
 
-    const b = bridges.find(br => br.stageIdx === bot.currentStage && (br.isCurvedSlide || br.isZipline || br.laneIdx === bot.targetLane));
+    // ★ フェーズ3: AIの建設対象橋検索をO(N)から辞書走査に最適化
+    const b = stageBridges.find(br => (br.isCurvedSlide || br.isZipline || br.laneIdx === bot.targetLane));
     if (b) {
       const targetX = (b.isCurvedSlide || b.isZipline) ? 0 : LANES[b.laneIdx];
       const targetZ = bot.pos.z < b.startZ ? bot.pos.z - 2 : b.startZ - 0.5;

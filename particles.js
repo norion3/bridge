@@ -17,12 +17,14 @@ export const SHOCKWAVE_POOL_SIZE = 16;
 export const PROJECTILE_POOL_SIZE = 3;
 export const NUM_TRAILS_PER_PROJ = 14;
 export const DRAIN_POOL_SIZE = 8;
+export const FLOOR_BLOCK_POOL_SIZE = 400; // ★ フェーズ3: 床ブロックの完全プール化
 
 export const puffCloudPool = [];
 export const speedStepRingPool = [];
 export const shockwavePool = [];
 export const projectilePool = [];
 export const drainBlockPool = [];
+export const floorBlockPool = [];
 
 export function triggerLandingShockwave(x, y, z, customRadius = 1.5, customColorHex = null) {
   let sw = shockwavePool.find(item => !item.active);
@@ -169,8 +171,27 @@ export function initParticlePools(scene) {
         index: 0,
         delay: 0,
         progress: 0,
-        duration: 0.75, // ★ 視認性向上のため飛行時間を 0.55s から 0.75s に延長
+        duration: 0.75,
         active: false
+      });
+    }
+  }
+
+  // ★ フェーズ3: 床ブロックプールの初期化（事前生成）
+  if (floorBlockPool.length === 0) {
+    for (let i = 0; i < FLOOR_BLOCK_POOL_SIZE; i++) {
+      const mesh = new THREE.Mesh(blockGeometry, sharedMats.blockNeutral);
+      mesh.visible = false;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      scene.add(mesh);
+      floorBlockPool.push({
+        mesh: mesh,
+        active: false,
+        team: null,
+        pos: mesh.position,
+        stageIdx: -1,
+        attracting: false
       });
     }
   }
@@ -202,6 +223,12 @@ export function resetParticlePools() {
     d.active = false;
     d.mesh.visible = false;
     d.mesh.scale.set(1.0, 1.0, 1.0);
+  }
+  // ★ フェーズ3: 床ブロックプールのリセット
+  for (let i = 0; i < floorBlockPool.length; i++) {
+    floorBlockPool[i].active = false;
+    floorBlockPool[i].mesh.visible = false;
+    floorBlockPool[i].attracting = false;
   }
 }
 

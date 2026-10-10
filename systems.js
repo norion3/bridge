@@ -25,6 +25,7 @@ import {
 import {
   STAGES,
   bridges,
+  bridgesByStage,
   modifierGates,
   activeMagnetBlocks,
   floorItems,
@@ -35,7 +36,8 @@ import {
 import {
   triggerLandingShockwave,
   projectilePool,
-  drainBlockPool
+  drainBlockPool,
+  floorBlockPool
 } from './particles.js';
 
 let soundRef = null;
@@ -71,18 +73,22 @@ export function scatterBricks(scene, char, countToDrop) {
       dropZ = stage.z + ((dropZ - stage.z) / distFromCenter) * maxR;
     }
 
-    const dropMesh = new THREE.Mesh(blockGeometry, sharedMats.blockNeutral);
-    dropMesh.position.set(dropX, floorY, dropZ);
-    dropMesh.rotation.y = Math.random() * Math.PI;
-    scene.add(dropMesh);
+    // ★ フェーズ3: new THREE.Mesh を廃止し、オブジェクトプールから再利用する
+    let poolItem = floorBlockPool.find(b => !b.active);
+    if (!poolItem) break; // プール枯渇時は散布スキップ
 
-    stageBlocks.push({
-      mesh: dropMesh,
-      team: TEAMS.NEUTRAL,
-      pos: dropMesh.position,
-      active: true,
-      stageIdx: char.currentStage
-    });
+    poolItem.mesh.material = sharedMats.blockNeutral;
+    poolItem.mesh.position.set(dropX, floorY, dropZ);
+    poolItem.mesh.rotation.y = Math.random() * Math.PI;
+    poolItem.mesh.visible = true;
+
+    poolItem.active = true;
+    poolItem.team = TEAMS.NEUTRAL;
+    poolItem.pos = poolItem.mesh.position;
+    poolItem.stageIdx = char.currentStage;
+    poolItem.attracting = false;
+
+    stageBlocks.push(poolItem);
   }
 }
 
@@ -222,8 +228,17 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
     (nextZ > curStageObj.z - curStageObj.r * 0.72) &&
     (char.pos.z > curStageObj.z - curStageObj.r * 0.72);
 
+  // ★ フェーズ3: 橋の検索対象を「現在と1つ前のステージ」のみに限定（O(N)走査の排除）
+  const localBridges = [];
+  if (bridgesByStage.has(char.currentStage)) {
+    localBridges.push(...bridgesByStage.get(char.currentStage));
+  }
+  if (char.currentStage > 0 && bridgesByStage.has(char.currentStage - 1)) {
+    localBridges.push(...bridgesByStage.get(char.currentStage - 1));
+  }
+
   if (!isFarFromBridges) {
-    const zipB = bridges.find(b => b.isZipline && b.stageIdx === char.currentStage);
+    const zipB = localBridges.find(b => b.isZipline && b.stageIdx === char.currentStage);
     if (zipB && char.slideCooldown <= 0) {
       const distToStart = Math.hypot(nextX, nextZ - zipB.startZ);
       if (distToStart < 3.2 && isForwardIntent) {
@@ -234,7 +249,7 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
       }
     }
 
-    const curvedB = bridges.find(b => b.isCurvedSlide && b.stageIdx === char.currentStage);
+    const curvedB = localBridges.find(b => b.isCurvedSlide && b.stageIdx === char.currentStage);
     if (curvedB && char.slideCooldown <= 0) {
       const distToStart = Math.hypot(nextX, nextZ - curvedB.startZ);
       if (distToStart < 3.2 && isForwardIntent) {
@@ -250,7 +265,7 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
     }
 
     let onBridge = null;
-    for (let b of bridges) {
+    for (let b of localBridges) {
       if (b.isCurvedSlide || b.isZipline) continue;
 
       if (char.currentStage !== b.stageIdx && char.currentStage !== b.nextStageIdx) continue;
@@ -548,6 +563,7 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
 
             const startVec = new THREE.Vector3(blk.mesh.position.x, blk.mesh.position.y, blk.mesh.position.z);
             activeMagnetBlocks.push({
+              poolItem: blk, // ★ フェーズ3: プールオブジェクトを保持して使い回す
               mesh: blk.mesh,
               targetChar: char,
               team: blk.team,
@@ -582,17 +598,15 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
 
       triggerLandingShockwave(char.pos.x, char.pos.y, char.pos.z, tier.shockRadius);
       
-      // 復元: トランポリン着地直後の理不尽タックル被弾を防ぐ保護無敵時間（1.5秒へ延長）
       char.invulnerableTimer = Math.max(char.invulnerableTimer, 1.5);
       
-      // 復元: リスキル防止のための着地ノックバック処理
       for (let i = 0; i < characters.length; i++) {
         const other = characters[i];
         if (other !== char && other.currentStage === char.currentStage) {
           const dx = other.pos.x - char.pos.x;
           const dz = other.pos.z - char.pos.z;
           const distSq = dx * dx + dz * dz;
-          if (distSq < 9.0) { // 半径3m以内を安全地帯として押し出す
+          if (distSq < 9.0) {
             const dist = Math.sqrt(distSq) || 1;
             other.pos.x += (dx / dist) * 1.5;
             other.pos.z += (dz / dist) * 1.5;
@@ -936,8 +950,10 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
         const dx = char.pos.x - blk.pos.x;
         const dz = char.pos.z - blk.pos.z;
         if (dx * dx + dz * dz < 2.25) {
+          // ★ フェーズ3: scene.remove(blk.mesh) を廃止し、プールへ返却
           blk.active = false;
-          scene.remove(blk.mesh);
+          blk.mesh.visible = false;
+          blk.attracting = false;
           stageBlocks.splice(i, 1);
           addBrickToCharacter(char, char.team, 1, soundRef, updateHUDRef);
         }

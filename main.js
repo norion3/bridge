@@ -509,8 +509,13 @@ export function animate(currentTime) {
         mb.targetChar.dockBounceTimer = 0.085;
         mb.targetChar.meshObj.stackGroup.scale.set(1.10, 1.15, 1.10);
 
-        disposeHierarchy(mb.mesh);
-        scene.remove(mb.mesh);
+        // ★ フェーズ3: scene.remove を廃止し、プールへ返却
+        if (mb.poolItem) {
+          mb.poolItem.active = false;
+          mb.poolItem.mesh.visible = false;
+          mb.poolItem.attracting = false;
+        }
+
         activeMagnetBlocks.splice(i, 1);
       }
     }
