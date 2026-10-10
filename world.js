@@ -38,7 +38,6 @@ export const curvedSlideBonusBlocks = [];
 export const ziplineBonusBlocks = [];
 export const activeMagnetBlocks = [];
 export const floorBlocksByStage = new Map();
-// ★ フェーズ3: ステージごとの橋を辞書化し O(N) 走査を排除
 export const bridgesByStage = new Map();
 
 export let speedItemIslandCounter = 0;
@@ -452,6 +451,65 @@ export function spawnGatesOnIsland(scene, stageIdx, islandZ, islandY) {
 }
 
 export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, nextIslandZ, prevR, nextR, startY, endY, type) {
+  // ★ 新要素: エレベーターの生成
+  if (type === 'elevator') {
+    const startZ = prevIslandZ - prevR + 1.2;
+    const endZ = nextIslandZ + nextR - 1.2;
+
+    const durations = [3.0, 4.5, 6.0];
+    durations.sort(() => Math.random() - 0.5); // 速度をレーンごとにシャッフル
+    const labels = { 3.0: 'FAST', 4.5: 'MID', 6.0: 'SLOW' };
+
+    const elevatorBridge = {
+      stageIdx, nextStageIdx, laneIdx: 1, planks: [], visualMeshes: [],
+      startZ, endZ, startY, endY,
+      isJump: false, isSlide: false, isVertical: false, isCurvedSlide: false, isZipline: false, isElevator: true,
+      elevators: []
+    };
+
+    for (let laneIdx = 0; laneIdx < 3; laneIdx++) {
+      const laneX = LANES[laneIdx];
+      const dur = durations[laneIdx];
+      const label = labels[dur];
+      
+      // 速度を示す看板
+      const mat = getOrCreateGateMaterials(label, dur <= 4.5);
+      const signMesh = new THREE.Mesh(new THREE.BoxGeometry(2.0, 1.2, 0.1), mat);
+      signMesh.position.set(laneX, startY + 2.0, startZ + 1.5);
+      scene.add(signMesh);
+      elevatorBridge.visualMeshes.push(signMesh);
+
+      // 上空のワイヤー
+      const wireH = Math.hypot(startZ - endZ, endY - startY);
+      const wireGeo = new THREE.CylinderGeometry(0.04, 0.04, wireH, 8);
+      const wireMesh = new THREE.Mesh(wireGeo, sharedMats.ziplineCable);
+      wireMesh.position.set(laneX, (startY + endY) / 2 + 3.0, (startZ + endZ) / 2);
+      wireMesh.rotation.x = Math.atan2(endY - startY, startZ - endZ);
+      scene.add(wireMesh);
+      elevatorBridge.visualMeshes.push(wireMesh);
+
+      // 発着台（スタート側）
+      const platGeo = new THREE.BoxGeometry(2.4, 0.2, 2.4);
+      const platBase = new THREE.Mesh(platGeo, sharedMats.gateFrame);
+      platBase.position.set(laneX, startY, startZ + 1.0);
+      scene.add(platBase);
+      elevatorBridge.visualMeshes.push(platBase);
+
+      // 発着台（ゴール側）
+      const platEnd = new THREE.Mesh(platGeo, sharedMats.gateFrame);
+      platEnd.position.set(laneX, endY, endZ - 1.0);
+      scene.add(platEnd);
+      elevatorBridge.visualMeshes.push(platEnd);
+
+      elevatorBridge.elevators.push({ laneIdx, duration: dur });
+    }
+
+    if (!bridgesByStage.has(stageIdx)) bridgesByStage.set(stageIdx, []);
+    bridgesByStage.get(stageIdx).push(elevatorBridge);
+    bridges.push(elevatorBridge);
+    return;
+  }
+
   if (type === 'zipline') {
     const startZ = prevIslandZ - prevR + 1.2;
     const endZ = nextIslandZ + nextR - 1.2;
@@ -484,7 +542,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       visualMeshes: [depPylon, arrPylon, cableMesh, stationTrolley],
       startZ, endZ, startPt, endPt, cableLen,
       isJump: false, isSlide: false, isVertical: false, isCurvedSlide: false,
-      isZipline: true,
+      isZipline: true, isElevator: false,
       bonusBlocks: []
     };
 
@@ -511,7 +569,6 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       ziplineBonusBlocks.push(bonusData);
     }
 
-    // ★ フェーズ3: 橋を辞書化して登録
     if (!bridgesByStage.has(stageIdx)) bridgesByStage.set(stageIdx, []);
     bridgesByStage.get(stageIdx).push(ziplineBridge);
     bridges.push(ziplineBridge);
@@ -615,7 +672,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       stageIdx, nextStageIdx, laneIdx: 1, planks: [],
       visualMeshes: [troughMesh, leftRailMesh, rightRailMesh],
       startZ, endZ, isJump: false, isSlide: false, isVertical: false,
-      isCurvedSlide: true, isZipline: false, curve: spline, curveLength: curveLength,
+      isCurvedSlide: true, isZipline: false, isElevator: false, curve: spline, curveLength: curveLength,
       lutSamples: lutSamples,
       bonusBlocks: []
     };
@@ -646,7 +703,6 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       curvedSlideBonusBlocks.push(bonusData);
     }
 
-    // ★ フェーズ3: 橋を辞書化して登録
     if (!bridgesByStage.has(stageIdx)) bridgesByStage.set(stageIdx, []);
     bridgesByStage.get(stageIdx).push(curvedBridge);
     bridges.push(curvedBridge);
@@ -656,6 +712,16 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
   const isJump = (type === 'jump');
   const isSlide = (type === 'slide');
   const isVertical = (type === 'vertical');
+
+  // トランポリン配置シャッフル
+  let jumpTiers = [];
+  if (isJump) {
+    jumpTiers = [TRAMPOLINE_TIERS.normal, TRAMPOLINE_TIERS.high, TRAMPOLINE_TIERS.mega];
+    for (let i = jumpTiers.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [jumpTiers[i], jumpTiers[j]] = [jumpTiers[j], jumpTiers[i]];
+    }
+  }
 
   for (let laneIdx = 0; laneIdx < 3; laneIdx++) {
     const laneX = LANES[laneIdx];
@@ -670,7 +736,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
 
     const bridge = {
       stageIdx, nextStageIdx, laneIdx, planks: [], visualMeshes: [],
-      startZ, endZ, isJump, isSlide, isVertical, isCurvedSlide: false, isZipline: false,
+      startZ, endZ, isJump, isSlide, isVertical, isCurvedSlide: false, isZipline: false, isElevator: false,
       ghostMesh: null, solidMesh: null
     };
 
@@ -709,10 +775,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
         bridge.planks.push({ teamId: 'slide_free', index: i, y: pY, z: pZ });
       }
     } else if (isJump) {
-      let jumpTier = TRAMPOLINE_TIERS.normal;
-      if (laneIdx === 0) jumpTier = TRAMPOLINE_TIERS.normal;
-      else if (laneIdx === 1) jumpTier = TRAMPOLINE_TIERS.mega;
-      else if (laneIdx === 2) jumpTier = TRAMPOLINE_TIERS.high;
+      let jumpTier = jumpTiers[laneIdx];
 
       const tramp = createTrampolineMesh(LANES[laneIdx], startY, startZ - 1.8, jumpTier);
       scene.add(tramp.group);
@@ -766,7 +829,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       bridge.solidMesh = solidMesh;
       bridge.visualMeshes.push(ghostMesh, solidMesh);
     }
-    // ★ フェーズ3: 橋を辞書化して登録
+    
     if (!bridgesByStage.has(stageIdx)) bridgesByStage.set(stageIdx, []);
     bridgesByStage.get(stageIdx).push(bridge);
     bridges.push(bridge);
@@ -799,45 +862,43 @@ export function extendCourse(scene) {
     distZ = 68;
     r = 10.5;
   } else {
+    // ★ バランス調整: エレベーターなどの特殊ギミックの確率を制御
     const rand = Math.random();
     if (prev.y >= 14.0) {
-      if (rand < 0.35) {
+      if (rand < 0.25) {
         type = 'zipline';
-        nextY = Math.max(7.0, prev.y - 10.5);
-        distZ = 68;
-        r = 10.5;
-      } else if (rand < 0.70) {
+        nextY = Math.max(7.0, prev.y - 12.0);
+        distZ = 68; r = 10.5;
+      } else if (rand < 0.60) {
         type = 'curved_slide';
         nextY = Math.max(6.0, prev.y - 8.0);
-        distZ = 46;
-        r = 11;
+        distZ = 46; r = 11;
       } else {
         type = 'slide';
         nextY = Math.max(6.0, prev.y - 6.5);
-        distZ = 36;
-        r = 10;
+        distZ = 36; r = 10;
       }
     } else {
-      if (rand < 0.25) {
+      if (rand < 0.20) {
+        type = 'elevator'; // ★ 新要素
+        nextY = prev.y + 14.0;
+        distZ = 28; r = 10;
+      } else if (rand < 0.40) {
         type = 'vertical';
         nextY = prev.y + 10.0;
-        distZ = 24;
-        r = 10;
-      } else if (rand < 0.40) {
+        distZ = 24; r = 10;
+      } else if (rand < 0.60) {
         type = 'jump';
         nextY = prev.y + 1.0;
-        distZ = 30;
-        r = 9.5;
-      } else if (rand < 0.65) {
+        distZ = 30; r = 9.5;
+      } else if (rand < 0.80) {
         type = 'bridge';
         nextY = prev.y + 7.0;
-        distZ = 34;
-        r = 10;
+        distZ = 34; r = 10;
       } else {
         type = 'curved_slide';
         nextY = Math.max(6.0, prev.y - 4.0);
-        distZ = 46;
-        r = 11;
+        distZ = 46; r = 11;
       }
     }
   }
@@ -901,7 +962,6 @@ export function extendCourse(scene) {
 }
 
 export function buildWorld(scene) {
-  // ★ フェーズ3: リトライ時はプールからブロックを回収して非表示にするだけでOK（Mesh破棄処理の完全排除）
   floorBlocksByStage.forEach(bucket => {
     bucket.forEach(b => {
       b.active = false;
@@ -910,7 +970,7 @@ export function buildWorld(scene) {
     });
   });
   floorBlocksByStage.clear();
-  bridgesByStage.clear(); // O(N)排除用辞書のクリア
+  bridgesByStage.clear();
 
   stageMeshes.forEach(m => {
     disposeHierarchy(m.meshGroup);
@@ -957,7 +1017,6 @@ export function buildWorld(scene) {
     }
   });
   
-  // ★ フェーズ3: アニメーション中だったプールブロックも非表示化して回収
   activeMagnetBlocks.forEach(mb => {
     if (mb.poolItem) {
       mb.poolItem.active = false;
@@ -1021,7 +1080,6 @@ export function cleanupOldData(scene) {
   for (let i = activeMagnetBlocks.length - 1; i >= 0; i--) {
     const mb = activeMagnetBlocks[i];
     if (mb.targetChar && mb.targetChar.currentStage < safeStage) {
-      // ★ フェーズ3: 古いステージの吸引中ブロックもプールに返却
       if (mb.poolItem) {
         mb.poolItem.active = false;
         mb.poolItem.mesh.visible = false;
@@ -1048,7 +1106,6 @@ export function cleanupOldData(scene) {
     }
   }
   
-  // ★ フェーズ3: 辞書からも古い橋データを削除
   for (let key of bridgesByStage.keys()) {
     if (key < safeStage) bridgesByStage.delete(key);
   }
@@ -1064,7 +1121,6 @@ export function cleanupOldData(scene) {
     }
   }
   
-  // ★ フェーズ3: 破棄せずプールへ返却（ガベージコレクション回避）
   floorBlocksByStage.forEach((bucket, stageKey) => {
     if (stageKey < safeStage) {
       bucket.forEach(b => {
@@ -1165,9 +1221,8 @@ export function spawnSingleBlock(scene, stageIdx, targetTeam = null) {
 
   if (!validPos) return;
 
-  // ★ フェーズ3: new THREE.Mesh() を廃止し、プールから非アクティブなブロックを借用する
   let poolItem = floorBlockPool.find(b => !b.active);
-  if (!poolItem) return; // プールが枯渇している場合は生成スキップ（安全装置）
+  if (!poolItem) return;
 
   const team = targetTeam || BLOCK_TYPES[Math.floor(Math.random() * BLOCK_TYPES.length)];
   let mat;

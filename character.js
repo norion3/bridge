@@ -157,7 +157,32 @@ export function createCharacterMesh(team) {
   trolleyGroup.visible = false;
   root.add(trolleyGroup);
 
-  return { root, body, head, leftLeg, rightLeg, leftArm, rightArm, stackGroup, trolleyGroup, footAura, magnetAura, stackPool };
+  // ★ 新要素: エレベーター乗車時の専用ゴンドラメッシュ
+  const elevatorGroup = new THREE.Group();
+  const platGeo = new THREE.BoxGeometry(2.0, 0.15, 2.0);
+  const platMesh = new THREE.Mesh(platGeo, sharedMats.gateFrame);
+  platMesh.position.y = -0.075;
+  platMesh.castShadow = true;
+  elevatorGroup.add(platMesh);
+
+  const pipeGeo = new THREE.CylinderGeometry(0.04, 0.04, 2.0, 8);
+  pipeGeo.rotateZ(Math.PI / 2);
+  const p1 = new THREE.Mesh(pipeGeo, sharedMats.slideRail);
+  p1.position.set(0, 0.6, -0.9);
+  elevatorGroup.add(p1);
+  const p2 = p1.clone();
+  p2.position.set(0, 0.6, 0.9);
+  elevatorGroup.add(p2);
+  
+  const hangerGeo = new THREE.CylinderGeometry(0.03, 0.03, 3.2, 8);
+  const hanger = new THREE.Mesh(hangerGeo, sharedMats.slideRail);
+  hanger.position.set(0, 1.6, 0);
+  elevatorGroup.add(hanger);
+
+  elevatorGroup.visible = false;
+  root.add(elevatorGroup);
+
+  return { root, body, head, leftLeg, rightLeg, leftArm, rightArm, stackGroup, trolleyGroup, elevatorGroup, footAura, magnetAura, stackPool };
 }
 
 export function getBrickMaterialForStackIndex(char, index) {
@@ -217,6 +242,7 @@ export function setupCharacters(scene, STAGES) {
     rotation: 0, stackCount: 0, currentStage: 0, stunTimer: 0, invulnerableTimer: 0, walkCycle: 0,
     isJumping: false, activeJumpTier: null, onSlide: false, onCurvedSlide: false, curvedSlideProgress: 0, curvedSlideOffset: 0, slideCooldown: 0,
     onZipline: false, ziplineProgress: 0, activeZipline: null,
+    onElevator: false, elevatorProgress: 0, activeElevator: null, elevatorLane: 0, // ★ 新要素ステート
     jumpProgress: 0, lastPlankIdx: -1,
     speedBoostActive: false, speedBoostTimer: 0, puffTimer: 0,
     magnetActive: false, magnetTimer: 0
@@ -233,6 +259,7 @@ export function setupCharacters(scene, STAGES) {
     aiState: 'COLLECT', aiCapacityGoal: 15, stunTimer: 0, invulnerableTimer: 0, walkCycle: 0,
     isJumping: false, activeJumpTier: null, onSlide: false, onCurvedSlide: false, curvedSlideProgress: 0, curvedSlideOffset: 0, slideCooldown: 0,
     onZipline: false, ziplineProgress: 0, activeZipline: null,
+    onElevator: false, elevatorProgress: 0, activeElevator: null, elevatorLane: 0, elevatorChoice: undefined,
     jumpProgress: 0, lastPlankIdx: -1, botSlideOffsetTarget: 0,
     speedBoostActive: false, speedBoostTimer: 0, puffTimer: 0,
     magnetActive: false, magnetTimer: 0,
@@ -251,6 +278,7 @@ export function setupCharacters(scene, STAGES) {
     aiState: 'COLLECT', aiCapacityGoal: 17, stunTimer: 0, invulnerableTimer: 0, walkCycle: 0,
     isJumping: false, activeJumpTier: null, onSlide: false, onCurvedSlide: false, curvedSlideProgress: 0, curvedSlideOffset: 0, slideCooldown: 0,
     onZipline: false, ziplineProgress: 0, activeZipline: null,
+    onElevator: false, elevatorProgress: 0, activeElevator: null, elevatorLane: 0, elevatorChoice: undefined,
     jumpProgress: 0, lastPlankIdx: -1, botSlideOffsetTarget: 0,
     speedBoostActive: false, speedBoostTimer: 0, puffTimer: 0,
     magnetActive: false, magnetTimer: 0,
@@ -272,6 +300,7 @@ export function resetCharacters(STAGES) {
     c.onSlide = false;
     c.onCurvedSlide = false; c.curvedSlideProgress = 0; c.curvedSlideOffset = 0; c.slideCooldown = 0;
     c.onZipline = false; c.ziplineProgress = 0; c.activeZipline = null;
+    c.onElevator = false; c.elevatorProgress = 0; c.activeElevator = null;
     c.lastPlankIdx = -1;
     c.speedBoostActive = false;
     c.speedBoostTimer = 0;
@@ -286,8 +315,10 @@ export function resetCharacters(STAGES) {
       c.aiDirZ = -1;
       c.searchCooldown = (c.team.id === 'red') ? 0 : 0.06;
       c.targetBlock = null;
+      c.elevatorChoice = undefined;
     }
     c.meshObj.trolleyGroup.visible = false;
+    c.meshObj.elevatorGroup.visible = false;
     c.meshObj.stackGroup.scale.set(1.0, 1.0, 1.0);
     c.meshObj.stackGroup.rotation.x = 0;
     c.meshObj.stackGroup.position.set(0, 0.65, -0.42);

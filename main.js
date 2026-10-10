@@ -134,7 +134,6 @@ export function setupControls() {
     const dx = x - startX, dy = y - startY;
     const dist = Math.hypot(dx, dy), maxDist = 55;
     
-    // 復元: デッドゾーンの追加（指を中心に少し戻した時は完全に停止する）
     if (dist > 5) {
       const clamped = Math.min(dist, maxDist);
       input.x = Math.cos(Math.atan2(dy, dx)) * (clamped / maxDist);
@@ -343,10 +342,11 @@ export function animate(currentTime) {
         if (item.crystal) {
           item.crystal.rotation.y = timeSec * 3.2;
           item.crystal.rotation.z = Math.sin(timeSec * 2.5) * 0.25;
+          // ★ 調整: アイテムの浮遊（上下動）の振幅を 0.22 -> 0.35 に増やして視認性向上
           if (item.type !== 'magnet') {
-            item.crystal.position.y = 1.35 + Math.sin(timeSec * 4.5 + item.stageIdx) * 0.22;
+            item.crystal.position.y = 1.35 + Math.sin(timeSec * 4.5 + item.stageIdx) * 0.35;
           } else {
-            item.crystal.position.y = 1.15 + Math.sin(timeSec * 4.5 + item.stageIdx) * 0.22;
+            item.crystal.position.y = 1.15 + Math.sin(timeSec * 4.5 + item.stageIdx) * 0.35;
           }
         }
         if (item.beaconRing) {
@@ -509,7 +509,6 @@ export function animate(currentTime) {
         mb.targetChar.dockBounceTimer = 0.085;
         mb.targetChar.meshObj.stackGroup.scale.set(1.10, 1.15, 1.10);
 
-        // ★ フェーズ3: scene.remove を廃止し、プールへ返却
         if (mb.poolItem) {
           mb.poolItem.active = false;
           mb.poolItem.mesh.visible = false;
@@ -598,6 +597,7 @@ export function animate(currentTime) {
     const isSlideRiding = player.onSlide;
     const isCurvedRiding = player.onCurvedSlide;
     const isZiplining = player.onZipline;
+    const isElevator = player.onElevator;
     const isJumping = player.isJumping;
 
     let targetCamX = player.pos.x * 0.2;
@@ -658,6 +658,11 @@ export function animate(currentTime) {
       targetCamZ = player.pos.z + 9;
       targetLookY = player.pos.y - 1;
       targetFOV = 63;
+    } else if (isElevator) {
+      targetCamY = player.pos.y + 20;
+      targetCamZ = player.pos.z + 14;
+      targetLookY = player.pos.y;
+      targetFOV = 60;
     }
 
     const lerpFactorPos = isJumping ? 0.10 : 0.14;

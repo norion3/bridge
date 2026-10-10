@@ -2,19 +2,18 @@
 import { LANES } from './constants.js';
 import { _tempAvoidResult } from './materials.js';
 import { characters, player, addBrickToCharacter } from './character.js';
-import { STAGES, CONNECTIONS, bridgesByStage, modifierGates, getFloorBlocksForStage } from './world.js';
+import { STAGES, CONNECTIONS, bridgesByStage, modifierGates, getFloorBlocksForStage, floorItems } from './world.js';
 import { updateSingleCharacter } from './systems.js';
 
 export function evaluateBestLaneForBot(bot) {
   const laneScores = [0, 0, 0];
   let validBridgeCount = 0;
 
-  // ★ フェーズ3: 全走査ではなく現在のステージに紐づく橋のみを評価
   const stageBridges = bridgesByStage.get(bot.currentStage) || [];
 
   for (let bIdx = 0; bIdx < stageBridges.length; bIdx++) {
     const b = stageBridges[bIdx];
-    if (b.isJump || b.isSlide || b.isCurvedSlide || b.isZipline) {
+    if (b.isJump || b.isSlide || b.isCurvedSlide || b.isZipline || b.isElevator) {
       continue;
     }
 
@@ -86,16 +85,11 @@ export function avoidGateObstacles(bot, dirX, dirZ) {
 }
 
 export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStepRing) {
-  if (bot.onCurvedSlide) {
+  if (bot.onCurvedSlide || bot.onZipline || bot.onElevator) {
     const targetOffset = bot.botSlideOffsetTarget || 0;
     const diff = targetOffset - bot.curvedSlideOffset;
-    const steerX = Math.abs(diff) > 0.08 ? Math.sign(diff) * 0.45 : 0;
+    const steerX = bot.onCurvedSlide ? (Math.abs(diff) > 0.08 ? Math.sign(diff) * 0.45 : 0) : 0;
     updateSingleCharacter(scene, bot, steerX, -1.0, dt, spawnPuffCloud, spawnSpeedStepRing);
-    return;
-  }
-
-  if (bot.onZipline) {
-    updateSingleCharacter(scene, bot, 0, -1.0, dt, spawnPuffCloud, spawnSpeedStepRing);
     return;
   }
 
@@ -106,12 +100,13 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
       bot.pos.x = (Math.random() - 0.5) * 6;
       bot.pos.z = stage.z + stage.r * 0.85;
       bot.pos.y = stage.y;
-      bot.meshObj.root.position.copy(bot.pos); // ワープ時のメッシュ座標即時同期
-      bot.invulnerableTimer = 1.0; // リスポーン無敵点滅付与
+      bot.meshObj.root.position.copy(bot.pos);
+      bot.invulnerableTimer = 1.0;
       bot.aiState = 'COLLECT';
       bot.aiCapacityGoal = 14 + Math.floor(Math.random() * 5);
       bot.lastPlankIdx = -1;
       bot.targetBlock = null;
+      bot.elevatorChoice = undefined;
       bot.searchCooldown = (bot.team.id === 'red') ? 0 : 0.06;
       while (bot.stackCount < 4) { addBrickToCharacter(bot, bot.team); }
     }
@@ -121,10 +116,9 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
   const stage = STAGES[bot.currentStage];
   if (!stage) return;
 
-  // ★ フェーズ3: AIの現在地に関する橋の検索をO(N)から辞書走査に最適化
   const stageBridges = bridgesByStage.get(bot.currentStage) || [];
   const activeBridge = stageBridges.find(b =>
-    !b.isCurvedSlide && !b.isZipline &&
+    !b.isCurvedSlide && !b.isZipline && !b.isElevator &&
     bot.pos.z <= b.startZ + 1.5 &&
     bot.pos.z >= b.endZ - 0.5 &&
     Math.abs(bot.pos.x - LANES[b.laneIdx]) < 2.5
@@ -137,11 +131,7 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
     if (nextConn.type === 'slide') {
       bot.aiState = 'BUILD';
       if (bot.targetLane === undefined) bot.targetLane = Math.floor(Math.random() * 3);
-    } else if (nextConn.type === 'curved_slide') {
-      bot.aiState = 'BUILD';
-      bot.targetLane = 1;
-      bot.aiCapacityGoal = 0;
-    } else if (nextConn.type === 'zipline') {
+    } else if (nextConn.type === 'curved_slide' || nextConn.type === 'zipline' || nextConn.type === 'elevator') {
       bot.aiState = 'BUILD';
       bot.targetLane = 1;
       bot.aiCapacityGoal = 0;
@@ -160,6 +150,7 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
       bot.aiState = 'BUILD';
       bot.targetLane = evaluateBestLaneForBot(bot);
       bot.targetBlock = null;
+      bot.elevatorChoice = undefined;
       return;
     }
 
@@ -180,6 +171,23 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
     if (bot.searchCooldown <= 0 || !bot.targetBlock || !bot.targetBlock.active || bot.targetBlock.stageIdx !== bot.currentStage) {
       bot.searchCooldown = 0.12;
       let best = null, minDistSq = 999999;
+
+      // ★ 新要素: AIがアイテム（スピード、マグネット、攻撃）を優先して横取りするロジック
+      for (let i = 0; i < floorItems.length; i++) {
+        const item = floorItems[i];
+        if (item.active && item.stageIdx === bot.currentStage) {
+          const dx = item.pos.x - bot.pos.x;
+          const dz = item.pos.z - bot.pos.z;
+          const dSq = dx * dx + dz * dz;
+          if (dSq < 64.0) { // 半径8m以内のアイテムは最優先（距離スコアを大幅に減算）
+            if (dSq - 1000 < minDistSq) { 
+              minDistSq = dSq - 1000; 
+              best = item; 
+            }
+          }
+        }
+      }
+
       for (let bIdx = 0; bIdx < stageBlocks.length; bIdx++) {
         const blk = stageBlocks[bIdx];
         if (blk.active && (blk.team.id === bot.team.id || blk.team.id === 'neutral')) {
@@ -214,17 +222,42 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
     updateSingleCharacter(scene, bot, bot.aiDirX / dirMag, bot.aiDirZ / dirMag, dt, spawnPuffCloud, spawnSpeedStepRing);
 
   } else if (bot.aiState === 'BUILD') {
-    if (bot.stackCount === 0) {
+    if (bot.stackCount === 0 && !stageBridges.find(br => br.isElevator || br.isZipline || br.isCurvedSlide)) {
       bot.aiState = 'COLLECT';
       bot.targetBlock = null;
+      bot.elevatorChoice = undefined;
       bot.searchCooldown = (bot.team.id === 'red') ? 0 : 0.06;
       return;
     }
 
-    // ★ フェーズ3: AIの建設対象橋検索をO(N)から辞書走査に最適化
-    const b = stageBridges.find(br => (br.isCurvedSlide || br.isZipline || br.laneIdx === bot.targetLane));
+    const b = stageBridges.find(br => (br.isCurvedSlide || br.isZipline || br.isElevator || br.laneIdx === bot.targetLane));
     if (b) {
-      const targetX = (b.isCurvedSlide || b.isZipline) ? 0 : LANES[b.laneIdx];
+      let targetX = LANES[bot.targetLane];
+      
+      if (b.isCurvedSlide || b.isZipline) {
+        targetX = 0;
+      } else if (b.isElevator) {
+        // ★ 新要素: AIのエレベーター（最速レーン）選択ロジック
+        if (bot.elevatorChoice === undefined) {
+          if (Math.random() < 0.20) {
+            // 20%の確率で判断を誤り、適当なレーンに乗る
+            bot.elevatorChoice = Math.floor(Math.random() * 3);
+          } else {
+            // 基本は一番速い（durationが短い）レーンを確実に見抜く
+            let minDur = 999;
+            let bestL = 0;
+            for(let i=0; i<3; i++) {
+              if (b.elevators[i].duration < minDur) {
+                minDur = b.elevators[i].duration;
+                bestL = i;
+              }
+            }
+            bot.elevatorChoice = bestL;
+          }
+        }
+        targetX = LANES[bot.elevatorChoice];
+      }
+
       const targetZ = bot.pos.z < b.startZ ? bot.pos.z - 2 : b.startZ - 0.5;
       const dx = targetX - bot.pos.x, dz = targetZ - bot.pos.z;
       const lenSq = dx * dx + dz * dz;
@@ -239,13 +272,14 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
       updateSingleCharacter(scene, bot, bot.aiDirX / dirMag, bot.aiDirZ / dirMag, dt, spawnPuffCloud, spawnSpeedStepRing);
 
       if (bot.aiState !== 'COLLECT' && Math.abs(bot.pos.z - oldZ) < 0.0005) {
-        if (b.isZipline || b.isCurvedSlide || b.isSlide || b.isJump) {
+        if (b.isZipline || b.isCurvedSlide || b.isSlide || b.isJump || b.isElevator) {
           bot.pos.z -= 0.06;
         } else {
           bot.aiState = 'COLLECT';
           bot.aiCapacityGoal = isVerticalNext ? (20 + Math.floor(Math.random() * 4)) : (14 + Math.floor(Math.random() * 5));
           bot.targetLane = evaluateBestLaneForBot(bot);
           bot.targetBlock = null;
+          bot.elevatorChoice = undefined;
           bot.searchCooldown = (bot.team.id === 'red') ? 0 : 0.06;
         }
       }
