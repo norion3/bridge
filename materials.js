@@ -232,7 +232,12 @@ export const sharedMats = {
     opacity: 0.75,
     side: THREE.DoubleSide,
     depthWrite: false
-  })
+  }),
+
+  // ★ ステップ1: エレベーターの速度を直感的な色で表現するためのマテリアルを追加
+  elevatorFast: new THREE.MeshStandardMaterial({ color: 0x10b981, emissive: 0x059669, emissiveIntensity: 0.6, roughness: 0.2, metalness: 0.1 }),
+  elevatorMid: new THREE.MeshStandardMaterial({ color: 0xfacc15, emissive: 0xeab308, emissiveIntensity: 0.6, roughness: 0.2, metalness: 0.1 }),
+  elevatorSlow: new THREE.MeshStandardMaterial({ color: 0xef4444, emissive: 0xb91c1c, emissiveIntensity: 0.6, roughness: 0.2, metalness: 0.1 })
 };
 
 export const playerStackMaterials = [];

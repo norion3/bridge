@@ -157,7 +157,6 @@ export function createCharacterMesh(team) {
   trolleyGroup.visible = false;
   root.add(trolleyGroup);
 
-  // ★ 新要素: エレベーター乗車時の専用ゴンドラメッシュ
   const elevatorGroup = new THREE.Group();
   const platGeo = new THREE.BoxGeometry(2.0, 0.15, 2.0);
   const platMesh = new THREE.Mesh(platGeo, sharedMats.gateFrame);
@@ -242,7 +241,9 @@ export function setupCharacters(scene, STAGES) {
     rotation: 0, stackCount: 0, currentStage: 0, stunTimer: 0, invulnerableTimer: 0, walkCycle: 0,
     isJumping: false, activeJumpTier: null, onSlide: false, onCurvedSlide: false, curvedSlideProgress: 0, curvedSlideOffset: 0, slideCooldown: 0,
     onZipline: false, ziplineProgress: 0, activeZipline: null,
-    onElevator: false, elevatorProgress: 0, activeElevator: null, elevatorLane: 0, // ★ 新要素ステート
+    onElevator: false, elevatorProgress: 0, activeElevator: null, elevatorLane: 0,
+    // ★ ステップ2: フリーフォール用のステート追加
+    onFreefall: false, freefallProgress: 0, activeFreefall: null, freefallX: 0,
     jumpProgress: 0, lastPlankIdx: -1,
     speedBoostActive: false, speedBoostTimer: 0, puffTimer: 0,
     magnetActive: false, magnetTimer: 0
@@ -260,6 +261,7 @@ export function setupCharacters(scene, STAGES) {
     isJumping: false, activeJumpTier: null, onSlide: false, onCurvedSlide: false, curvedSlideProgress: 0, curvedSlideOffset: 0, slideCooldown: 0,
     onZipline: false, ziplineProgress: 0, activeZipline: null,
     onElevator: false, elevatorProgress: 0, activeElevator: null, elevatorLane: 0, elevatorChoice: undefined,
+    onFreefall: false, freefallProgress: 0, activeFreefall: null, freefallX: 0,
     jumpProgress: 0, lastPlankIdx: -1, botSlideOffsetTarget: 0,
     speedBoostActive: false, speedBoostTimer: 0, puffTimer: 0,
     magnetActive: false, magnetTimer: 0,
@@ -279,6 +281,7 @@ export function setupCharacters(scene, STAGES) {
     isJumping: false, activeJumpTier: null, onSlide: false, onCurvedSlide: false, curvedSlideProgress: 0, curvedSlideOffset: 0, slideCooldown: 0,
     onZipline: false, ziplineProgress: 0, activeZipline: null,
     onElevator: false, elevatorProgress: 0, activeElevator: null, elevatorLane: 0, elevatorChoice: undefined,
+    onFreefall: false, freefallProgress: 0, activeFreefall: null, freefallX: 0,
     jumpProgress: 0, lastPlankIdx: -1, botSlideOffsetTarget: 0,
     speedBoostActive: false, speedBoostTimer: 0, puffTimer: 0,
     magnetActive: false, magnetTimer: 0,
@@ -301,6 +304,7 @@ export function resetCharacters(STAGES) {
     c.onCurvedSlide = false; c.curvedSlideProgress = 0; c.curvedSlideOffset = 0; c.slideCooldown = 0;
     c.onZipline = false; c.ziplineProgress = 0; c.activeZipline = null;
     c.onElevator = false; c.elevatorProgress = 0; c.activeElevator = null;
+    c.onFreefall = false; c.freefallProgress = 0; c.activeFreefall = null; c.freefallX = 0;
     c.lastPlankIdx = -1;
     c.speedBoostActive = false;
     c.speedBoostTimer = 0;

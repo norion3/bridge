@@ -24,6 +24,7 @@ import {
 } from './character.js';
 import {
   STAGES,
+  bridges,
   bridgesByStage,
   modifierGates,
   activeMagnetBlocks,
@@ -222,7 +223,7 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
 
   const isFarFromBridges = curStageObj &&
     char.lastPlankIdx < 0 &&
-    !char.onSlide && !char.onCurvedSlide && !char.onZipline && !char.onElevator &&
+    !char.onSlide && !char.onCurvedSlide && !char.onZipline && !char.onElevator && !char.onFreefall &&
     (nextZ > curStageObj.z - curStageObj.r * 0.72) &&
     (char.pos.z > curStageObj.z - curStageObj.r * 0.72);
 
@@ -235,6 +236,19 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
   }
 
   if (!isFarFromBridges) {
+    // ★ ステップ2: フリーフォールへの突入判定
+    const ffB = localBridges.find(b => b.isFreefall && b.stageIdx === char.currentStage);
+    if (ffB && char.slideCooldown <= 0) {
+      if (nextZ <= ffB.startZ + 0.5 && isForwardIntent) {
+        char.onFreefall = true;
+        char.freefallProgress = 0;
+        char.activeFreefall = ffB;
+        char.freefallX = char.pos.x; // 飛び出した瞬間のX座標
+        if (char.isPlayer && soundRef) soundRef.playJump('mega');
+        return;
+      }
+    }
+
     const zipB = localBridges.find(b => b.isZipline && b.stageIdx === char.currentStage);
     if (zipB && char.slideCooldown <= 0) {
       const distToStart = Math.hypot(nextX, nextZ - zipB.startZ);
@@ -261,17 +275,18 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
       }
     }
 
-    // ★ 新要素: エレベーターへの乗車判定
+    // ★ ステップ1: エレベーターの乗車判定バグ修正（四角いボックス判定で吸い込みやすく）
     const eleB = localBridges.find(b => b.isElevator && b.stageIdx === char.currentStage);
     if (eleB && char.slideCooldown <= 0) {
-      const distToStart = Math.hypot(nextX, nextZ - eleB.startZ);
-      if (distToStart < 3.5 && isForwardIntent) {
-        let closestLane = 0;
-        let minDist = 999;
-        for (let i = 0; i < 3; i++) {
-          const d = Math.abs(nextX - LANES[i]);
-          if (d < minDist) { minDist = d; closestLane = i; }
-        }
+      let onLane = false;
+      let closestLane = 0;
+      let minDist = 999;
+      for (let i = 0; i < 3; i++) {
+        const d = Math.abs(nextX - LANES[i]);
+        if (d < 1.5) onLane = true;
+        if (d < minDist) { minDist = d; closestLane = i; }
+      }
+      if (onLane && nextZ <= eleB.startZ + 1.0 && isForwardIntent) {
         char.onElevator = true;
         char.elevatorProgress = 0;
         char.activeElevator = eleB;
@@ -283,7 +298,7 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
 
     let onBridge = null;
     for (let b of localBridges) {
-      if (b.isCurvedSlide || b.isZipline || b.isElevator) continue;
+      if (b.isCurvedSlide || b.isZipline || b.isElevator || b.isFreefall) continue;
 
       if (char.currentStage !== b.stageIdx && char.currentStage !== b.nextStageIdx) continue;
 
@@ -594,7 +609,75 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     }
   }
 
-  // ★ 新要素: エレベーター搭乗中の処理
+  // ★ ステップ2: フリーフォール（落下）の処理と空中操作
+  if (char.onFreefall && char.activeFreefall) {
+    const b = char.activeFreefall;
+    const flyTime = 2.5; // 2.5秒かけて落下する
+    char.freefallProgress += dt / flyTime;
+
+    if (char.freefallProgress >= 1.0) {
+      char.onFreefall = false;
+      char.currentStage = b.nextStageIdx;
+      const nextStageObj = STAGES[b.nextStageIdx];
+      char.pos.set(char.freefallX, nextStageObj.y, nextStageObj.z + nextStageObj.r * 0.4);
+      char.slideCooldown = 0.5;
+      char.lastPlankIdx = -1;
+      char.activeFreefall = null;
+
+      triggerLandingShockwave(char.pos.x, char.pos.y, char.pos.z, 2.5);
+      if (char.isPlayer && soundRef) soundRef.playLanding();
+
+      // 着地後の姿勢リセット
+      char.meshObj.root.rotation.set(0, 0, 0);
+      char.meshObj.leftArm.rotation.set(0, 0, 0);
+      char.meshObj.rightArm.rotation.set(0, 0, 0);
+      char.meshObj.leftLeg.rotation.set(0, 0, 0);
+      char.meshObj.rightLeg.rotation.set(0, 0, 0);
+
+      if (!char.isPlayer) {
+        char.aiState = 'COLLECT';
+        char.targetLane = undefined;
+        char.aiCapacityGoal = 14 + Math.floor(Math.random() * 5);
+      }
+    } else {
+      const t = Math.min(0.999, Math.max(0, char.freefallProgress));
+      // 左右の空中制御
+      char.freefallX = Math.max(-4.5, Math.min(4.5, char.freefallX + dirX * 12 * dt));
+
+      const pZ = THREE.MathUtils.lerp(b.startZ, b.endZ, t);
+      const pY = b.startY + (b.endY - b.startY) * Math.pow(t, 1.5); // 加速して落ちるカーブ
+      char.pos.set(char.freefallX, pY, pZ);
+
+      // スカイダイビングのポーズ（うつ伏せバンザイ）
+      char.meshObj.root.rotation.x = Math.PI / 2.2;
+      char.meshObj.root.rotation.y = Math.PI; 
+      char.meshObj.root.rotation.z = -dirX * 0.4; // 左右スワイプで少し傾く
+      char.meshObj.leftArm.rotation.z = 2.0;
+      char.meshObj.rightArm.rotation.z = -2.0;
+      char.meshObj.leftLeg.rotation.x = -0.5;
+      char.meshObj.rightLeg.rotation.x = -0.5;
+
+      // 落下中のブロック回収判定
+      if (b.bonusBlocks && b.bonusBlocks.length > 0) {
+        for (let i = 0; i < b.bonusBlocks.length; i++) {
+          const blk = b.bonusBlocks[i];
+          if (!blk.collected) {
+            const dx = char.pos.x - blk.pos.x;
+            const dy = char.pos.y - blk.pos.y;
+            const dz = char.pos.z - blk.pos.z;
+            if (dx * dx + dy * dy + dz * dz < 4.0) { // 2m以内で回収
+              blk.collected = true;
+              blk.mesh.visible = false;
+              addBrickToCharacter(char, char.team, 1, soundRef, updateHUDRef);
+            }
+          }
+        }
+      }
+    }
+    char.meshObj.root.position.copy(char.pos);
+    return;
+  }
+
   if (char.onElevator && char.activeElevator) {
     const b = char.activeElevator;
     const laneData = b.elevators.find(e => e.laneIdx === char.elevatorLane) || b.elevators[0];
@@ -628,7 +711,6 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
 
       char.pos.set(LANES[char.elevatorLane], pY + 0.1, pZ);
 
-      // 直立姿勢の維持
       char.meshObj.root.rotation.x = 0;
       char.meshObj.root.rotation.y = Math.PI; 
       char.meshObj.root.rotation.z = 0;
@@ -1009,7 +1091,7 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     }
   }
 
-  if (!char.onSlide && !char.onCurvedSlide && !char.onZipline && !char.onElevator) {
+  if (!char.onSlide && !char.onCurvedSlide && !char.onZipline && !char.onElevator && !char.onFreefall) {
     for (let i = stageBlocks.length - 1; i >= 0; i--) {
       const blk = stageBlocks[i];
       if (!blk.active) continue;
@@ -1068,7 +1150,7 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     nextStageObj ? nextStageObj.y : 0
   ) - 10.0;
 
-  if (!char.isJumping && !char.onCurvedSlide && !char.onZipline && !char.onElevator && char.pos.y < lowestAllowedY) {
+  if (!char.isJumping && !char.onCurvedSlide && !char.onZipline && !char.onElevator && !char.onFreefall && char.pos.y < lowestAllowedY) {
     if (currentStageObj) {
       char.pos.set(0, currentStageObj.y, currentStageObj.z);
       char.onSlide = false;

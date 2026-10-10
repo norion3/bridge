@@ -13,7 +13,7 @@ export function evaluateBestLaneForBot(bot) {
 
   for (let bIdx = 0; bIdx < stageBridges.length; bIdx++) {
     const b = stageBridges[bIdx];
-    if (b.isJump || b.isSlide || b.isCurvedSlide || b.isZipline || b.isElevator) {
+    if (b.isJump || b.isSlide || b.isCurvedSlide || b.isZipline || b.isElevator || b.isFreefall) {
       continue;
     }
 
@@ -85,10 +85,32 @@ export function avoidGateObstacles(bot, dirX, dirZ) {
 }
 
 export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStepRing) {
-  if (bot.onCurvedSlide || bot.onZipline || bot.onElevator) {
-    const targetOffset = bot.botSlideOffsetTarget || 0;
-    const diff = targetOffset - bot.curvedSlideOffset;
-    const steerX = bot.onCurvedSlide ? (Math.abs(diff) > 0.08 ? Math.sign(diff) * 0.45 : 0) : 0;
+  // ★ ステップ2: AIの空中制御（落下中のブロック追従）
+  if (bot.onCurvedSlide || bot.onZipline || bot.onElevator || bot.onFreefall) {
+    let steerX = 0;
+    if (bot.onCurvedSlide) {
+      const targetOffset = bot.botSlideOffsetTarget || 0;
+      const diff = targetOffset - bot.curvedSlideOffset;
+      steerX = Math.abs(diff) > 0.08 ? Math.sign(diff) * 0.45 : 0;
+    } else if (bot.onFreefall && bot.activeFreefall) {
+      let targetX = bot.freefallX;
+      let minDist = 999;
+      if (bot.activeFreefall.bonusBlocks) {
+        for (let i = 0; i < bot.activeFreefall.bonusBlocks.length; i++) {
+          const blk = bot.activeFreefall.bonusBlocks[i];
+          // 落下プログレスより少し下にある未回収ブロックを狙う
+          if (!blk.collected && blk.t > bot.freefallProgress) {
+            const d = blk.t - bot.freefallProgress;
+            if (d < minDist) {
+              minDist = d;
+              targetX = blk.pos.x;
+            }
+          }
+        }
+      }
+      const diff = targetX - bot.freefallX;
+      steerX = Math.abs(diff) > 0.3 ? Math.sign(diff) * 0.8 : 0;
+    }
     updateSingleCharacter(scene, bot, steerX, -1.0, dt, spawnPuffCloud, spawnSpeedStepRing);
     return;
   }
@@ -118,7 +140,7 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
 
   const stageBridges = bridgesByStage.get(bot.currentStage) || [];
   const activeBridge = stageBridges.find(b =>
-    !b.isCurvedSlide && !b.isZipline && !b.isElevator &&
+    !b.isCurvedSlide && !b.isZipline && !b.isElevator && !b.isFreefall &&
     bot.pos.z <= b.startZ + 1.5 &&
     bot.pos.z >= b.endZ - 0.5 &&
     Math.abs(bot.pos.x - LANES[b.laneIdx]) < 2.5
@@ -131,7 +153,7 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
     if (nextConn.type === 'slide') {
       bot.aiState = 'BUILD';
       if (bot.targetLane === undefined) bot.targetLane = Math.floor(Math.random() * 3);
-    } else if (nextConn.type === 'curved_slide' || nextConn.type === 'zipline' || nextConn.type === 'elevator') {
+    } else if (nextConn.type === 'curved_slide' || nextConn.type === 'zipline' || nextConn.type === 'elevator' || nextConn.type === 'freefall') {
       bot.aiState = 'BUILD';
       bot.targetLane = 1;
       bot.aiCapacityGoal = 0;
@@ -172,14 +194,13 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
       bot.searchCooldown = 0.12;
       let best = null, minDistSq = 999999;
 
-      // ★ 新要素: AIがアイテム（スピード、マグネット、攻撃）を優先して横取りするロジック
       for (let i = 0; i < floorItems.length; i++) {
         const item = floorItems[i];
         if (item.active && item.stageIdx === bot.currentStage) {
           const dx = item.pos.x - bot.pos.x;
           const dz = item.pos.z - bot.pos.z;
           const dSq = dx * dx + dz * dz;
-          if (dSq < 64.0) { // 半径8m以内のアイテムは最優先（距離スコアを大幅に減算）
+          if (dSq < 64.0) {
             if (dSq - 1000 < minDistSq) { 
               minDistSq = dSq - 1000; 
               best = item; 
@@ -222,7 +243,7 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
     updateSingleCharacter(scene, bot, bot.aiDirX / dirMag, bot.aiDirZ / dirMag, dt, spawnPuffCloud, spawnSpeedStepRing);
 
   } else if (bot.aiState === 'BUILD') {
-    if (bot.stackCount === 0 && !stageBridges.find(br => br.isElevator || br.isZipline || br.isCurvedSlide)) {
+    if (bot.stackCount === 0 && !stageBridges.find(br => br.isElevator || br.isZipline || br.isCurvedSlide || br.isFreefall)) {
       bot.aiState = 'COLLECT';
       bot.targetBlock = null;
       bot.elevatorChoice = undefined;
@@ -230,20 +251,17 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
       return;
     }
 
-    const b = stageBridges.find(br => (br.isCurvedSlide || br.isZipline || br.isElevator || br.laneIdx === bot.targetLane));
+    const b = stageBridges.find(br => (br.isCurvedSlide || br.isZipline || br.isElevator || br.isFreefall || br.laneIdx === bot.targetLane));
     if (b) {
       let targetX = LANES[bot.targetLane];
       
-      if (b.isCurvedSlide || b.isZipline) {
+      if (b.isCurvedSlide || b.isZipline || b.isFreefall) {
         targetX = 0;
       } else if (b.isElevator) {
-        // ★ 新要素: AIのエレベーター（最速レーン）選択ロジック
         if (bot.elevatorChoice === undefined) {
           if (Math.random() < 0.20) {
-            // 20%の確率で判断を誤り、適当なレーンに乗る
             bot.elevatorChoice = Math.floor(Math.random() * 3);
           } else {
-            // 基本は一番速い（durationが短い）レーンを確実に見抜く
             let minDur = 999;
             let bestL = 0;
             for(let i=0; i<3; i++) {
@@ -272,7 +290,7 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
       updateSingleCharacter(scene, bot, bot.aiDirX / dirMag, bot.aiDirZ / dirMag, dt, spawnPuffCloud, spawnSpeedStepRing);
 
       if (bot.aiState !== 'COLLECT' && Math.abs(bot.pos.z - oldZ) < 0.0005) {
-        if (b.isZipline || b.isCurvedSlide || b.isSlide || b.isJump || b.isElevator) {
+        if (b.isZipline || b.isCurvedSlide || b.isSlide || b.isJump || b.isElevator || b.isFreefall) {
           bot.pos.z -= 0.06;
         } else {
           bot.aiState = 'COLLECT';

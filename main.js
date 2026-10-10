@@ -25,6 +25,7 @@ import {
   floorItems,
   curvedSlideBonusBlocks,
   ziplineBonusBlocks,
+  freefallBonusBlocks, // ★ ステップ2: 落下中のブロックアニメーション用に追加
   activeMagnetBlocks,
   cloudObjects,
   seaMesh,
@@ -342,7 +343,6 @@ export function animate(currentTime) {
         if (item.crystal) {
           item.crystal.rotation.y = timeSec * 3.2;
           item.crystal.rotation.z = Math.sin(timeSec * 2.5) * 0.25;
-          // ★ 調整: アイテムの浮遊（上下動）の振幅を 0.22 -> 0.35 に増やして視認性向上
           if (item.type !== 'magnet') {
             item.crystal.position.y = 1.35 + Math.sin(timeSec * 4.5 + item.stageIdx) * 0.35;
           } else {
@@ -564,6 +564,15 @@ export function animate(currentTime) {
       }
     });
 
+    // ★ ステップ2: 落下中の空中ブロックアニメーション
+    freefallBonusBlocks.forEach(blk => {
+      if (!blk.collected && blk.mesh) {
+        if (Math.abs(blk.mesh.position.z - playerZ) > 95) return;
+        blk.mesh.rotation.x = timeSec * 2.5 + blk.t * 3.0;
+        blk.mesh.rotation.y = timeSec * 3.5 + blk.t * 4.5;
+      }
+    });
+
     cloudObjects.forEach(c => {
       if (Math.abs(c.mesh.position.z - playerZ) > 115) return;
       c.mesh.position.y = c.baseY + Math.sin(timeSec + c.offset) * 0.4;
@@ -599,6 +608,7 @@ export function animate(currentTime) {
     const isZiplining = player.onZipline;
     const isElevator = player.onElevator;
     const isJumping = player.isJumping;
+    const isFreefall = player.onFreefall; // ★ 追加
 
     let targetCamX = player.pos.x * 0.2;
     let targetCamY = player.pos.y + 24;
@@ -663,6 +673,13 @@ export function animate(currentTime) {
       targetCamZ = player.pos.z + 14;
       targetLookY = player.pos.y;
       targetFOV = 60;
+    } else if (isFreefall) {
+      // ★ ステップ2: 落下中のダイナミックなカメラアングル（急降下）
+      targetCamY = player.pos.y + 12;
+      targetCamZ = player.pos.z + 6;
+      targetLookY = player.pos.y - 15; // 大きく下を向く
+      targetLookAheadZ = player.pos.z - 10;
+      targetFOV = 85; // スピード感を出すため広角に
     }
 
     const lerpFactorPos = isJumping ? 0.10 : 0.14;
