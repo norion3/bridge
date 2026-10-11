@@ -4,9 +4,9 @@ import {
   ELEVATOR_CONFIG,
   SKYDIVE_CONFIG,
   TRAPDOOR_CONFIG
-} from './constants_3.js';
-import { _tempAvoidResult } from './materials_3.js';
-import { characters, player, addBrickToCharacter } from './character_3.js';
+} from './constants.js';
+import { _tempAvoidResult } from './materials.js';
+import { characters, player, addBrickToCharacter } from './character.js';
 import {
   STAGES,
   CONNECTIONS,
@@ -14,8 +14,8 @@ import {
   modifierGates,
   getFloorBlocksForStage,
   floorItems
-} from './world_3.js';
-import { updateSingleCharacter } from './systems_3.js';
+} from './world.js';
+import { updateSingleCharacter } from './systems.js';
 
 export function evaluateBestLaneForBot(bot) {
   const laneScores = [0, 0, 0];

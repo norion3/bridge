@@ -6,7 +6,7 @@ import {
   ELEVATOR_CONFIG,
   SKYDIVE_CONFIG,
   TRAPDOOR_CONFIG
-} from './constants_3.js';
+} from './constants.js';
 import {
   sharedMats,
   blockGeometry,
@@ -18,7 +18,7 @@ import {
   _tempVec3B,
   _tempVec3C,
   disposeHierarchy
-} from './materials_3.js';
+} from './materials.js';
 import {
   characters,
   player,
@@ -28,7 +28,7 @@ import {
   applyTrapdoorPose,
   resetCharacterPose,
   setStackGhostMode
-} from './character_3.js';
+} from './character.js';
 import {
   STAGES,
   bridges,
@@ -39,13 +39,13 @@ import {
   getFloorBlocksForStage,
   setAttackCamTimer,
   incMagnetDockStep
-} from './world_3.js';
+} from './world.js';
 import {
   triggerLandingShockwave,
   projectilePool,
   drainBlockPool,
   floorBlockPool
-} from './particles_3.js';
+} from './particles.js';
 
 let soundRef = null;
 let updateHUDRef = null;

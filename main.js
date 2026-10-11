@@ -1,16 +1,16 @@
 // メインエントリポイント：Three.js初期化・ハイ・クォーター・パノラマカメラ・メインループ
-import { SoundEngine } from './audio_3.js';
+import { SoundEngine } from './audio.js';
 import {
   TEAMS,
   ELEVATOR_CONFIG,
   SKYDIVE_CONFIG,
   TRAPDOOR_CONFIG
-} from './constants_3.js';
+} from './constants.js';
 import {
   _tempVec3A,
   _tempVec3B,
   disposeHierarchy
-} from './materials_3.js';
+} from './materials.js';
 import {
   player,
   characters,
@@ -18,7 +18,7 @@ import {
   resetCharacters,
   setCharacterCallbacks,
   addBrickToCharacter
-} from './character_3.js';
+} from './character.js';
 import {
   STAGES,
   CONNECTIONS,
@@ -36,7 +36,7 @@ import {
   attackCamTimer,
   decrementAttackCamTimer,
   incMagnetDockStep
-} from './world_3.js';
+} from './world.js';
 import {
   initParticlePools,
   puffCloudPool,
@@ -47,14 +47,14 @@ import {
   spawnPuffCloud,
   spawnSpeedStepRing,
   triggerLandingShockwave
-} from './particles_3.js';
+} from './particles.js';
 import {
   setSystemCallbacks,
   updateSingleCharacter,
   handleTackles,
   scatterBricks
-} from './systems_3.js';
-import { updateAICharacter } from './ai_3.js';
+} from './systems.js';
+import { updateAICharacter } from './ai.js';
 
 const sound = new SoundEngine();
 

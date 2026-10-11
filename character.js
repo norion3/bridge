@@ -6,6 +6,7 @@ import {
   SKYDIVE_CONFIG,
   TRAPDOOR_CONFIG
 } from './constants.js';
+
 import {
   sharedMats,
   blockGeometry,

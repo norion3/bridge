@@ -9,7 +9,7 @@ import {
   attackRingGeo,
   attackTrailSphereGeo,
   blockGeometry
-} from './materials_3.js';
+} from './materials.js';
 
 export const PUFF_POOL_SIZE = 24;
 export const RING_POOL_SIZE = 18;

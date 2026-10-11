@@ -9,7 +9,7 @@ import {
   SKYDIVE_CONFIG,
   TRAPDOOR_CONFIG,
   ITEM_COLORS
-} from './constants_3.js';
+} from './constants.js';
 import {
   sharedMats,
   blockGeometry,
@@ -34,9 +34,9 @@ import {
   COLOR_YELLOW_PLANK,
   getOrCreateGateMaterials,
   disposeHierarchy
-} from './materials_3.js';
-import { resetParticlePools, floorBlockPool } from './particles_3.js';
-import { createZiplineTrolleyMesh, characters, player } from './character_3.js';
+} from './materials.js';
+import { resetParticlePools, floorBlockPool } from './particles.js';
+import { createZiplineTrolleyMesh, characters, player } from './character.js';
 
 export const STAGES = [];
 export const CONNECTIONS = [];

@@ -129,7 +129,7 @@ export const TRAPDOOR_CONFIG = {
     offsetY: 6.5,                   // 高さ +6.5m
     offsetZ: 8.0,                   // 後方 +8.0m
     lookOffsetX: 0.0,               // 注視点 X
-    lookOffsetY: -2.5,              // 注視点 Y（真下の穴ではなく水平線と着地島の中間を注視）
+    lookOffsetY: -2.5,              // 注視点 Y（水平線と着地島の中間を注視）
     lookAheadZ: -18.0,              // 前方奥 -18.0m
     lagPhase1Duration: 0.40,        // Phase 1: 開放直後の上空置き去り遅延時間（秒）
     fovStart: 62,                   // 開始時FOV
