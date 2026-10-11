@@ -1,8 +1,21 @@
-// Bot AI自律思考ロジック・レーン評価・エレベーター速度査定・フリーフォール空中追従
-import { LANES, ELEVATOR_CONFIG, FREEFALL_CONFIG } from './constants.js';
+// Bot AI自律思考ロジック・レーン評価・スカイダイブ＆トラップドア進入・空中姿勢同期
+import {
+  LANES,
+  ELEVATOR_CONFIG,
+  SKYDIVE_CONFIG,
+  TRAPDOOR_CONFIG,
+  FREEFALL_CONFIG
+} from './constants.js';
 import { _tempAvoidResult } from './materials.js';
 import { characters, player, addBrickToCharacter } from './character.js';
-import { STAGES, CONNECTIONS, bridgesByStage, modifierGates, getFloorBlocksForStage, floorItems } from './world.js';
+import {
+  STAGES,
+  CONNECTIONS,
+  bridgesByStage,
+  modifierGates,
+  getFloorBlocksForStage,
+  floorItems
+} from './world.js';
 import { updateSingleCharacter } from './systems.js';
 
 export function evaluateBestLaneForBot(bot) {
@@ -13,7 +26,17 @@ export function evaluateBestLaneForBot(bot) {
 
   for (let bIdx = 0; bIdx < stageBridges.length; bIdx++) {
     const b = stageBridges[bIdx];
-    if (b.isJump || b.isSlide || b.isCurvedSlide || b.isZipline || b.isElevator || b.isFreefall) {
+    // 特殊看板ギミック（階段建設が不要なステージ）はレーン評価から除外
+    if (
+      b.isJump ||
+      b.isSlide ||
+      b.isCurvedSlide ||
+      b.isZipline ||
+      b.isElevator ||
+      b.isSkydive ||
+      b.isTrapdoor ||
+      b.isFreefall
+    ) {
       continue;
     }
 
@@ -85,32 +108,34 @@ export function avoidGateObstacles(bot, dirX, dirZ) {
 }
 
 export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStepRing) {
-  // ギミック搭乗中の自動ステアリング（カーブ・ジップライン・エレベーター・フリーフォール）
-  if (bot.onCurvedSlide || bot.onZipline || bot.onElevator || bot.onFreefall) {
+  // ★ 1. ギミック空中搭乗中（スカイダイブ・トラップドア・エレベーター・カーブ・ジップライン）の自動ステアリング
+  if (
+    bot.onSkydive ||
+    bot.onTrapdoor ||
+    bot.onCurvedSlide ||
+    bot.onZipline ||
+    bot.onElevator ||
+    bot.onFreefall
+  ) {
     let steerX = 0;
-    if (bot.onCurvedSlide) {
+
+    if (bot.onSkydive && bot.activeSkydive) {
+      // スカイダイブ中：自然な緩やかロールバンク揺らぎ（左右エアコントロール）
+      const timeSec = performance.now() * 0.0018 + bot.team.hex;
+      steerX = Math.sin(timeSec) * 0.35;
+    } else if (bot.onTrapdoor && bot.activeTrapdoor) {
+      // トラップドア中：直立バンジー姿勢を保ったまま微細なセンター維持
+      const currentX = bot.trapdoorX || 0;
+      steerX = -Math.sign(currentX) * Math.min(0.4, Math.abs(currentX) * 0.5);
+    } else if (bot.onCurvedSlide) {
       const targetOffset = bot.botSlideOffsetTarget || 0;
       const diff = targetOffset - bot.curvedSlideOffset;
       steerX = Math.abs(diff) > 0.08 ? Math.sign(diff) * 0.45 : 0;
     } else if (bot.onFreefall && bot.activeFreefall) {
-      // フリーフォール中の空中スラローム追従（直近前方の未回収ブロックへスムーズに接近）
-      let targetX = bot.freefallX;
-      let minProgDelta = 999;
-      if (bot.activeFreefall.bonusBlocks) {
-        for (let i = 0; i < bot.activeFreefall.bonusBlocks.length; i++) {
-          const blk = bot.activeFreefall.bonusBlocks[i];
-          if (!blk.collected && blk.t > bot.freefallProgress) {
-            const d = blk.t - bot.freefallProgress;
-            if (d < minProgDelta) {
-              minProgDelta = d;
-              targetX = blk.x !== undefined ? blk.x : blk.pos.x;
-            }
-          }
-        }
-      }
-      const diff = targetX - bot.freefallX;
-      steerX = Math.abs(diff) > 0.25 ? Math.sign(diff) * Math.min(1.0, Math.abs(diff) * 1.5) : 0;
+      const currentX = bot.freefallX || 0;
+      steerX = -Math.sign(currentX) * 0.3;
     }
+
     updateSingleCharacter(scene, bot, steerX, -1.0, dt, spawnPuffCloud, spawnSpeedStepRing);
     return;
   }
@@ -140,7 +165,12 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
 
   const stageBridges = bridgesByStage.get(bot.currentStage) || [];
   const activeBridge = stageBridges.find(b =>
-    !b.isCurvedSlide && !b.isZipline && !b.isElevator && !b.isFreefall &&
+    !b.isCurvedSlide &&
+    !b.isZipline &&
+    !b.isElevator &&
+    !b.isSkydive &&
+    !b.isTrapdoor &&
+    !b.isFreefall &&
     bot.pos.z <= b.startZ + 1.5 &&
     bot.pos.z >= b.endZ - 0.5 &&
     Math.abs(bot.pos.x - LANES[b.laneIdx]) < 2.5
@@ -153,7 +183,15 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
     if (nextConn.type === 'slide') {
       bot.aiState = 'BUILD';
       if (bot.targetLane === undefined) bot.targetLane = Math.floor(Math.random() * 3);
-    } else if (nextConn.type === 'curved_slide' || nextConn.type === 'zipline' || nextConn.type === 'elevator' || nextConn.type === 'freefall') {
+    } else if (
+      nextConn.type === 'skydive' ||
+      nextConn.type === 'trapdoor' ||
+      nextConn.type === 'curved_slide' ||
+      nextConn.type === 'zipline' ||
+      nextConn.type === 'elevator' ||
+      nextConn.type === 'freefall'
+    ) {
+      // 看板アトラクションはブロック回収不要で直進可能
       bot.aiState = 'BUILD';
       bot.targetLane = 1;
       bot.aiCapacityGoal = 0;
@@ -190,7 +228,12 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
     const stageBlocks = getFloorBlocksForStage(bot.currentStage);
 
     bot.searchCooldown = (bot.searchCooldown || 0) - dt;
-    if (bot.searchCooldown <= 0 || !bot.targetBlock || !bot.targetBlock.active || bot.targetBlock.stageIdx !== bot.currentStage) {
+    if (
+      bot.searchCooldown <= 0 ||
+      !bot.targetBlock ||
+      !bot.targetBlock.active ||
+      bot.targetBlock.stageIdx !== bot.currentStage
+    ) {
       bot.searchCooldown = 0.12;
       let best = null, minDistSq = 999999;
 
@@ -201,9 +244,9 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
           const dz = item.pos.z - bot.pos.z;
           const dSq = dx * dx + dz * dz;
           if (dSq < 64.0) {
-            if (dSq - 1000 < minDistSq) { 
-              minDistSq = dSq - 1000; 
-              best = item; 
+            if (dSq - 1000 < minDistSq) {
+              minDistSq = dSq - 1000;
+              best = item;
             }
           }
         }
@@ -243,7 +286,17 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
     updateSingleCharacter(scene, bot, bot.aiDirX / dirMag, bot.aiDirZ / dirMag, dt, spawnPuffCloud, spawnSpeedStepRing);
 
   } else if (bot.aiState === 'BUILD') {
-    if (bot.stackCount === 0 && !stageBridges.find(br => br.isElevator || br.isZipline || br.isCurvedSlide || br.isFreefall)) {
+    const isSpecialGimmickAhead = stageBridges.some(
+      br =>
+        br.isSkydive ||
+        br.isTrapdoor ||
+        br.isElevator ||
+        br.isZipline ||
+        br.isCurvedSlide ||
+        br.isFreefall
+    );
+
+    if (bot.stackCount === 0 && !isSpecialGimmickAhead) {
       bot.aiState = 'COLLECT';
       bot.targetBlock = null;
       bot.elevatorChoice = undefined;
@@ -251,14 +304,24 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
       return;
     }
 
-    const b = stageBridges.find(br => (br.isCurvedSlide || br.isZipline || br.isElevator || br.isFreefall || br.laneIdx === bot.targetLane));
+    const b = stageBridges.find(
+      br =>
+        br.isSkydive ||
+        br.isTrapdoor ||
+        br.isCurvedSlide ||
+        br.isZipline ||
+        br.isElevator ||
+        br.isFreefall ||
+        br.laneIdx === bot.targetLane
+    );
+
     if (b) {
       let targetX = LANES[bot.targetLane];
-      
-      if (b.isCurvedSlide || b.isZipline || b.isFreefall) {
+
+      // スカイダイブ（カタパルト中央）およびトラップドア（ハッチ中央）へ正確に向かう
+      if (b.isSkydive || b.isTrapdoor || b.isCurvedSlide || b.isZipline || b.isFreefall) {
         targetX = 0;
       } else if (b.isElevator) {
-        // エレベーターレーンの賢明な選択（75%の確率で最速レーンを選択、25%でランダム）
         if (bot.elevatorChoice === undefined) {
           if (Math.random() < 0.25) {
             bot.elevatorChoice = Math.floor(Math.random() * 3);
@@ -291,11 +354,22 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
       updateSingleCharacter(scene, bot, bot.aiDirX / dirMag, bot.aiDirZ / dirMag, dt, spawnPuffCloud, spawnSpeedStepRing);
 
       if (bot.aiState !== 'COLLECT' && Math.abs(bot.pos.z - oldZ) < 0.0005) {
-        if (b.isZipline || b.isCurvedSlide || b.isSlide || b.isJump || b.isElevator || b.isFreefall) {
+        if (
+          b.isSkydive ||
+          b.isTrapdoor ||
+          b.isZipline ||
+          b.isCurvedSlide ||
+          b.isSlide ||
+          b.isJump ||
+          b.isElevator ||
+          b.isFreefall
+        ) {
           bot.pos.z -= 0.06;
         } else {
           bot.aiState = 'COLLECT';
-          bot.aiCapacityGoal = isVerticalNext ? (20 + Math.floor(Math.random() * 4)) : (14 + Math.floor(Math.random() * 5));
+          bot.aiCapacityGoal = isVerticalNext
+            ? 20 + Math.floor(Math.random() * 4)
+            : 14 + Math.floor(Math.random() * 5);
           bot.targetLane = evaluateBestLaneForBot(bot);
           bot.targetBlock = null;
           bot.elevatorChoice = undefined;

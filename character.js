@@ -1,5 +1,11 @@
-// 3Dキャラクター外観構築・手足メッシュ・スタックプール・トロリー・オープン展望リフト・姿勢管理
-import { TEAMS, MAX_VISUAL_STACK, ELEVATOR_CONFIG } from './constants.js';
+// 3Dキャラクター外観構築・手足メッシュ・スタックプール・トロリー・オープン展望リフト・スカイダイブ＆トラップドア姿勢管理
+import {
+  TEAMS,
+  MAX_VISUAL_STACK,
+  ELEVATOR_CONFIG,
+  SKYDIVE_CONFIG,
+  TRAPDOOR_CONFIG
+} from './constants.js';
 import {
   sharedMats,
   blockGeometry,
@@ -72,18 +78,16 @@ export function createZiplineTrolleyMesh() {
   return group;
 }
 
-// ★ 屋根を完全撤去したオープン展望リフト（高積みブロック突き抜けを完全に防止）
+// 屋根を撤去したオープン展望リフト
 export function createElevatorCageMesh() {
   const lift = new THREE.Group();
 
-  // 1. 白大理石のベースプレート
   const floorMesh = new THREE.Mesh(elevatorPlatformFloorGeo, sharedMats.elevatorDeckPlate);
   floorMesh.position.y = -0.08;
   floorMesh.castShadow = true;
   floorMesh.receiveShadow = true;
   lift.add(floorMesh);
 
-  // 2. 四隅の腰高シルバー手すり支柱
   const postH = ELEVATOR_CONFIG.LIFT.handrailHeight;
   const corners = [
     [-1.08, -0.88],
@@ -97,7 +101,6 @@ export function createElevatorCageMesh() {
     lift.add(post);
   });
 
-  // 3. 後部・側面のセーフティ手すりバー
   const backRail = new THREE.Mesh(elevatorHandrailBarGeo, sharedMats.elevatorHandrailSteel);
   backRail.position.set(0, postH - 0.08, -0.88);
   backRail.rotation.z = Math.PI / 2;
@@ -114,7 +117,6 @@ export function createElevatorCageMesh() {
   rightSideRail.position.x = 1.08;
   lift.add(rightSideRail);
 
-  // 4. 前面の腰高ハンドグリップバー
   const frontGrip = new THREE.Mesh(elevatorHandrailBarGeo, sharedMats.ziplinePylonTrim);
   frontGrip.position.set(0, postH - 0.12, 0.88);
   frontGrip.rotation.z = Math.PI / 2;
@@ -245,6 +247,9 @@ export function getBrickMaterialForStackIndex(char, index) {
 export function refreshCharacterStackVisuals(char) {
   if (char.isPlayer) {
     updatePlayerStackMaterials(char.stackCount);
+    if (char.isGhostStacked) {
+      applyStackGhostOpacity(char, true);
+    }
   }
   const pool = char.meshObj.stackPool;
   const visibleLimit = Math.min(char.stackCount, MAX_VISUAL_STACK);
@@ -258,6 +263,83 @@ export function refreshCharacterStackVisuals(char) {
       bMesh.visible = false;
     }
   }
+}
+
+// ★ 背負いブロックの自動ゴースト化（落下中の視界完全クリア化）
+function applyStackGhostOpacity(char, isGhost) {
+  if (char.isPlayer) {
+    for (let i = 0; i < MAX_VISUAL_STACK; i++) {
+      const mat = playerStackMaterials[i];
+      if (mat) {
+        mat.transparent = isGhost;
+        mat.opacity = isGhost ? 0.20 : 1.0;
+        mat.depthWrite = !isGhost;
+        mat.needsUpdate = true;
+      }
+    }
+  } else if (char.meshObj && char.meshObj.stackPool) {
+    for (let i = 0; i < char.meshObj.stackPool.length; i++) {
+      const bMesh = char.meshObj.stackPool[i];
+      if (bMesh && bMesh.material) {
+        bMesh.material.transparent = isGhost;
+        bMesh.material.opacity = isGhost ? 0.25 : 1.0;
+        bMesh.material.depthWrite = !isGhost;
+      }
+    }
+  }
+}
+
+export function setStackGhostMode(char, isGhost) {
+  if (!char || char.isGhostStacked === isGhost) return;
+  char.isGhostStacked = isGhost;
+  applyStackGhostOpacity(char, isGhost);
+}
+
+// ★ 看板ステージ1：スカイダイブ専用ポーズ（頭先行・高速滑空・バンク傾き）
+export function applySkydivePose(char, dirX, rollAngle) {
+  char.meshObj.root.rotation.set(-0.65, 0, -rollAngle);
+
+  char.meshObj.leftArm.position.set(-0.52, 0.52, -0.32);
+  char.meshObj.rightArm.position.set(0.52, 0.52, -0.32);
+  char.meshObj.leftArm.rotation.set(-1.15, 0, 0.38);
+  char.meshObj.rightArm.rotation.set(-1.15, 0, -0.38);
+
+  char.meshObj.leftLeg.rotation.set(-0.48, 0, -0.12);
+  char.meshObj.rightLeg.rotation.set(-0.48, 0, 0.12);
+
+  char.meshObj.body.position.y = 0.58;
+  char.meshObj.head.position.y = 1.15;
+}
+
+// ★ 看板ステージ2：トラップドア専用ポーズ（足先行・完全直立・flutterアニメーション）
+export function applyTrapdoorPose(char, dirX, timeSec) {
+  char.meshObj.root.rotation.set(-0.05, 0, -dirX * 0.12);
+
+  char.meshObj.leftArm.position.set(-0.56, 0.74, 0);
+  char.meshObj.rightArm.position.set(0.56, 0.74, 0);
+  char.meshObj.leftArm.rotation.set(0, 0, -0.62);
+  char.meshObj.rightArm.rotation.set(0, 0, 0.62);
+
+  const flutter = Math.sin(timeSec * 24) * 0.14;
+  char.meshObj.leftLeg.rotation.set(flutter, 0, 0);
+  char.meshObj.rightLeg.rotation.set(-flutter, 0, 0);
+
+  char.meshObj.body.position.y = 0.65;
+  char.meshObj.head.position.y = 1.25;
+}
+
+// ニュートラル姿勢への完全リセット
+export function resetCharacterPose(char) {
+  char.meshObj.root.rotation.set(0, 0, 0);
+  char.meshObj.leftArm.position.set(-0.48, 0.68, 0);
+  char.meshObj.rightArm.position.set(0.48, 0.68, 0);
+  char.meshObj.leftArm.rotation.set(0, 0, 0);
+  char.meshObj.rightArm.rotation.set(0, 0, 0);
+  char.meshObj.leftLeg.rotation.set(0, 0, 0);
+  char.meshObj.rightLeg.rotation.set(0, 0, 0);
+  char.meshObj.body.position.y = 0.65;
+  char.meshObj.head.position.y = 1.25;
+  setStackGhostMode(char, false);
 }
 
 export function addBrickToCharacter(char, team, count = 1, sound = null, updateHUD = null) {
@@ -311,11 +393,28 @@ export function setupCharacters(scene, STAGES) {
     elevatorLane: 0,
     elevatorExiting: false,
     elevatorExitTimer: 0,
+
+    // ★ 看板ステージ1：スカイダイブ専用ステート（頭先行・前進放物線）
+    onSkydive: false,
+    skydiveProgress: 0,
+    activeSkydive: null,
+    skydiveX: 0,
+    skydiveRoll: 0,
+
+    // ★ 看板ステージ2：トラップドア専用ステート（足先行・垂直直下ドロップ）
+    onTrapdoor: false,
+    trapdoorProgress: 0,
+    activeTrapdoor: null,
+    trapdoorX: 0,
+
+    // 既存コードとの後方互換用
     onFreefall: false,
     freefallProgress: 0,
     activeFreefall: null,
     freefallX: 0,
     freefallRoll: 0,
+
+    isGhostStacked: false,
     jumpProgress: 0,
     lastPlankIdx: -1,
     speedBoostActive: false,
@@ -359,11 +458,25 @@ export function setupCharacters(scene, STAGES) {
     elevatorChoice: undefined,
     elevatorExiting: false,
     elevatorExitTimer: 0,
+
+    onSkydive: false,
+    skydiveProgress: 0,
+    activeSkydive: null,
+    skydiveX: 0,
+    skydiveRoll: 0,
+
+    onTrapdoor: false,
+    trapdoorProgress: 0,
+    activeTrapdoor: null,
+    trapdoorX: 0,
+
     onFreefall: false,
     freefallProgress: 0,
     activeFreefall: null,
     freefallX: 0,
     freefallRoll: 0,
+
+    isGhostStacked: false,
     jumpProgress: 0,
     lastPlankIdx: -1,
     botSlideOffsetTarget: 0,
@@ -412,11 +525,25 @@ export function setupCharacters(scene, STAGES) {
     elevatorChoice: undefined,
     elevatorExiting: false,
     elevatorExitTimer: 0,
+
+    onSkydive: false,
+    skydiveProgress: 0,
+    activeSkydive: null,
+    skydiveX: 0,
+    skydiveRoll: 0,
+
+    onTrapdoor: false,
+    trapdoorProgress: 0,
+    activeTrapdoor: null,
+    trapdoorX: 0,
+
     onFreefall: false,
     freefallProgress: 0,
     activeFreefall: null,
     freefallX: 0,
     freefallRoll: 0,
+
+    isGhostStacked: false,
     jumpProgress: 0,
     lastPlankIdx: -1,
     botSlideOffsetTarget: 0,
@@ -458,11 +585,25 @@ export function resetCharacters(STAGES) {
     c.activeElevator = null;
     c.elevatorExiting = false;
     c.elevatorExitTimer = 0;
+
+    c.onSkydive = false;
+    c.skydiveProgress = 0;
+    c.activeSkydive = null;
+    c.skydiveX = 0;
+    c.skydiveRoll = 0;
+
+    c.onTrapdoor = false;
+    c.trapdoorProgress = 0;
+    c.activeTrapdoor = null;
+    c.trapdoorX = 0;
+
     c.onFreefall = false;
     c.freefallProgress = 0;
     c.activeFreefall = null;
     c.freefallX = 0;
     c.freefallRoll = 0;
+
+    c.isGhostStacked = false;
     c.lastPlankIdx = -1;
     c.speedBoostActive = false;
     c.speedBoostTimer = 0;
@@ -488,17 +629,7 @@ export function resetCharacters(STAGES) {
     c.meshObj.stackGroup.rotation.x = 0;
     c.meshObj.stackGroup.position.set(0, 0.65, -0.42);
 
-    c.meshObj.leftArm.position.set(-0.48, 0.68, 0);
-    c.meshObj.rightArm.position.set(0.48, 0.68, 0);
-    c.meshObj.leftArm.scale.set(1.0, 1.0, 1.0);
-    c.meshObj.rightArm.scale.set(1.0, 1.0, 1.0);
-    c.meshObj.leftArm.rotation.set(0, 0, 0);
-    c.meshObj.rightArm.rotation.set(0, 0, 0);
-    c.meshObj.leftLeg.rotation.set(0, 0, 0);
-    c.meshObj.rightLeg.rotation.set(0, 0, 0);
-    c.meshObj.body.position.y = 0.65;
-    c.meshObj.head.position.y = 1.25;
-    c.meshObj.root.rotation.set(0, 0, 0);
+    resetCharacterPose(c);
   });
 
   if (player && STAGES[0]) {

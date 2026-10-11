@@ -9,6 +9,8 @@ export class SoundEngine {
     this.lastZipSound = 0;
     this.lastElevatorSound = 0;
     this.lastWindSound = 0;
+    this.lastSkydiveGlideSound = 0;
+    this.lastTrapdoorFallSound = 0;
   }
 
   init() {
@@ -342,7 +344,6 @@ export class SoundEngine {
     } catch (e) {}
   }
 
-  // エレベーター始動ロック音（カシャン＋機械起動）
   playElevatorStart() {
     if (this.muted || !this.ctx) return;
     try {
@@ -375,7 +376,6 @@ export class SoundEngine {
     } catch (e) {}
   }
 
-  // エレベーター昇降中のモーター唸り音
   playElevatorMotor(speedRatio = 0.5) {
     if (this.muted || !this.ctx) return;
     const now = this.ctx.currentTime;
@@ -398,7 +398,6 @@ export class SoundEngine {
     } catch (e) {}
   }
 
-  // エレベーター到着時の「ピンポン」チャイム＆メカ停止
   playElevatorArrival() {
     if (this.muted || !this.ctx) return;
     try {
@@ -429,47 +428,60 @@ export class SoundEngine {
     } catch (e) {}
   }
 
-  // フリーフォール飛び出し音（鋭いスルー音）
-  playDiveLaunch() {
+  // ★ 看板ステージ1：スカイダイブ飛び出し音（大気を引き裂く高速ジェット音）
+  playSkydiveLaunch() {
     if (this.muted || !this.ctx) return;
     try {
       const now = this.ctx.currentTime;
-      const osc = this.ctx.createOscillator();
-      const gain = this.ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(320, now);
-      osc.frequency.exponentialRampToValueAtTime(1400, now + 0.18);
-      gain.gain.setValueAtTime(0.40, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
-      osc.connect(gain);
-      gain.connect(this.masterGain);
-      this.autoDisconnect(osc, gain);
-      osc.start(now);
-      osc.stop(now + 0.23);
+      const osc1 = this.ctx.createOscillator();
+      const gain1 = this.ctx.createGain();
+      osc1.type = 'sawtooth';
+      osc1.frequency.setValueAtTime(380, now);
+      osc1.frequency.exponentialRampToValueAtTime(1850, now + 0.22);
+      gain1.gain.setValueAtTime(0.42, now);
+      gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.26);
+      osc1.connect(gain1);
+      gain1.connect(this.masterGain);
+      this.autoDisconnect(osc1, gain1);
+      osc1.start(now);
+      osc1.stop(now + 0.27);
+
+      const osc2 = this.ctx.createOscillator();
+      const gain2 = this.ctx.createGain();
+      osc2.type = 'sine';
+      osc2.frequency.setValueAtTime(600, now + 0.02);
+      osc2.frequency.exponentialRampToValueAtTime(2400, now + 0.20);
+      gain2.gain.setValueAtTime(0.30, now + 0.02);
+      gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.24);
+      osc2.connect(gain2);
+      gain2.connect(this.masterGain);
+      this.autoDisconnect(osc2, gain2);
+      osc2.start(now + 0.02);
+      osc2.stop(now + 0.25);
     } catch (e) {}
   }
 
-  // フリーフォール急降下中の大気風切りノイズ音
-  playFreefallWind(intensity = 0.5) {
+  // ★ 看板ステージ1：スカイダイブ高速滑空風切り音（高音ジェット大気摩擦音）
+  playSkydiveGlide(intensity = 0.5) {
     if (this.muted || !this.ctx) return;
     const now = this.ctx.currentTime;
-    if (now - this.lastWindSound < 0.08) return;
-    this.lastWindSound = now;
+    if (now - this.lastSkydiveGlideSound < 0.08) return;
+    this.lastSkydiveGlideSound = now;
     try {
       const osc = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
       const filter = this.ctx.createBiquadFilter();
 
       osc.type = 'sawtooth';
-      const baseFreq = 160 + intensity * 380;
+      const baseFreq = 220 + intensity * 460;
       osc.frequency.setValueAtTime(baseFreq, now);
-      osc.frequency.linearRampToValueAtTime(baseFreq + 60, now + 0.075);
+      osc.frequency.linearRampToValueAtTime(baseFreq + 80, now + 0.075);
 
       filter.type = 'bandpass';
-      filter.frequency.setValueAtTime(600 + intensity * 1800, now);
-      filter.Q.value = 2.5;
+      filter.frequency.setValueAtTime(1200 + intensity * 2400, now);
+      filter.Q.value = 3.2;
 
-      const vol = 0.08 + intensity * 0.18;
+      const vol = 0.10 + intensity * 0.22;
       gain.gain.setValueAtTime(vol, now);
       gain.gain.exponentialRampToValueAtTime(0.001, now + 0.075);
 
@@ -481,6 +493,77 @@ export class SoundEngine {
       osc.stop(now + 0.08);
     } catch (e) {}
   }
+
+  // ★ 看板ステージ2：トラップドア「ガシャン！」開放ロック解除音
+  playTrapdoorOpen() {
+    if (this.muted || !this.ctx) return;
+    try {
+      const now = this.ctx.currentTime;
+      // 1. 重厚なスチールハッチ開放音
+      const osc1 = this.ctx.createOscillator();
+      const gain1 = this.ctx.createGain();
+      osc1.type = 'sawtooth';
+      osc1.frequency.setValueAtTime(260, now);
+      osc1.frequency.exponentialRampToValueAtTime(45, now + 0.16);
+      gain1.gain.setValueAtTime(0.48, now);
+      gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
+      osc1.connect(gain1);
+      gain1.connect(this.masterGain);
+      this.autoDisconnect(osc1, gain1);
+      osc1.start(now);
+      osc1.stop(now + 0.19);
+
+      // 2. 金属ロックピン解放の鋭いクリック音
+      const osc2 = this.ctx.createOscillator();
+      const gain2 = this.ctx.createGain();
+      osc2.type = 'triangle';
+      osc2.frequency.setValueAtTime(1200, now + 0.02);
+      osc2.frequency.exponentialRampToValueAtTime(180, now + 0.08);
+      gain2.gain.setValueAtTime(0.35, now + 0.02);
+      gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.10);
+      osc2.connect(gain2);
+      gain2.connect(this.masterGain);
+      this.autoDisconnect(osc2, gain2);
+      osc2.start(now + 0.02);
+      osc2.stop(now + 0.11);
+    } catch (e) {}
+  }
+
+  // ★ 看板ステージ2：トラップドア垂直直下ドロップ音（低周波サブベース重力降下音）
+  playTrapdoorFall(intensity = 0.5) {
+    if (this.muted || !this.ctx) return;
+    const now = this.ctx.currentTime;
+    if (now - this.lastTrapdoorFallSound < 0.08) return;
+    this.lastTrapdoorFallSound = now;
+    try {
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      const filter = this.ctx.createBiquadFilter();
+
+      osc.type = 'triangle';
+      const baseFreq = 120 + intensity * 260;
+      osc.frequency.setValueAtTime(baseFreq, now);
+      osc.frequency.linearRampToValueAtTime(baseFreq + 40, now + 0.075);
+
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(450 + intensity * 850, now);
+
+      const vol = 0.12 + intensity * 0.20;
+      gain.gain.setValueAtTime(vol, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.075);
+
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.masterGain);
+      this.autoDisconnect(osc, filter, gain);
+      osc.start(now);
+      osc.stop(now + 0.08);
+    } catch (e) {}
+  }
+
+  // 既存コードとの後方互換用エイリアス
+  playDiveLaunch() { this.playSkydiveLaunch(); }
+  playFreefallWind(intensity = 0.5) { this.playTrapdoorFall(intensity); }
 
   playLanding() {
     if (this.muted || !this.ctx) return;

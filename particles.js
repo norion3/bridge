@@ -1,4 +1,4 @@
-// パーティクル・エフェクト・風切りライン・飛翔体・床ブロックのオブジェクトプール
+// パーティクル・エフェクト・風切りライン・気圧リング・飛翔体・床ブロックプール
 import {
   sharedMats,
   sharedMaterialsSet,
@@ -19,7 +19,8 @@ export const PROJECTILE_POOL_SIZE = 3;
 export const NUM_TRAILS_PER_PROJ = 14;
 export const DRAIN_POOL_SIZE = 8;
 export const FLOOR_BLOCK_POOL_SIZE = 400;
-export const WIND_STREAK_POOL_SIZE = 20; // フリーフォール急降下スピードライン用
+export const WIND_STREAK_POOL_SIZE = 24; // スカイダイブ・スリップストリーム用
+export const DRAFT_RING_POOL_SIZE = 16;  // トラップドア・アップドラフト気圧リング用
 
 export const puffCloudPool = [];
 export const speedStepRingPool = [];
@@ -28,6 +29,7 @@ export const projectilePool = [];
 export const drainBlockPool = [];
 export const floorBlockPool = [];
 export const windStreakPool = [];
+export const draftRingPool = [];
 
 export function triggerLandingShockwave(x, y, z, customRadius = 1.5, customColorHex = null) {
   let sw = shockwavePool.find(item => !item.active);
@@ -48,7 +50,7 @@ export function triggerLandingShockwave(x, y, z, customRadius = 1.5, customColor
   sw.targetRadiusScale = customRadius / 1.5;
   sw.mesh.position.set(x, y + 0.08, z);
   sw.mesh.scale.set(1.0, 1.0, 1.0);
-  sw.mesh.material.opacity = 0.9;
+  sw.mesh.material.opacity = 0.95;
   sw.mesh.material.color.setHex(customColorHex || 0x38bdf8);
   sw.mesh.visible = true;
 }
@@ -180,7 +182,6 @@ export function initParticlePools(scene) {
     }
   }
 
-  // 床ブロックプール
   if (floorBlockPool.length === 0) {
     for (let i = 0; i < FLOOR_BLOCK_POOL_SIZE; i++) {
       const mesh = new THREE.Mesh(blockGeometry, sharedMats.blockNeutral);
@@ -199,10 +200,10 @@ export function initParticlePools(scene) {
     }
   }
 
-  // フリーフォール風切りストリークプール
+  // 1. スカイダイブ用スリップストリーム（後方白煙ストリーク）
   if (windStreakPool.length === 0) {
     for (let w = 0; w < WIND_STREAK_POOL_SIZE; w++) {
-      const streakMat = sharedMats.windStreakMat.clone();
+      const streakMat = sharedMats.skydiveSlipstream.clone();
       sharedMaterialsSet.add(streakMat);
       const mesh = new THREE.Mesh(windStreakGeo, streakMat);
       mesh.visible = false;
@@ -213,7 +214,37 @@ export function initParticlePools(scene) {
         active: false,
         life: 0,
         maxLife: 0.28,
-        speed: 40.0
+        speed: 46.0
+      });
+    }
+  }
+
+  // 2. トラップドア用アップドラフト気圧リング（足元から上空へ吹き抜ける白波リング）
+  if (draftRingPool.length === 0) {
+    const draftGeo = new THREE.RingGeometry(0.8, 1.35, 24);
+    draftGeo.rotateX(-Math.PI / 2);
+
+    for (let r = 0; r < DRAFT_RING_POOL_SIZE; r++) {
+      const draftMat = new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity: 0.70,
+        side: THREE.DoubleSide,
+        depthWrite: false
+      });
+      sharedMaterialsSet.add(draftMat);
+
+      const mesh = new THREE.Mesh(draftGeo, draftMat);
+      mesh.visible = false;
+      scene.add(mesh);
+      draftRingPool.push({
+        mesh: mesh,
+        material: draftMat,
+        active: false,
+        scale: 0.8,
+        life: 0,
+        maxLife: 0.38,
+        speed: 28.0
       });
     }
   }
@@ -255,9 +286,14 @@ export function resetParticlePools() {
     windStreakPool[i].active = false;
     windStreakPool[i].mesh.visible = false;
   }
+  for (let i = 0; i < draftRingPool.length; i++) {
+    draftRingPool[i].active = false;
+    draftRingPool[i].mesh.visible = false;
+  }
 }
 
-export function spawnWindStreak(charX, charY, charZ, rollAngle = 0) {
+// ★ スカイダイブ用：頭部・肩の後方に生じる高速スリップストリーム白煙
+export function spawnSkydiveStream(charX, charY, charZ, rollAngle = 0) {
   let streak = windStreakPool.find(s => !s.active);
   if (!streak) {
     streak = windStreakPool[0];
@@ -272,18 +308,45 @@ export function spawnWindStreak(charX, charY, charZ, rollAngle = 0) {
 
   streak.active = true;
   streak.life = 0;
-  streak.maxLife = 0.22 + Math.random() * 0.12;
+  streak.maxLife = 0.20 + Math.random() * 0.10;
 
-  // キャラクター周囲（半径1.5〜3.5m）にランダム配置
-  const rad = 1.4 + Math.random() * 2.2;
-  const ang = Math.random() * Math.PI * 2;
-  const ox = Math.cos(ang) * rad;
-  const oz = Math.sin(ang) * rad;
+  const lateralOffset = (Math.random() - 0.5) * 1.8;
+  const heightOffset = 0.4 + Math.random() * 0.8;
+  const rearOffset = 0.5 + Math.random() * 0.8;
 
-  streak.mesh.position.set(charX + ox, charY + 1.2 + Math.random() * 1.5, charZ + oz);
-  streak.mesh.rotation.set(Math.PI * 0.38, 0, rollAngle);
+  streak.mesh.position.set(charX + lateralOffset, charY + heightOffset, charZ + rearOffset);
+  streak.mesh.rotation.set(-0.65, 0, -rollAngle);
   streak.mesh.visible = true;
-  streak.material.opacity = 0.45;
+  streak.material.opacity = 0.65;
+}
+
+// ★ トラップドア用：足元から上空へ吹き抜ける円形気圧ウェーブリング
+export function spawnTrapdoorDraftRing(charX, charY, charZ) {
+  let ring = draftRingPool.find(r => !r.active);
+  if (!ring) {
+    ring = draftRingPool[0];
+    let maxLife = ring.life;
+    for (let i = 1; i < draftRingPool.length; i++) {
+      if (draftRingPool[i].life > maxLife) {
+        maxLife = draftRingPool[i].life;
+        ring = draftRingPool[i];
+      }
+    }
+  }
+
+  ring.active = true;
+  ring.life = 0;
+  ring.scale = 0.8;
+  ring.maxLife = 0.35;
+  ring.mesh.position.set(charX, charY - 0.2, charZ);
+  ring.mesh.scale.set(0.8, 0.8, 0.8);
+  ring.mesh.visible = true;
+  ring.material.opacity = 0.75;
+}
+
+// 後方互換用エイリアス
+export function spawnWindStreak(charX, charY, charZ, rollAngle = 0) {
+  spawnSkydiveStream(charX, charY, charZ, rollAngle);
 }
 
 export function spawnPuffCloud(x, y, z) {

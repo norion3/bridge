@@ -1,5 +1,13 @@
 // 描画リソース・共有マテリアル・ジオメトリ・キャッシュ・破棄管理
-import { TEAMS, MAX_VISUAL_STACK, ELEVATOR_CONFIG, FREEFALL_CONFIG, ITEM_COLORS } from './constants.js';
+import {
+  TEAMS,
+  MAX_VISUAL_STACK,
+  ELEVATOR_CONFIG,
+  SKYDIVE_CONFIG,
+  TRAPDOOR_CONFIG,
+  FREEFALL_CONFIG,
+  ITEM_COLORS
+} from './constants.js';
 
 export const COLOR_NEUTRAL_PLANK = new THREE.Color(0xd1d5db);
 export const COLOR_BLUE_PLANK = new THREE.Color(TEAMS.BLUE.hex);
@@ -13,9 +21,9 @@ export const verticalPlankGeo = new THREE.BoxGeometry(3.6, 1.25, 1.8);
 export const islandGeo = new THREE.CylinderGeometry(1, 1, 0.5, 36);
 
 // アイテム形状ジオメトリ
-export const itemCrystalGeo = new THREE.OctahedronGeometry(0.68, 0); // 攻撃用
-export const itemSpeedGeo = new THREE.TetrahedronGeometry(0.75, 1);  // スピード用 (四面体)
-export const itemMagnetGeo = new THREE.TorusGeometry(0.55, 0.15, 8, 16, Math.PI); // マグネット用 (U字蹄鉄型)
+export const itemCrystalGeo = new THREE.OctahedronGeometry(0.68, 0);
+export const itemSpeedGeo = new THREE.TetrahedronGeometry(0.75, 1);
+export const itemMagnetGeo = new THREE.TorusGeometry(0.55, 0.15, 8, 16, Math.PI);
 
 export const itemBeaconRingGeo = new THREE.RingGeometry(0.55, 0.95, 32);
 itemBeaconRingGeo.rotateX(-Math.PI / 2);
@@ -29,13 +37,18 @@ export const attackRingGeo = new THREE.TorusGeometry(0.72, 0.08, 8, 24);
 export const baseShockwaveGeo = new THREE.RingGeometry(0.3, 0.65, 32);
 baseShockwaveGeo.rotateX(-Math.PI / 2);
 
-// ★ エレベーター＆フリーフォール刷新用 共有ジオメトリ
+// エレベーター展望リフト用ジオメトリ
 export const elevatorPlatformFloorGeo = new THREE.BoxGeometry(2.4, 0.16, 2.0);
 export const elevatorHandrailPostGeo = new THREE.CylinderGeometry(0.035, 0.035, 0.95, 8);
 export const elevatorHandrailBarGeo = new THREE.CylinderGeometry(0.035, 0.035, 2.3, 8);
 export const elevatorCableWireGeo = new THREE.CylinderGeometry(0.025, 0.025, 1.0, 8);
 
-// ハッチ（トラップドア）外枠・開閉扉ジオメトリ
+// ★ スカイダイブ（頭先行）用ジオメトリ
+export const catapultRampGeo = new THREE.BoxGeometry(3.6, 0.28, 5.2);
+export const catapultTrimGeo = new THREE.CylinderGeometry(0.065, 0.065, 5.2, 8);
+catapultTrimGeo.rotateX(Math.PI / 2);
+
+// ★ トラップドア（足先行）ハッチ用ジオメトリ
 export const hatchFrameGeo = new THREE.BoxGeometry(3.6, 0.22, 3.6);
 export const hatchDoorGeo = new THREE.BoxGeometry(1.65, 0.14, 3.3);
 export const windStreakGeo = new THREE.CylinderGeometry(0.025, 0.025, 2.8, 6);
@@ -47,21 +60,19 @@ export const _tempVec3C = new THREE.Vector3();
 export const _tempVec3D = new THREE.Vector3();
 export const _tempAvoidResult = { x: 0, z: 0 };
 
-// 有機的な水面コースティクス（四角い格子感を排したリゾート海洋テクスチャ）
+// 有機的な水面コースティクステクスチャ
 export function createSeaTexture() {
   const cvs = document.createElement('canvas');
   cvs.width = 512;
   cvs.height = 512;
   const ctx = cvs.getContext('2d');
-  
-  // 海底グラデーション
+
   const grad = ctx.createLinearGradient(0, 0, 512, 512);
   grad.addColorStop(0, '#0284c7');
   grad.addColorStop(1, '#0369a1');
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, 512, 512);
 
-  // 波の有機的なコースティクス（曲線セル描画）
   ctx.strokeStyle = 'rgba(255, 255, 255, 0.20)';
   ctx.lineWidth = 2.4;
   for (let i = 0; i < 48; i++) {
@@ -150,7 +161,14 @@ export const sharedMats = {
   }),
 
   neutralPlank: new THREE.MeshStandardMaterial({ color: 0xd1d5db, roughness: 0.7 }),
-  slideSurface: new THREE.MeshStandardMaterial({ color: 0x38bdf8, roughness: 0.08, metalness: 0.15, emissive: 0x0284c7, emissiveIntensity: 0.2, side: THREE.DoubleSide }),
+  slideSurface: new THREE.MeshStandardMaterial({
+    color: 0x38bdf8,
+    roughness: 0.08,
+    metalness: 0.15,
+    emissive: 0x0284c7,
+    emissiveIntensity: 0.2,
+    side: THREE.DoubleSide
+  }),
   slideRail: new THREE.MeshStandardMaterial({ color: 0xf97316, roughness: 0.3 }),
   gateFrame: new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.2 }),
   bluePlank: new THREE.MeshStandardMaterial({ color: TEAMS.BLUE.hex, emissive: TEAMS.BLUE.emissive, emissiveIntensity: 0.15, roughness: 0.3 }),
@@ -256,7 +274,6 @@ export const sharedMats = {
     depthWrite: false
   }),
 
-  // ★ 磁石アイテム：ゲートや植物の緑と競合しない高輝度ネオンパープル
   itemMagnetCrystal: new THREE.MeshStandardMaterial({
     color: ITEM_COLORS.MAGNET.hex,
     emissive: ITEM_COLORS.MAGNET.emissive,
@@ -279,7 +296,7 @@ export const sharedMats = {
     depthWrite: false
   }),
 
-  // ★ エレベーター展望リフト用マテリアル（黒い重々しい柱を撤去し、白・シルバー・ネオンで統一）
+  // エレベーター用マテリアル
   elevatorDeckPlate: new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.25, metalness: 0.15 }),
   elevatorHandrailSteel: new THREE.MeshStandardMaterial({ color: 0xe2e8f0, roughness: 0.20, metalness: 0.75 }),
   elevatorGuideCable: new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.70 }),
@@ -287,7 +304,27 @@ export const sharedMats = {
   elevatorMid: new THREE.MeshStandardMaterial({ color: 0xfacc15, emissive: 0xeab308, emissiveIntensity: 0.70, roughness: 0.2 }),
   elevatorSlow: new THREE.MeshStandardMaterial({ color: 0xef4444, emissive: 0xb91c1c, emissiveIntensity: 0.70, roughness: 0.2 }),
 
-  // ★ フリーフォール・トラップドアハッチ用マテリアル
+  // ★ スカイダイブ（頭先行）用マテリアル
+  catapultDeck: new THREE.MeshStandardMaterial({
+    color: 0xf8fafc,
+    roughness: 0.18,
+    metalness: 0.15
+  }),
+  catapultNeonRail: new THREE.MeshStandardMaterial({
+    color: 0x06b6d4,
+    emissive: 0x0891b2,
+    emissiveIntensity: 0.85,
+    roughness: 0.10,
+    metalness: 0.20
+  }),
+  skydiveSlipstream: new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    transparent: true,
+    opacity: 0.60,
+    depthWrite: false
+  }),
+
+  // ★ トラップドア（足先行）ハッチ用マテリアル
   hatchFrameBorder: new THREE.MeshStandardMaterial({ color: 0x0284c7, roughness: 0.3, metalness: 0.2 }),
   hatchHazardWarning: new THREE.MeshStandardMaterial({ map: hazardTexture, roughness: 0.4 }),
   hatchDoorSurface: new THREE.MeshStandardMaterial({ color: 0x0ea5e9, roughness: 0.25, metalness: 0.1 }),
@@ -368,6 +405,8 @@ export const sharedGeometriesSet = new Set([
   elevatorHandrailPostGeo,
   elevatorHandrailBarGeo,
   elevatorCableWireGeo,
+  catapultRampGeo,
+  catapultTrimGeo,
   hatchFrameGeo,
   hatchDoorGeo,
   windStreakGeo

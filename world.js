@@ -1,11 +1,13 @@
-// コース伸長・浮島・橋・スライド・ジップライン・エレベーター・フリーフォールハッチ・ブロック配置・破棄
+// コース伸長・浮島・橋・スライド・ジップライン・エレベーター・スカイダイブ・トラップドア・ブロック配置・破棄
 import {
   BLOCK_TYPES,
   TRAMPOLINE_TIERS,
   LANES,
   PLANK_LENGTH,
+  STAGE_TYPES,
   ELEVATOR_CONFIG,
-  FREEFALL_CONFIG,
+  SKYDIVE_CONFIG,
+  TRAPDOOR_CONFIG,
   ITEM_COLORS
 } from './constants.js';
 import {
@@ -22,6 +24,8 @@ import {
   elevatorHandrailPostGeo,
   elevatorHandrailBarGeo,
   elevatorCableWireGeo,
+  catapultRampGeo,
+  catapultTrimGeo,
   hatchFrameGeo,
   hatchDoorGeo,
   COLOR_NEUTRAL_PLANK,
@@ -45,7 +49,6 @@ export const bridges = [];
 export const floorItems = [];
 export const curvedSlideBonusBlocks = [];
 export const ziplineBonusBlocks = [];
-export const freefallBonusBlocks = [];
 export const activeMagnetBlocks = [];
 export const floorBlocksByStage = new Map();
 export const bridgesByStage = new Map();
@@ -167,17 +170,14 @@ export function createTrampolineMesh(x, y, z, tier) {
   return { group, net, ring };
 }
 
-// エレベーター発着ステーション（黒い斜め柱を完全撤去し、白大理石デッキ・スリムな光沢ガイドワイヤー・到着デッキで構築）
 export function createElevatorStationStructure(scene, startX, startY, startZ, endY, endZ, laneCfg) {
   const group = new THREE.Group();
 
-  // 1. 始点乗車デッキ（清潔な白大理石＋ハザードボーダー）
   const startDeck = new THREE.Mesh(elevatorPlatformFloorGeo, sharedMats.elevatorDeckPlate);
   startDeck.position.set(startX, startY + 0.09, startZ + 1.0);
   startDeck.receiveShadow = true;
   group.add(startDeck);
 
-  // 速度別ライトパネル
   let padMat;
   if (laneCfg.speedTier === 'fast') padMat = sharedMats.elevatorFast;
   else if (laneCfg.speedTier === 'mid') padMat = sharedMats.elevatorMid;
@@ -188,7 +188,6 @@ export function createElevatorStationStructure(scene, startX, startY, startZ, en
   speedPad.position.set(startX, startY + 0.10, startZ + 1.0);
   group.add(speedPad);
 
-  // 2. 始点ゲートポータル＆速度看板
   const postL = new THREE.Mesh(elevatorHandrailPostGeo, sharedMats.elevatorHandrailSteel);
   postL.position.set(startX - 1.15, startY + 1.1, startZ + 1.8);
   group.add(postL);
@@ -201,7 +200,6 @@ export function createElevatorStationStructure(scene, startX, startY, startZ, en
   signMesh.position.set(startX, startY + 2.05, startZ + 1.8);
   group.add(signMesh);
 
-  // 3. 終点（上のステージ）到着デッキ
   const arrivalDeck = new THREE.Mesh(elevatorPlatformFloorGeo, sharedMats.elevatorDeckPlate);
   arrivalDeck.position.set(startX, endY + 0.09, endZ - 1.0);
   arrivalDeck.receiveShadow = true;
@@ -211,7 +209,6 @@ export function createElevatorStationStructure(scene, startX, startY, startZ, en
   arrPad.position.set(startX, endY + 0.10, endZ - 1.0);
   group.add(arrPad);
 
-  // 4. スリムな光沢ガイドワイヤー（黒柱の代わりとなる極細ブルーネオンケーブル）
   const cableStart = new THREE.Vector3(startX, startY + 1.8, startZ + 1.0);
   const cableEnd = new THREE.Vector3(startX, endY + 1.8, endZ - 1.0);
   const cableVec = new THREE.Vector3().subVectors(cableEnd, cableStart);
@@ -228,35 +225,72 @@ export function createElevatorStationStructure(scene, startX, startY, startZ, en
   return group;
 }
 
-// フリーフォール専用トラップドアハッチ（乗るとパカッと開く開閉扉構造）
-export function createFreefallTrapdoorHatch(scene, posX, posY, posZ) {
+// ★ 看板ステージ1：流線型スカイダイブ・カタパルト台（突き出しスロープ＋サイバーブルーLEDレール）
+export function createSkydiveCatapultStructure(scene, posX, posY, posZ) {
   const group = new THREE.Group();
 
-  // 1. ハッチ外枠（警告ストライプボーダー）
+  // 1. カタパルト本体スロープデッキ（白大理石）
+  const rampMesh = new THREE.Mesh(catapultRampGeo, sharedMats.catapultDeck);
+  rampMesh.position.set(posX, posY + 0.08, posZ - SKYDIVE_CONFIG.CATAPULT.length * 0.42);
+  rampMesh.rotation.x = SKYDIVE_CONFIG.CATAPULT.slopeAngle; // 前方下り傾斜
+  rampMesh.receiveShadow = true;
+  rampMesh.castShadow = true;
+  group.add(rampMesh);
+
+  // 2. 左右のネオンガイドレール（サイバーブルー発光）
+  const railL = new THREE.Mesh(catapultTrimGeo, sharedMats.catapultNeonRail);
+  railL.position.set(posX - 1.82, posY + 0.28, posZ - SKYDIVE_CONFIG.CATAPULT.length * 0.42);
+  railL.rotation.x = SKYDIVE_CONFIG.CATAPULT.slopeAngle;
+  group.add(railL);
+
+  const railR = railL.clone();
+  railR.position.x = posX + 1.82;
+  group.add(railR);
+
+  // 3. 発射先端エッジ（警告ボーダー）
+  const tipEdgeGeo = new THREE.BoxGeometry(3.8, 0.12, 0.35);
+  const tipEdge = new THREE.Mesh(tipEdgeGeo, sharedMats.catapultNeonRail);
+  tipEdge.position.set(posX, posY - 0.22, posZ - SKYDIVE_CONFIG.CATAPULT.length * 0.92);
+  group.add(tipEdge);
+
+  group.position.set(0, 0, 0);
+  scene.add(group);
+
+  return {
+    group,
+    launchPoint: new THREE.Vector3(posX, posY, posZ)
+  };
+}
+
+// ★ 看板ステージ2：完全独立トラップドアハッチ（両開きスチール扉＋深淵ボイド）
+export function createTrapdoorHatchStructure(scene, posX, posY, posZ) {
+  const group = new THREE.Group();
+
+  // 1. スチール外枠（ハザードストライプ警告）
   const frame = new THREE.Mesh(hatchFrameGeo, sharedMats.hatchHazardWarning);
   frame.position.set(posX, posY + 0.08, posZ);
   frame.receiveShadow = true;
   group.add(frame);
 
-  // 2. 開口部の暗黒ボイド面（床下に広がる深淵）
+  // 2. 暗黒の深淵ボイド平面（穴の向こうに広がる空と海）
   const voidMesh = new THREE.Mesh(new THREE.PlaneGeometry(3.2, 3.2), sharedMats.hatchInnerVoid);
   voidMesh.rotation.x = -Math.PI / 2;
   voidMesh.position.set(posX, posY - 0.02, posZ);
   group.add(voidMesh);
 
-  // 3. 左扉（ピボット付き）
+  // 3. 左扉（ピボット軸制御）
   const doorLeftPivot = new THREE.Group();
   doorLeftPivot.position.set(posX - 1.6, posY + 0.09, posZ);
   const doorL = new THREE.Mesh(hatchDoorGeo, sharedMats.hatchDoorSurface);
-  doorL.position.set(0.825, 0, 0); // ピボットから右へオフセット
+  doorL.position.set(0.825, 0, 0);
   doorLeftPivot.add(doorL);
   group.add(doorLeftPivot);
 
-  // 4. 右扉（ピボット付き）
+  // 4. 右扉（ピボット軸制御）
   const doorRightPivot = new THREE.Group();
   doorRightPivot.position.set(posX + 1.6, posY + 0.09, posZ);
   const doorR = new THREE.Mesh(hatchDoorGeo, sharedMats.hatchDoorSurface);
-  doorR.position.set(-0.825, 0, 0); // ピボットから左へオフセット
+  doorR.position.set(-0.825, 0, 0);
   doorRightPivot.add(doorR);
   group.add(doorRightPivot);
 
@@ -512,7 +546,6 @@ export function spawnItem(scene, stageIdx, type = 'speed') {
 export function spawnGatesOnIsland(scene, stageIdx, islandZ, islandY) {
   if (stageIdx % 2 !== 1) return;
 
-  // 乗り場との過密を回避するため、島の中央寄りに配置
   const gateZ = islandZ - 1.2;
   const playerCount = player ? player.stackCount : 0;
   let p;
@@ -565,14 +598,36 @@ export function spawnGatesOnIsland(scene, stageIdx, islandZ, islandY) {
 }
 
 export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, nextIslandZ, prevR, nextR, startY, endY, type) {
-  // フリーフォール（パカッと開くトラップドアハッチ・空中散乱ブロックゼロ）
-  if (type === 'freefall') {
+  // ★ 看板ステージ1：スカイダイブ（頭先行・カタパルト台・前方伸びやかな放物線）
+  if (type === 'skydive') {
     const startZ = prevIslandZ - prevR + 1.2;
     const endZ = nextIslandZ + nextR - 1.2;
 
-    const hatch = createFreefallTrapdoorHatch(scene, 0, startY, startZ);
+    const catapult = createSkydiveCatapultStructure(scene, 0, startY, startZ);
 
-    const freefallBridge = {
+    const skydiveBridge = {
+      stageIdx, nextStageIdx, laneIdx: 1, planks: [],
+      visualMeshes: [catapult.group],
+      startZ, endZ, startY, endY,
+      launchPoint: catapult.launchPoint,
+      isSkydive: true, isTrapdoor: false, isElevator: false, isZipline: false,
+      isCurvedSlide: false, isSlide: false, isJump: false, isVertical: false
+    };
+
+    if (!bridgesByStage.has(stageIdx)) bridgesByStage.set(stageIdx, []);
+    bridgesByStage.get(stageIdx).push(skydiveBridge);
+    bridges.push(skydiveBridge);
+    return;
+  }
+
+  // ★ 看板ステージ2：トラップドア（足先行・開閉式スチールハッチ・垂直直下ドロップ）
+  if (type === 'trapdoor' || type === 'freefall') {
+    const startZ = prevIslandZ - prevR + 1.2;
+    const endZ = nextIslandZ + nextR - 1.2;
+
+    const hatch = createTrapdoorHatchStructure(scene, 0, startY, startZ);
+
+    const trapdoorBridge = {
       stageIdx, nextStageIdx, laneIdx: 1, planks: [],
       visualMeshes: [hatch.group],
       startZ, endZ, startY, endY,
@@ -581,17 +636,17 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       doorRightPivot: hatch.doorRightPivot,
       hatchOpenProgress: 0,
       isHatchOpen: false,
-      isJump: false, isSlide: false, isVertical: false, isCurvedSlide: false, isZipline: false, isElevator: false, isFreefall: true,
-      bonusBlocks: []
+      isSkydive: false, isTrapdoor: true, isElevator: false, isZipline: false,
+      isCurvedSlide: false, isSlide: false, isJump: false, isVertical: false
     };
 
     if (!bridgesByStage.has(stageIdx)) bridgesByStage.set(stageIdx, []);
-    bridgesByStage.get(stageIdx).push(freefallBridge);
-    bridges.push(freefallBridge);
+    bridgesByStage.get(stageIdx).push(trapdoorBridge);
+    bridges.push(trapdoorBridge);
     return;
   }
 
-  // エレベーター（黒柱を全撤去し、白大理石デッキ・スリムな光沢ケーブル・到着デッキ）
+  // エレベーター（白大理石オープン展望リフト・スリムワイヤー）
   if (type === 'elevator') {
     const startZ = prevIslandZ - prevR + 1.2;
     const endZ = nextIslandZ + nextR - 1.2;
@@ -599,7 +654,8 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     const elevatorBridge = {
       stageIdx, nextStageIdx, laneIdx: 1, planks: [], visualMeshes: [],
       startZ, endZ, startY, endY,
-      isJump: false, isSlide: false, isVertical: false, isCurvedSlide: false, isZipline: false, isElevator: true, isFreefall: false,
+      isSkydive: false, isTrapdoor: false, isElevator: true, isZipline: false,
+      isCurvedSlide: false, isSlide: false, isJump: false, isVertical: false,
       elevators: []
     };
 
@@ -653,8 +709,8 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       stageIdx, nextStageIdx, laneIdx: 1, planks: [],
       visualMeshes: [depPylon, arrPylon, cableMesh, stationTrolley],
       startZ, endZ, startPt, endPt, cableLen,
-      isJump: false, isSlide: false, isVertical: false, isCurvedSlide: false,
-      isZipline: true, isElevator: false, isFreefall: false,
+      isSkydive: false, isTrapdoor: false, isElevator: false, isZipline: true,
+      isCurvedSlide: false, isSlide: false, isJump: false, isVertical: false,
       bonusBlocks: []
     };
 
@@ -783,8 +839,10 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     const curvedBridge = {
       stageIdx, nextStageIdx, laneIdx: 1, planks: [],
       visualMeshes: [troughMesh, leftRailMesh, rightRailMesh],
-      startZ, endZ, isJump: false, isSlide: false, isVertical: false,
-      isCurvedSlide: true, isZipline: false, isElevator: false, isFreefall: false, curve: spline, curveLength: curveLength,
+      startZ, endZ,
+      isSkydive: false, isTrapdoor: false, isElevator: false, isZipline: false,
+      isCurvedSlide: true, isSlide: false, isJump: false, isVertical: false,
+      curve: spline, curveLength: curveLength,
       lutSamples: lutSamples,
       bonusBlocks: []
     };
@@ -847,7 +905,8 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
 
     const bridge = {
       stageIdx, nextStageIdx, laneIdx, planks: [], visualMeshes: [],
-      startZ, endZ, isJump, isSlide, isVertical, isCurvedSlide: false, isZipline: false, isElevator: false, isFreefall: false,
+      startZ, endZ, isJump, isSlide, isVertical,
+      isSkydive: false, isTrapdoor: false, isCurvedSlide: false, isZipline: false, isElevator: false,
       ghostMesh: null, solidMesh: null
     };
 
@@ -947,6 +1006,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
   }
 }
 
+// ★ コース伸長：島間距離を 36m に拡大し、画像10の階段壁を根本撤去
 export function extendCourse(scene) {
   const idx = STAGES.length;
   const prev = STAGES[idx - 1];
@@ -980,31 +1040,32 @@ export function extendCourse(scene) {
   } else {
     const rand = Math.random();
     if (prev.y >= 14.0) {
-      if (rand < 0.35) {
-        // フリーフォール：垂直落差を強調し前進距離を大幅短縮
-        type = 'freefall';
-        nextY = Math.max(5.0, prev.y - FREEFALL_CONFIG.PHYSICS.minHeightDrop);
-        distZ = FREEFALL_CONFIG.PHYSICS.forwardDistance;
+      if (rand < 0.28) {
+        // ★ 【看板ステージ1】スカイダイブ（頭先行・前進36m・落差-30m）
+        type = 'skydive';
+        nextY = Math.max(5.0, prev.y - SKYDIVE_CONFIG.PHYSICS.minHeightDrop);
+        distZ = SKYDIVE_CONFIG.PHYSICS.forwardDistance; // 36m前進
+        r = 11.5;
+      } else if (rand < 0.54) {
+        // ★ 【看板ステージ2】トラップドア（足先行・垂直直下ドロップ・落差-38m）
+        // 中心間距離を36mに広げ、手前島(12m)と奥島(12m)の間に12mの完全な空間を創出！
+        type = 'trapdoor';
+        nextY = Math.max(5.0, prev.y - TRAPDOOR_CONFIG.PHYSICS.minHeightDrop);
+        distZ = 36.0; // 画像10の壁を撤去する十分な島間クリアランス
         r = 12.0;
-      } else if (rand < 0.60) {
+      } else if (rand < 0.77) {
         type = 'zipline';
         nextY = Math.max(7.0, prev.y - 12.0);
         distZ = 68;
         r = 10.5;
-      } else if (rand < 0.82) {
+      } else {
         type = 'curved_slide';
         nextY = Math.max(6.0, prev.y - 8.0);
         distZ = 46;
         r = 11;
-      } else {
-        type = 'slide';
-        nextY = Math.max(6.0, prev.y - 6.5);
-        distZ = 36;
-        r = 10;
       }
     } else {
       if (rand < 0.30) {
-        // エレベーター
         type = 'elevator';
         nextY = prev.y + 16.0;
         distZ = 30;
@@ -1135,12 +1196,6 @@ export function buildWorld(scene) {
       scene.remove(b.mesh);
     }
   });
-  freefallBonusBlocks.forEach(b => {
-    if (b.mesh) {
-      disposeHierarchy(b.mesh);
-      scene.remove(b.mesh);
-    }
-  });
   floorItems.forEach(item => {
     if (item.group) {
       disposeHierarchy(item.group);
@@ -1168,7 +1223,6 @@ export function buildWorld(scene) {
   oceanIslands.length = 0;
   curvedSlideBonusBlocks.length = 0;
   ziplineBonusBlocks.length = 0;
-  freefallBonusBlocks.length = 0;
   speedItemIslandCounter = 0;
   itemRotationIndex = 0;
 
@@ -1314,17 +1368,9 @@ export function cleanupOldData(scene) {
       ziplineBonusBlocks.splice(i, 1);
     }
   }
-  for (let i = freefallBonusBlocks.length - 1; i >= 0; i--) {
-    if (freefallBonusBlocks[i].stageIdx < safeStage) {
-      if (freefallBonusBlocks[i].mesh) {
-        disposeHierarchy(freefallBonusBlocks[i].mesh);
-        scene.remove(freefallBonusBlocks[i].mesh);
-      }
-      freefallBonusBlocks.splice(i, 1);
-    }
-  }
 }
 
+// ★ カタパルト台・トラップドアハッチ周辺への床ブロック生成を厳密に排除
 export function spawnSingleBlock(scene, stageIdx, targetTeam = null) {
   const stageInfo = STAGES[stageIdx];
   if (!stageInfo) return;
@@ -1334,10 +1380,10 @@ export function spawnSingleBlock(scene, stageIdx, targetTeam = null) {
   let attempts = 0;
   const stageBlocks = getFloorBlocksForStage(stageIdx);
 
-  // ステージ前方にあるハッチおよびエレベーター乗り場位置を取得
   const stageBridges = bridgesByStage.get(stageIdx) || [];
-  const ffBridge = stageBridges.find(b => b.isFreefall);
-  const eleBridge = stageBridges.find(b => b.isElevator);
+  const skydiveB = stageBridges.find(b => b.isSkydive);
+  const trapdoorB = stageBridges.find(b => b.isTrapdoor);
+  const eleB = stageBridges.find(b => b.isElevator);
 
   while (attempts < 25) {
     const r = Math.sqrt(Math.random()) * (stageInfo.r - 2.2);
@@ -1345,17 +1391,26 @@ export function spawnSingleBlock(scene, stageIdx, targetTeam = null) {
     const candX = Math.cos(theta) * r;
     const candZ = stageInfo.z + Math.sin(theta) * r;
 
-    // ★ ハッチ周辺（半径4.5m）の床ブロック生成禁止
-    if (ffBridge) {
-      const dHatchSq = candX * candX + (candZ - ffBridge.startZ) * (candZ - ffBridge.startZ);
-      if (dHatchSq < (FREEFALL_CONFIG.HATCH.exclusionRadius * FREEFALL_CONFIG.HATCH.exclusionRadius)) {
+    // カタパルト台周辺（助走エリア）のブロック生成禁止
+    if (skydiveB) {
+      const dSkySq = candX * candX + (candZ - skydiveB.startZ) * (candZ - skydiveB.startZ);
+      if (dSkySq < (SKYDIVE_CONFIG.CATAPULT.exclusionRadius * SKYDIVE_CONFIG.CATAPULT.exclusionRadius)) {
         attempts++;
         continue;
       }
     }
 
-    // ★ エレベーター乗り場デッキ（半径3.2m）の床ブロック生成禁止
-    if (eleBridge) {
+    // トラップドアハッチ周辺のブロック生成禁止
+    if (trapdoorB) {
+      const dHatchSq = candX * candX + (candZ - trapdoorB.startZ) * (candZ - trapdoorB.startZ);
+      if (dHatchSq < (TRAPDOOR_CONFIG.HATCH.exclusionRadius * TRAPDOOR_CONFIG.HATCH.exclusionRadius)) {
+        attempts++;
+        continue;
+      }
+    }
+
+    // エレベーター乗り場デッキ周辺のブロック生成禁止
+    if (eleB) {
       if (candZ < stageInfo.z - stageInfo.r * 0.45 && Math.abs(candX) < 5.5) {
         attempts++;
         continue;

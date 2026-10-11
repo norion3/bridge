@@ -25,7 +25,6 @@ import {
   floorItems,
   curvedSlideBonusBlocks,
   ziplineBonusBlocks,
-  freefallBonusBlocks,
   activeMagnetBlocks,
   cloudObjects,
   seaMesh,
@@ -41,9 +40,11 @@ import {
   projectilePool,
   drainBlockPool,
   windStreakPool,
+  draftRingPool,
   spawnPuffCloud,
   spawnSpeedStepRing,
-  spawnWindStreak,
+  spawnSkydiveStream,
+  spawnTrapdoorDraftRing,
   triggerLandingShockwave
 } from './particles.js';
 import {
@@ -85,7 +86,6 @@ export function updateTimerHUD(force = false) {
   const timerEl = document.getElementById('hud-timer');
   if (timerEl) {
     timerEl.innerText = `${min}:${sec}`;
-    // 背景が白飛びしても判読できるようドロップシャドウと背景コントラストを担保
     timerEl.style.textShadow = '0 2px 8px rgba(0, 0, 0, 0.85), 0 0 2px rgba(0, 0, 0, 0.9)';
   }
 }
@@ -555,9 +555,14 @@ export function animate(currentTime) {
       }
     }
 
-    // フリーフォール中の風切りスピードライン生成
-    if (player && player.onFreefall) {
-      spawnWindStreak(player.pos.x, player.pos.y, player.pos.z, player.freefallRoll || 0);
+    // 1. スカイダイブ中のスリップストリーム白煙生成
+    if (player && player.onSkydive) {
+      spawnSkydiveStream(player.pos.x, player.pos.y, player.pos.z, player.skydiveRoll || 0);
+    }
+
+    // 2. トラップドア急降下中の円形気圧ウェーブリング生成
+    if (player && (player.onTrapdoor || player.onFreefall)) {
+      spawnTrapdoorDraftRing(player.pos.x, player.pos.y, player.pos.z);
     }
 
     for (let i = 0; i < windStreakPool.length; i++) {
@@ -569,9 +574,25 @@ export function animate(currentTime) {
         w.mesh.visible = false;
       } else {
         const prog = w.life / w.maxLife;
-        w.mesh.position.y -= dt * w.speed;
-        w.mesh.position.z += dt * (w.speed * 0.25);
-        w.material.opacity = (1.0 - prog) * 0.45;
+        w.mesh.position.y -= dt * (w.speed * 0.45);
+        w.mesh.position.z += dt * (w.speed * 0.55);
+        w.material.opacity = (1.0 - prog) * 0.65;
+      }
+    }
+
+    for (let i = 0; i < draftRingPool.length; i++) {
+      const r = draftRingPool[i];
+      if (!r.active) continue;
+      r.life += dt;
+      if (r.life >= r.maxLife) {
+        r.active = false;
+        r.mesh.visible = false;
+      } else {
+        const prog = r.life / r.maxLife;
+        r.scale += dt * 4.2;
+        r.mesh.scale.set(r.scale, r.scale, r.scale);
+        r.mesh.position.y += dt * r.speed;
+        r.material.opacity = (1.0 - prog) * 0.75;
       }
     }
 
@@ -625,9 +646,10 @@ export function animate(currentTime) {
     const isZiplining = player.onZipline;
     const isElevator = player.onElevator;
     const isJumping = player.isJumping;
-    const isFreefall = player.onFreefall;
+    const isSkydive = player.onSkydive;
+    const isTrapdoor = (player.onTrapdoor || player.onFreefall);
 
-    // 高積みブロックによる視界遮蔽を解消するため、スタック数に応じてカメラ高さを動的オフセット
+    // 高積みブロックによる視界遮蔽を解消（スタック数に応じた動的カメラリフト）
     const stackLift = Math.min((player.stackCount || 0) * 0.08, 3.2);
 
     let targetCamX = player.pos.x * 0.2;
@@ -697,18 +719,44 @@ export function animate(currentTime) {
       targetLookY = player.pos.y + 1.8;
       targetLookAheadZ = player.pos.z - 12.0;
       targetFOV = 64;
-    } else if (isFreefall) {
-      // 直立垂直急降下中：真下見下ろしを廃止し、斜め後方上部から着地先を見晴らす見通しの良い構図
-      targetCamX = (player.freefallX || player.pos.x) * 0.35;
-      targetCamY = player.pos.y + 8.5;
-      targetCamZ = player.pos.z + 10.5;
-      targetLookX = (player.freefallX || player.pos.x) * 0.2;
-      targetLookY = player.pos.y - 4.5;
-      targetLookAheadZ = player.pos.z - 22.0;
-      targetFOV = 72;
+    } else if (isSkydive) {
+      // ★ 【看板ステージ1：スカイダイブ専用チェイスカメラ】
+      // 自キャラの頭越しに着地島と水平線を見晴らすスピードチェイス構図（FOV 76で最大疾走感）
+      const airX = player.skydiveX || player.pos.x;
+      targetCamX = airX * 0.45;
+      targetCamY = player.pos.y + 4.8;
+      targetCamZ = player.pos.z + 9.2;
+      targetLookX = airX * 0.25;
+      targetLookY = player.pos.y - 1.2;
+      targetLookAheadZ = player.pos.z - 28.0;
+      targetFOV = 76;
+    } else if (isTrapdoor) {
+      // ★ 【看板ステージ2：トラップドア専用高所覗き込み ➜ 追従カメラ】
+      const dropProg = player.trapdoorProgress || player.freefallProgress || 0;
+      const tX = player.trapdoorX || player.freefallX || player.pos.x;
+
+      if (dropProg < 0.28) {
+        // ハッチ開放直後：背後斜め上から足元の穴越しにはるか下の島を覗き込む
+        targetCamX = tX * 0.30;
+        targetCamY = player.pos.y + 9.8;
+        targetCamZ = player.pos.z + 6.2;
+        targetLookX = tX * 0.15;
+        targetLookY = player.pos.y - 14.0; // 真下の深淵ボイドをチルトダウン
+        targetLookAheadZ = player.pos.z - 12.0;
+        targetFOV = 70;
+      } else {
+        // 急降下中：直立して落ちていくキャラを俯瞰で追従し、島が迫る高度感を演出
+        targetCamX = tX * 0.35;
+        targetCamY = player.pos.y + 7.6;
+        targetCamZ = player.pos.z + 10.5;
+        targetLookX = tX * 0.20;
+        targetLookY = player.pos.y - 4.5;
+        targetLookAheadZ = player.pos.z - 22.0;
+        targetFOV = 74;
+      }
     }
 
-    const lerpFactorPos = (isJumping || isFreefall) ? 0.12 : 0.14;
+    const lerpFactorPos = (isJumping || isSkydive || isTrapdoor) ? 0.16 : 0.14;
     camera.position.x = THREE.MathUtils.lerp(camera.position.x, targetCamX, lerpFactorPos);
     camera.position.y = THREE.MathUtils.lerp(camera.position.y, targetCamY, 0.16);
     camera.position.z = THREE.MathUtils.lerp(camera.position.z, targetCamZ, lerpFactorPos);
