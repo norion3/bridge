@@ -1,11 +1,16 @@
-// メインエントリポイント：Three.js初期化・カメラ追従・全画面入力・メインループ
-import { SoundEngine } from './audio.js';
-import { TEAMS } from './constants.js';
+// メインエントリポイント：Three.js初期化・ハイ・クォーター・パノラマカメラ・メインループ
+import { SoundEngine } from './audio_3.js';
+import {
+  TEAMS,
+  ELEVATOR_CONFIG,
+  SKYDIVE_CONFIG,
+  TRAPDOOR_CONFIG
+} from './constants_3.js';
 import {
   _tempVec3A,
   _tempVec3B,
   disposeHierarchy
-} from './materials.js';
+} from './materials_3.js';
 import {
   player,
   characters,
@@ -13,7 +18,7 @@ import {
   resetCharacters,
   setCharacterCallbacks,
   addBrickToCharacter
-} from './character.js';
+} from './character_3.js';
 import {
   STAGES,
   CONNECTIONS,
@@ -31,7 +36,7 @@ import {
   attackCamTimer,
   decrementAttackCamTimer,
   incMagnetDockStep
-} from './world.js';
+} from './world_3.js';
 import {
   initParticlePools,
   puffCloudPool,
@@ -39,21 +44,17 @@ import {
   shockwavePool,
   projectilePool,
   drainBlockPool,
-  windStreakPool,
-  draftRingPool,
   spawnPuffCloud,
   spawnSpeedStepRing,
-  spawnSkydiveStream,
-  spawnTrapdoorDraftRing,
   triggerLandingShockwave
-} from './particles.js';
+} from './particles_3.js';
 import {
   setSystemCallbacks,
   updateSingleCharacter,
   handleTackles,
   scatterBricks
-} from './systems.js';
-import { updateAICharacter } from './ai.js';
+} from './systems_3.js';
+import { updateAICharacter } from './ai_3.js';
 
 const sound = new SoundEngine();
 
@@ -86,7 +87,7 @@ export function updateTimerHUD(force = false) {
   const timerEl = document.getElementById('hud-timer');
   if (timerEl) {
     timerEl.innerText = `${min}:${sec}`;
-    timerEl.style.textShadow = '0 2px 8px rgba(0, 0, 0, 0.85), 0 0 2px rgba(0, 0, 0, 0.9)';
+    timerEl.style.textShadow = '0 2px 8px rgba(0, 0, 0, 0.95), 0 0 4px rgba(0, 0, 0, 0.9)';
   }
 }
 
@@ -247,7 +248,7 @@ export function initThree() {
   renderer.shadowMap.enabled = true;
   container.appendChild(renderer.domElement);
 
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x0284c7, 0.9));
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x0284c7, 0.95));
   dirLight = new THREE.DirectionalLight(0xffffff, 0.95);
   dirLight.position.set(30, 70, 25);
   dirLight.castShadow = true;
@@ -555,47 +556,6 @@ export function animate(currentTime) {
       }
     }
 
-    // 1. スカイダイブ中のスリップストリーム白煙生成
-    if (player && player.onSkydive) {
-      spawnSkydiveStream(player.pos.x, player.pos.y, player.pos.z, player.skydiveRoll || 0);
-    }
-
-    // 2. トラップドア急降下中の円形気圧ウェーブリング生成
-    if (player && (player.onTrapdoor || player.onFreefall)) {
-      spawnTrapdoorDraftRing(player.pos.x, player.pos.y, player.pos.z);
-    }
-
-    for (let i = 0; i < windStreakPool.length; i++) {
-      const w = windStreakPool[i];
-      if (!w.active) continue;
-      w.life += dt;
-      if (w.life >= w.maxLife) {
-        w.active = false;
-        w.mesh.visible = false;
-      } else {
-        const prog = w.life / w.maxLife;
-        w.mesh.position.y -= dt * (w.speed * 0.45);
-        w.mesh.position.z += dt * (w.speed * 0.55);
-        w.material.opacity = (1.0 - prog) * 0.65;
-      }
-    }
-
-    for (let i = 0; i < draftRingPool.length; i++) {
-      const r = draftRingPool[i];
-      if (!r.active) continue;
-      r.life += dt;
-      if (r.life >= r.maxLife) {
-        r.active = false;
-        r.mesh.visible = false;
-      } else {
-        const prog = r.life / r.maxLife;
-        r.scale += dt * 4.2;
-        r.mesh.scale.set(r.scale, r.scale, r.scale);
-        r.mesh.position.y += dt * r.speed;
-        r.material.opacity = (1.0 - prog) * 0.75;
-      }
-    }
-
     curvedSlideBonusBlocks.forEach(blk => {
       if (!blk.collected && blk.mesh) {
         if (Math.abs(blk.mesh.position.z - playerZ) > 95) return;
@@ -649,7 +609,6 @@ export function animate(currentTime) {
     const isSkydive = player.onSkydive;
     const isTrapdoor = (player.onTrapdoor || player.onFreefall);
 
-    // 高積みブロックによる視界遮蔽を解消（スタック数に応じた動的カメラリフト）
     const stackLift = Math.min((player.stackCount || 0) * 0.08, 3.2);
 
     let targetCamX = player.pos.x * 0.2;
@@ -711,7 +670,6 @@ export function animate(currentTime) {
       targetLookY = player.pos.y - 1;
       targetFOV = 63;
     } else if (isElevator) {
-      // オープン展望リフト搭乗中：前方の島とリフト昇降を見通す広々とした仰角構図
       targetCamX = player.pos.x * 0.35;
       targetCamY = player.pos.y + 7.2 + stackLift;
       targetCamZ = player.pos.z + 12.0;
@@ -720,8 +678,7 @@ export function animate(currentTime) {
       targetLookAheadZ = player.pos.z - 12.0;
       targetFOV = 64;
     } else if (isSkydive) {
-      // ★ 【看板ステージ1：スカイダイブ専用チェイスカメラ】
-      // 自キャラの頭越しに着地島と水平線を見晴らすスピードチェイス構図（FOV 76で最大疾走感）
+      // スカイダイブ専用スピードチェイス構図
       const airX = player.skydiveX || player.pos.x;
       targetCamX = airX * 0.45;
       targetCamY = player.pos.y + 4.8;
@@ -731,34 +688,56 @@ export function animate(currentTime) {
       targetLookAheadZ = player.pos.z - 28.0;
       targetFOV = 76;
     } else if (isTrapdoor) {
-      // ★ 【看板ステージ2：トラップドア専用高所覗き込み ➜ 追従カメラ】
-      const dropProg = player.trapdoorProgress || player.freefallProgress || 0;
+      // ★ トラップドア専用：ハイ・クォーター・パノラマカメラ ＆ 3段フェーズ・カメララグ
+      const b = player.activeTrapdoor || player.activeFreefall;
+      const prog = player.trapdoorProgress || player.freefallProgress || 0;
       const tX = player.trapdoorX || player.freefallX || player.pos.x;
+      const camCfg = TRAPDOOR_CONFIG.CAMERA;
 
-      if (dropProg < 0.28) {
-        // ハッチ開放直後：背後斜め上から足元の穴越しにはるか下の島を覗き込む
-        targetCamX = tX * 0.30;
-        targetCamY = player.pos.y + 9.8;
-        targetCamZ = player.pos.z + 6.2;
-        targetLookX = tX * 0.15;
-        targetLookY = player.pos.y - 14.0; // 真下の深淵ボイドをチルトダウン
-        targetLookAheadZ = player.pos.z - 12.0;
-        targetFOV = 70;
+      if (b && prog < 0.18) {
+        // Phase 1: 開放直後の上空置き去りラグ（キャラだけが足元からヒュッと落ちる瞬間）
+        const lagRatio = prog / 0.18;
+        targetCamX = tX + camCfg.offsetX;
+        targetCamY = b.startY + camCfg.offsetY - (lagRatio * 1.6);
+        targetCamZ = b.startZ + camCfg.offsetZ;
+        targetLookX = tX;
+        targetLookY = player.pos.y + camCfg.lookOffsetY;
+        targetLookAheadZ = player.pos.z + camCfg.lookAheadZ;
+        targetFOV = camCfg.fovStart;
+      } else if (b && prog < 0.82) {
+        // Phase 2: ダイナミックチェイス（全身直立シルエット＋奥の水平線パノラマ）
+        const chaseRatio = (prog - 0.18) / 0.64;
+        targetCamX = tX + camCfg.offsetX;
+        targetCamY = player.pos.y + camCfg.offsetY;
+        targetCamZ = player.pos.z + camCfg.offsetZ;
+        targetLookX = tX;
+        targetLookY = player.pos.y + camCfg.lookOffsetY;
+        targetLookAheadZ = player.pos.z + camCfg.lookAheadZ;
+        targetFOV = THREE.MathUtils.lerp(camCfg.fovStart, camCfg.fovDrop, chaseRatio);
+      } else if (b) {
+        // Phase 3: 先行ランディング（着地島のフロアを先回りして捉え、両足でドスンと着地）
+        const landRatio = (prog - 0.82) / 0.18;
+        targetCamX = tX + camCfg.offsetX * (1.0 - landRatio * 0.35);
+        targetCamY = b.endY + camCfg.offsetY * 0.88;
+        targetCamZ = b.endZ + camCfg.offsetZ * 0.88;
+        targetLookX = tX * 0.5;
+        targetLookY = b.endY + 0.8;
+        targetLookAheadZ = b.endZ - 8.0;
+        targetFOV = THREE.MathUtils.lerp(camCfg.fovDrop, 64, landRatio);
       } else {
-        // 急降下中：直立して落ちていくキャラを俯瞰で追従し、島が迫る高度感を演出
-        targetCamX = tX * 0.35;
-        targetCamY = player.pos.y + 7.6;
-        targetCamZ = player.pos.z + 10.5;
-        targetLookX = tX * 0.20;
-        targetLookY = player.pos.y - 4.5;
-        targetLookAheadZ = player.pos.z - 22.0;
-        targetFOV = 74;
+        targetCamX = tX + camCfg.offsetX;
+        targetCamY = player.pos.y + camCfg.offsetY;
+        targetCamZ = player.pos.z + camCfg.offsetZ;
+        targetLookX = tX;
+        targetLookY = player.pos.y + camCfg.lookOffsetY;
+        targetLookAheadZ = player.pos.z + camCfg.lookAheadZ;
+        targetFOV = camCfg.fovDrop;
       }
     }
 
-    const lerpFactorPos = (isJumping || isSkydive || isTrapdoor) ? 0.16 : 0.14;
+    const lerpFactorPos = isTrapdoor ? 0.22 : ((isJumping || isSkydive) ? 0.16 : 0.14);
     camera.position.x = THREE.MathUtils.lerp(camera.position.x, targetCamX, lerpFactorPos);
-    camera.position.y = THREE.MathUtils.lerp(camera.position.y, targetCamY, 0.16);
+    camera.position.y = THREE.MathUtils.lerp(camera.position.y, targetCamY, isTrapdoor ? 0.18 : 0.16);
     camera.position.z = THREE.MathUtils.lerp(camera.position.z, targetCamZ, lerpFactorPos);
 
     if (Math.abs(camera.fov - targetFOV) > 0.1) {

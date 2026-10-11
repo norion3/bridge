@@ -9,7 +9,7 @@ import {
   SKYDIVE_CONFIG,
   TRAPDOOR_CONFIG,
   ITEM_COLORS
-} from './constants.js';
+} from './constants_3.js';
 import {
   sharedMats,
   blockGeometry,
@@ -34,9 +34,9 @@ import {
   COLOR_YELLOW_PLANK,
   getOrCreateGateMaterials,
   disposeHierarchy
-} from './materials.js';
-import { resetParticlePools, floorBlockPool } from './particles.js';
-import { createZiplineTrolleyMesh, characters, player } from './character.js';
+} from './materials_3.js';
+import { resetParticlePools, floorBlockPool } from './particles_3.js';
+import { createZiplineTrolleyMesh, characters, player } from './character_3.js';
 
 export const STAGES = [];
 export const CONNECTIONS = [];
@@ -225,19 +225,16 @@ export function createElevatorStationStructure(scene, startX, startY, startZ, en
   return group;
 }
 
-// ★ 看板ステージ1：流線型スカイダイブ・カタパルト台（突き出しスロープ＋サイバーブルーLEDレール）
 export function createSkydiveCatapultStructure(scene, posX, posY, posZ) {
   const group = new THREE.Group();
 
-  // 1. カタパルト本体スロープデッキ（白大理石）
   const rampMesh = new THREE.Mesh(catapultRampGeo, sharedMats.catapultDeck);
   rampMesh.position.set(posX, posY + 0.08, posZ - SKYDIVE_CONFIG.CATAPULT.length * 0.42);
-  rampMesh.rotation.x = SKYDIVE_CONFIG.CATAPULT.slopeAngle; // 前方下り傾斜
+  rampMesh.rotation.x = SKYDIVE_CONFIG.CATAPULT.slopeAngle;
   rampMesh.receiveShadow = true;
   rampMesh.castShadow = true;
   group.add(rampMesh);
 
-  // 2. 左右のネオンガイドレール（サイバーブルー発光）
   const railL = new THREE.Mesh(catapultTrimGeo, sharedMats.catapultNeonRail);
   railL.position.set(posX - 1.82, posY + 0.28, posZ - SKYDIVE_CONFIG.CATAPULT.length * 0.42);
   railL.rotation.x = SKYDIVE_CONFIG.CATAPULT.slopeAngle;
@@ -247,7 +244,6 @@ export function createSkydiveCatapultStructure(scene, posX, posY, posZ) {
   railR.position.x = posX + 1.82;
   group.add(railR);
 
-  // 3. 発射先端エッジ（警告ボーダー）
   const tipEdgeGeo = new THREE.BoxGeometry(3.8, 0.12, 0.35);
   const tipEdge = new THREE.Mesh(tipEdgeGeo, sharedMats.catapultNeonRail);
   tipEdge.position.set(posX, posY - 0.22, posZ - SKYDIVE_CONFIG.CATAPULT.length * 0.92);
@@ -262,23 +258,20 @@ export function createSkydiveCatapultStructure(scene, posX, posY, posZ) {
   };
 }
 
-// ★ 看板ステージ2：完全独立トラップドアハッチ（両開きスチール扉＋深淵ボイド）
 export function createTrapdoorHatchStructure(scene, posX, posY, posZ) {
   const group = new THREE.Group();
 
-  // 1. スチール外枠（ハザードストライプ警告）
+  // 上品なサイバーブルーLEDフレーム（黄色×黒トラ柄警戒色を完全撤廃）
   const frame = new THREE.Mesh(hatchFrameGeo, sharedMats.hatchHazardWarning);
   frame.position.set(posX, posY + 0.08, posZ);
   frame.receiveShadow = true;
   group.add(frame);
 
-  // 2. 暗黒の深淵ボイド平面（穴の向こうに広がる空と海）
   const voidMesh = new THREE.Mesh(new THREE.PlaneGeometry(3.2, 3.2), sharedMats.hatchInnerVoid);
   voidMesh.rotation.x = -Math.PI / 2;
   voidMesh.position.set(posX, posY - 0.02, posZ);
   group.add(voidMesh);
 
-  // 3. 左扉（ピボット軸制御）
   const doorLeftPivot = new THREE.Group();
   doorLeftPivot.position.set(posX - 1.6, posY + 0.09, posZ);
   const doorL = new THREE.Mesh(hatchDoorGeo, sharedMats.hatchDoorSurface);
@@ -286,7 +279,6 @@ export function createTrapdoorHatchStructure(scene, posX, posY, posZ) {
   doorLeftPivot.add(doorL);
   group.add(doorLeftPivot);
 
-  // 4. 右扉（ピボット軸制御）
   const doorRightPivot = new THREE.Group();
   doorRightPivot.position.set(posX + 1.6, posY + 0.09, posZ);
   const doorR = new THREE.Mesh(hatchDoorGeo, sharedMats.hatchDoorSurface);
@@ -598,7 +590,7 @@ export function spawnGatesOnIsland(scene, stageIdx, islandZ, islandY) {
 }
 
 export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, nextIslandZ, prevR, nextR, startY, endY, type) {
-  // ★ 看板ステージ1：スカイダイブ（頭先行・カタパルト台・前方伸びやかな放物線）
+  // スカイダイブ（頭先行・カタパルト台・前方放物線）
   if (type === 'skydive') {
     const startZ = prevIslandZ - prevR + 1.2;
     const endZ = nextIslandZ + nextR - 1.2;
@@ -620,7 +612,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     return;
   }
 
-  // ★ 看板ステージ2：トラップドア（足先行・開閉式スチールハッチ・垂直直下ドロップ）
+  // トラップドア（足先行・開閉式スチールハッチ・垂直直下ドロップ）
   if (type === 'trapdoor' || type === 'freefall') {
     const startZ = prevIslandZ - prevR + 1.2;
     const endZ = nextIslandZ + nextR - 1.2;
@@ -1006,7 +998,6 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
   }
 }
 
-// ★ コース伸長：島間距離を 36m に拡大し、画像10の階段壁を根本撤去
 export function extendCourse(scene) {
   const idx = STAGES.length;
   const prev = STAGES[idx - 1];
@@ -1041,17 +1032,17 @@ export function extendCourse(scene) {
     const rand = Math.random();
     if (prev.y >= 14.0) {
       if (rand < 0.28) {
-        // ★ 【看板ステージ1】スカイダイブ（頭先行・前進36m・落差-30m）
+        // 看板ステージ1：スカイダイブ（頭先行・前進36m・落差-30m）
         type = 'skydive';
         nextY = Math.max(5.0, prev.y - SKYDIVE_CONFIG.PHYSICS.minHeightDrop);
-        distZ = SKYDIVE_CONFIG.PHYSICS.forwardDistance; // 36m前進
+        distZ = SKYDIVE_CONFIG.PHYSICS.forwardDistance;
         r = 11.5;
       } else if (rand < 0.54) {
-        // ★ 【看板ステージ2】トラップドア（足先行・垂直直下ドロップ・落差-38m）
-        // 中心間距離を36mに広げ、手前島(12m)と奥島(12m)の間に12mの完全な空間を創出！
+        // 看板ステージ2：トラップドア（足先行・垂直直下ドロップ・落差-38m）
+        // 中心間距離を36mに広げ、島同士のめり込みと壁を根本撤去
         type = 'trapdoor';
         nextY = Math.max(5.0, prev.y - TRAPDOOR_CONFIG.PHYSICS.minHeightDrop);
-        distZ = 36.0; // 画像10の壁を撤去する十分な島間クリアランス
+        distZ = 36.0;
         r = 12.0;
       } else if (rand < 0.77) {
         type = 'zipline';
@@ -1370,7 +1361,6 @@ export function cleanupOldData(scene) {
   }
 }
 
-// ★ カタパルト台・トラップドアハッチ周辺への床ブロック生成を厳密に排除
 export function spawnSingleBlock(scene, stageIdx, targetTeam = null) {
   const stageInfo = STAGES[stageIdx];
   if (!stageInfo) return;

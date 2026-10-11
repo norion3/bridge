@@ -1,4 +1,4 @@
-// パーティクル・エフェクト・風切りライン・気圧リング・飛翔体・床ブロックプール
+// パーティクル・エフェクト・飛翔体・床ブロックプール（視界を塞ぐ空中パーティクルノイズを完全撤廃）
 import {
   sharedMats,
   sharedMaterialsSet,
@@ -8,9 +8,8 @@ import {
   itemCrystalGeo,
   attackRingGeo,
   attackTrailSphereGeo,
-  blockGeometry,
-  windStreakGeo
-} from './materials.js';
+  blockGeometry
+} from './materials_3.js';
 
 export const PUFF_POOL_SIZE = 24;
 export const RING_POOL_SIZE = 18;
@@ -19,8 +18,6 @@ export const PROJECTILE_POOL_SIZE = 3;
 export const NUM_TRAILS_PER_PROJ = 14;
 export const DRAIN_POOL_SIZE = 8;
 export const FLOOR_BLOCK_POOL_SIZE = 400;
-export const WIND_STREAK_POOL_SIZE = 24; // スカイダイブ・スリップストリーム用
-export const DRAFT_RING_POOL_SIZE = 16;  // トラップドア・アップドラフト気圧リング用
 
 export const puffCloudPool = [];
 export const speedStepRingPool = [];
@@ -28,6 +25,8 @@ export const shockwavePool = [];
 export const projectilePool = [];
 export const drainBlockPool = [];
 export const floorBlockPool = [];
+
+// 既存コードとの後方互換用（空配列として安全に保持し、描画負荷と視覚ノイズをゼロ化）
 export const windStreakPool = [];
 export const draftRingPool = [];
 
@@ -199,55 +198,6 @@ export function initParticlePools(scene) {
       });
     }
   }
-
-  // 1. スカイダイブ用スリップストリーム（後方白煙ストリーク）
-  if (windStreakPool.length === 0) {
-    for (let w = 0; w < WIND_STREAK_POOL_SIZE; w++) {
-      const streakMat = sharedMats.skydiveSlipstream.clone();
-      sharedMaterialsSet.add(streakMat);
-      const mesh = new THREE.Mesh(windStreakGeo, streakMat);
-      mesh.visible = false;
-      scene.add(mesh);
-      windStreakPool.push({
-        mesh: mesh,
-        material: streakMat,
-        active: false,
-        life: 0,
-        maxLife: 0.28,
-        speed: 46.0
-      });
-    }
-  }
-
-  // 2. トラップドア用アップドラフト気圧リング（足元から上空へ吹き抜ける白波リング）
-  if (draftRingPool.length === 0) {
-    const draftGeo = new THREE.RingGeometry(0.8, 1.35, 24);
-    draftGeo.rotateX(-Math.PI / 2);
-
-    for (let r = 0; r < DRAFT_RING_POOL_SIZE; r++) {
-      const draftMat = new THREE.MeshBasicMaterial({
-        color: 0xffffff,
-        transparent: true,
-        opacity: 0.70,
-        side: THREE.DoubleSide,
-        depthWrite: false
-      });
-      sharedMaterialsSet.add(draftMat);
-
-      const mesh = new THREE.Mesh(draftGeo, draftMat);
-      mesh.visible = false;
-      scene.add(mesh);
-      draftRingPool.push({
-        mesh: mesh,
-        material: draftMat,
-        active: false,
-        scale: 0.8,
-        life: 0,
-        maxLife: 0.38,
-        speed: 28.0
-      });
-    }
-  }
 }
 
 export function resetParticlePools() {
@@ -282,71 +232,19 @@ export function resetParticlePools() {
     floorBlockPool[i].mesh.visible = false;
     floorBlockPool[i].attracting = false;
   }
-  for (let i = 0; i < windStreakPool.length; i++) {
-    windStreakPool[i].active = false;
-    windStreakPool[i].mesh.visible = false;
-  }
-  for (let i = 0; i < draftRingPool.length; i++) {
-    draftRingPool[i].active = false;
-    draftRingPool[i].mesh.visible = false;
-  }
 }
 
-// ★ スカイダイブ用：頭部・肩の後方に生じる高速スリップストリーム白煙
+// 落下中・滑空中にキャラにまとわりつく白煙・気圧リングノイズを完全撤去（視界100%クリア化）
 export function spawnSkydiveStream(charX, charY, charZ, rollAngle = 0) {
-  let streak = windStreakPool.find(s => !s.active);
-  if (!streak) {
-    streak = windStreakPool[0];
-    let maxLife = streak.life;
-    for (let i = 1; i < windStreakPool.length; i++) {
-      if (windStreakPool[i].life > maxLife) {
-        maxLife = windStreakPool[i].life;
-        streak = windStreakPool[i];
-      }
-    }
-  }
-
-  streak.active = true;
-  streak.life = 0;
-  streak.maxLife = 0.20 + Math.random() * 0.10;
-
-  const lateralOffset = (Math.random() - 0.5) * 1.8;
-  const heightOffset = 0.4 + Math.random() * 0.8;
-  const rearOffset = 0.5 + Math.random() * 0.8;
-
-  streak.mesh.position.set(charX + lateralOffset, charY + heightOffset, charZ + rearOffset);
-  streak.mesh.rotation.set(-0.65, 0, -rollAngle);
-  streak.mesh.visible = true;
-  streak.material.opacity = 0.65;
+  // 意図的に no-op とし、画面を遮るラインノイズを排除
 }
 
-// ★ トラップドア用：足元から上空へ吹き抜ける円形気圧ウェーブリング
 export function spawnTrapdoorDraftRing(charX, charY, charZ) {
-  let ring = draftRingPool.find(r => !r.active);
-  if (!ring) {
-    ring = draftRingPool[0];
-    let maxLife = ring.life;
-    for (let i = 1; i < draftRingPool.length; i++) {
-      if (draftRingPool[i].life > maxLife) {
-        maxLife = draftRingPool[i].life;
-        ring = draftRingPool[i];
-      }
-    }
-  }
-
-  ring.active = true;
-  ring.life = 0;
-  ring.scale = 0.8;
-  ring.maxLife = 0.35;
-  ring.mesh.position.set(charX, charY - 0.2, charZ);
-  ring.mesh.scale.set(0.8, 0.8, 0.8);
-  ring.mesh.visible = true;
-  ring.material.opacity = 0.75;
+  // 意図的に no-op とし、画面中央のリングノイズを排除
 }
 
-// 後方互換用エイリアス
 export function spawnWindStreak(charX, charY, charZ, rollAngle = 0) {
-  spawnSkydiveStream(charX, charY, charZ, rollAngle);
+  // 意図的に no-op とし、画面の視覚的ゴミを一掃
 }
 
 export function spawnPuffCloud(x, y, z) {

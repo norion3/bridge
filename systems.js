@@ -1,4 +1,4 @@
-// 物理移動判定・階段敷設・タックル衝突・ゲート判定・誘導弾・アイテム処理・エレベーター到着・スカイダイブ＆トラップドア物理
+// 物理移動判定・階段敷設・タックル衝突・ゲート判定・誘導弾・アイテム処理・エレベーター前向き下車・トランポリン点滅撤廃
 import {
   TEAMS,
   TRAMPOLINE_TIERS,
@@ -6,7 +6,7 @@ import {
   ELEVATOR_CONFIG,
   SKYDIVE_CONFIG,
   TRAPDOOR_CONFIG
-} from './constants.js';
+} from './constants_3.js';
 import {
   sharedMats,
   blockGeometry,
@@ -18,7 +18,7 @@ import {
   _tempVec3B,
   _tempVec3C,
   disposeHierarchy
-} from './materials.js';
+} from './materials_3.js';
 import {
   characters,
   player,
@@ -28,7 +28,7 @@ import {
   applyTrapdoorPose,
   resetCharacterPose,
   setStackGhostMode
-} from './character.js';
+} from './character_3.js';
 import {
   STAGES,
   bridges,
@@ -39,13 +39,13 @@ import {
   getFloorBlocksForStage,
   setAttackCamTimer,
   incMagnetDockStep
-} from './world.js';
+} from './world_3.js';
 import {
   triggerLandingShockwave,
   projectilePool,
   drainBlockPool,
   floorBlockPool
-} from './particles.js';
+} from './particles_3.js';
 
 let soundRef = null;
 let updateHUDRef = null;
@@ -243,7 +243,7 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
   }
 
   if (!isFarFromBridges) {
-    // ★ 看板ステージ1：スカイダイブ・カタパルト台飛び出し判定
+    // スカイダイブ・カタパルト台発射判定
     const skyB = localBridges.find(b => b.isSkydive && b.stageIdx === char.currentStage);
     if (skyB && char.slideCooldown <= 0) {
       const distToCatapult = Math.hypot(nextX, nextZ - skyB.startZ);
@@ -253,14 +253,14 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
         char.activeSkydive = skyB;
         char.skydiveX = char.pos.x;
         char.skydiveRoll = 0;
-        setStackGhostMode(char, true); // 背負いブロックの自動半透明化（視界完全クリア）
+        setStackGhostMode(char, true);
 
         if (char.isPlayer && soundRef) soundRef.playSkydiveLaunch();
         return;
       }
     }
 
-    // ★ 看板ステージ2：トラップドア・ハッチ乗車判定
+    // トラップドア・ハッチ乗車判定
     const trapB = localBridges.find(b => b.isTrapdoor && b.stageIdx === char.currentStage);
     if (trapB && char.slideCooldown <= 0) {
       const distToHatch = Math.hypot(nextX, nextZ - trapB.startZ);
@@ -270,7 +270,7 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
         char.activeTrapdoor = trapB;
         char.trapdoorX = char.pos.x;
         trapB.isHatchOpen = true;
-        setStackGhostMode(char, true); // 背負いブロックの自動半透明化
+        setStackGhostMode(char, true);
 
         if (char.isPlayer && soundRef) soundRef.playTrapdoorOpen();
         return;
@@ -574,6 +574,7 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
 }
 
 export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffCloud, spawnSpeedStepRing) {
+  // タックル被弾時のみのインビジブル点滅（トランポリン着地時の誤作動を排除）
   if (char.invulnerableTimer > 0) {
     char.invulnerableTimer -= dt;
     char.meshObj.root.visible = (Math.floor(Date.now() / 90) % 2 === 0);
@@ -639,7 +640,6 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     }
   }
 
-  // ★ 【看板ステージ1】スカイダイブ物理：頭先行・前方への伸びやかな放物線・左右ロールバンク傾き
   if (char.onSkydive && char.activeSkydive) {
     const b = char.activeSkydive;
     const totalFlyTime = SKYDIVE_CONFIG.PHYSICS.totalDuration;
@@ -657,7 +657,7 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
       triggerLandingShockwave(char.pos.x, char.pos.y, char.pos.z, 3.8, 0x06b6d4);
       if (char.isPlayer && soundRef) soundRef.playLanding();
 
-      resetCharacterPose(char); // 姿勢リセット ＆ ブロック不透明度1.0復帰
+      resetCharacterPose(char);
 
       if (!char.isPlayer) {
         char.aiState = 'COLLECT';
@@ -667,7 +667,6 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     } else {
       const t = Math.min(0.999, Math.max(0, char.skydiveProgress));
 
-      // 左右エアコントロール ＆ ロールバンク角
       const airSpeed = SKYDIVE_CONFIG.PHYSICS.horizontalAirControlSpeed;
       const maxAirX = SKYDIVE_CONFIG.PHYSICS.maxAirOffsetX;
       char.skydiveX = Math.max(-maxAirX, Math.min(maxAirX, char.skydiveX + dirX * airSpeed * dt));
@@ -675,13 +674,11 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
       const targetRoll = -dirX * SKYDIVE_CONFIG.PHYSICS.maxRollAngle;
       char.skydiveRoll = THREE.MathUtils.lerp(char.skydiveRoll || 0, targetRoll, 0.25);
 
-      // 前進放物線軌道
       const pZ = THREE.MathUtils.lerp(b.startZ, b.endZ, t);
       const fallPower = SKYDIVE_CONFIG.PHYSICS.gravityPower;
       const pY = b.startY + (b.endY - b.startY) * Math.pow(t, fallPower);
       char.pos.set(char.skydiveX, pY, pZ);
 
-      // スカイダイブ専用姿勢適用（頭先行ダイブ・腕後方流し・ロール傾き）
       applySkydivePose(char, dirX, char.skydiveRoll);
 
       if (char.isPlayer && soundRef) {
@@ -692,11 +689,9 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     return;
   }
 
-  // ★ 【看板ステージ2】トラップドア物理：ハッチ開放・足先行・垂直直下ドロップ・flutterアニメ
   if ((char.onTrapdoor && char.activeTrapdoor) || (char.onFreefall && char.activeFreefall)) {
     const b = char.activeTrapdoor || char.activeFreefall;
 
-    // ハッチ扉のパカッと開放アニメーション
     if (b.doorLeftPivot && b.doorRightPivot) {
       b.hatchOpenProgress = Math.min(1.0, (b.hatchOpenProgress || 0) + dt / TRAPDOOR_CONFIG.HATCH.openDuration);
       const angle = b.hatchOpenProgress * TRAPDOOR_CONFIG.HATCH.doorOpenAngle;
@@ -721,7 +716,7 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
       triggerLandingShockwave(char.pos.x, char.pos.y, char.pos.z, 3.4, 0x0284c7);
       if (char.isPlayer && soundRef) soundRef.playLanding();
 
-      resetCharacterPose(char); // 姿勢リセット ＆ ブロック不透明度1.0復帰
+      resetCharacterPose(char);
 
       if (!char.isPlayer) {
         char.aiState = 'COLLECT';
@@ -731,18 +726,15 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     } else {
       const t = Math.min(0.999, Math.max(0, char.trapdoorProgress));
 
-      // 左右エアスライド（直立姿勢のまま微調整）
       const airSpeed = TRAPDOOR_CONFIG.PHYSICS.horizontalAirControlSpeed;
       const maxAirX = TRAPDOOR_CONFIG.PHYSICS.maxAirOffsetX;
       char.trapdoorX = Math.max(-maxAirX, Math.min(maxAirX, (char.trapdoorX || char.freefallX || 0) + dirX * airSpeed * dt));
 
-      // 垂直直下ドロップ軌道（前進を抑え重力加速で真下へ）
       const pZ = THREE.MathUtils.lerp(b.startZ, b.endZ, t);
       const fallPower = TRAPDOOR_CONFIG.PHYSICS.gravityPower;
       const pY = b.startY + (b.endY - b.startY) * Math.pow(t, fallPower);
       char.pos.set(char.trapdoorX, pY, pZ);
 
-      // トラップドア専用姿勢適用（直立バンジー・脚バタつき・腕バランス）
       const timeSec = performance.now() * 0.001;
       applyTrapdoorPose(char, dirX, timeSec);
 
@@ -754,11 +746,11 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     return;
   }
 
-  // エレベーター昇降＆到着デッキ下車シーケンス
   if (char.onElevator && char.activeElevator) {
     const b = char.activeElevator;
     const laneData = b.elevators.find(e => e.laneIdx === char.elevatorLane) || b.elevators[0];
 
+    // 上の島へ到着後の前向き下車シーケンス（後ろ向きバック歩行を根絶）
     if (char.elevatorExiting) {
       char.elevatorExitTimer -= dt;
       const exitProgress = 1.0 - (char.elevatorExitTimer / ELEVATOR_CONFIG.EASING.exitDelay);
@@ -766,10 +758,16 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
       char.pos.z = b.endZ - 1.0 - exitProgress * 1.8;
       char.pos.y = STAGES[b.nextStageIdx].y;
 
-      char.meshObj.leftArm.rotation.set(Math.sin(exitProgress * 12) * 0.5, 0, 0);
-      char.meshObj.rightArm.rotation.set(-Math.sin(exitProgress * 12) * 0.5, 0, 0);
-      char.meshObj.leftLeg.rotation.set(-Math.sin(exitProgress * 12) * 0.5, 0, 0);
-      char.meshObj.rightLeg.rotation.set(Math.sin(exitProgress * 12) * 0.5, 0, 0);
+      // 進行方向（北 = Math.PI）を向いて堂々と歩行
+      char.meshObj.root.rotation.set(0, Math.PI, 0);
+
+      const armSwing = Math.sin(exitProgress * 14) * 0.55;
+      char.meshObj.leftArm.position.set(-0.48, 0.68, 0);
+      char.meshObj.rightArm.position.set(0.48, 0.68, 0);
+      char.meshObj.leftArm.rotation.set(armSwing, 0, 0);
+      char.meshObj.rightArm.rotation.set(-armSwing, 0, 0);
+      char.meshObj.leftLeg.rotation.set(-armSwing, 0, 0);
+      char.meshObj.rightLeg.rotation.set(armSwing, 0, 0);
 
       if (char.elevatorExitTimer <= 0) {
         char.onElevator = false;
@@ -822,14 +820,15 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
 
       char.pos.set(LANES[char.elevatorLane], pY + 0.10, pZ);
 
-      char.meshObj.root.rotation.set(0, 0, 0);
+      // 搭乗中も進行方向（北 = Math.PI）を向いて手すりを把持
+      char.meshObj.root.rotation.set(0, Math.PI, 0);
       char.meshObj.leftLeg.rotation.set(0, 0, 0);
       char.meshObj.rightLeg.rotation.set(0, 0, 0);
 
-      char.meshObj.leftArm.position.set(-0.42, 0.82, 0.35);
-      char.meshObj.rightArm.position.set(0.42, 0.82, 0.35);
-      char.meshObj.leftArm.rotation.set(-0.7, 0, -0.15);
-      char.meshObj.rightArm.rotation.set(-0.7, 0, 0.15);
+      char.meshObj.leftArm.position.set(-0.42, 0.82, -0.35);
+      char.meshObj.rightArm.position.set(0.42, 0.82, -0.35);
+      char.meshObj.leftArm.rotation.set(0.7, 0, -0.15);
+      char.meshObj.rightArm.rotation.set(0.7, 0, 0.15);
       char.meshObj.body.position.y = 0.65;
       char.meshObj.head.position.y = 1.25;
 
@@ -856,9 +855,8 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
       char.lastPlankIdx = -1;
       resetCharacterPose(char);
 
+      // 足元ショックウェーブのみでスマートに着地演出（点滅タイマー設定を完全削除！）
       triggerLandingShockwave(char.pos.x, char.pos.y, char.pos.z, tier.shockRadius);
-
-      char.invulnerableTimer = Math.max(char.invulnerableTimer, 1.5);
 
       for (let i = 0; i < characters.length; i++) {
         const other = characters[i];

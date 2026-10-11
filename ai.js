@@ -3,11 +3,10 @@ import {
   LANES,
   ELEVATOR_CONFIG,
   SKYDIVE_CONFIG,
-  TRAPDOOR_CONFIG,
-  FREEFALL_CONFIG
-} from './constants.js';
-import { _tempAvoidResult } from './materials.js';
-import { characters, player, addBrickToCharacter } from './character.js';
+  TRAPDOOR_CONFIG
+} from './constants_3.js';
+import { _tempAvoidResult } from './materials_3.js';
+import { characters, player, addBrickToCharacter } from './character_3.js';
 import {
   STAGES,
   CONNECTIONS,
@@ -15,8 +14,8 @@ import {
   modifierGates,
   getFloorBlocksForStage,
   floorItems
-} from './world.js';
-import { updateSingleCharacter } from './systems.js';
+} from './world_3.js';
+import { updateSingleCharacter } from './systems_3.js';
 
 export function evaluateBestLaneForBot(bot) {
   const laneScores = [0, 0, 0];
@@ -108,7 +107,7 @@ export function avoidGateObstacles(bot, dirX, dirZ) {
 }
 
 export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStepRing) {
-  // ★ 1. ギミック空中搭乗中（スカイダイブ・トラップドア・エレベーター・カーブ・ジップライン）の自動ステアリング
+  // ギミック空中搭乗中（スカイダイブ・トラップドア・エレベーター・カーブ・ジップライン）の自動ステアリング
   if (
     bot.onSkydive ||
     bot.onTrapdoor ||
@@ -120,11 +119,11 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
     let steerX = 0;
 
     if (bot.onSkydive && bot.activeSkydive) {
-      // スカイダイブ中：自然な緩やかロールバンク揺らぎ（左右エアコントロール）
+      // スカイダイブ中：自然な緩やかロールバンク揺らぎ
       const timeSec = performance.now() * 0.0018 + bot.team.hex;
       steerX = Math.sin(timeSec) * 0.35;
     } else if (bot.onTrapdoor && bot.activeTrapdoor) {
-      // トラップドア中：直立バンジー姿勢を保ったまま微細なセンター維持
+      // トラップドア中：直立バンジー姿勢を保ったまま中央ラインを維持
       const currentX = bot.trapdoorX || 0;
       steerX = -Math.sign(currentX) * Math.min(0.4, Math.abs(currentX) * 0.5);
     } else if (bot.onCurvedSlide) {
@@ -191,7 +190,7 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
       nextConn.type === 'elevator' ||
       nextConn.type === 'freefall'
     ) {
-      // 看板アトラクションはブロック回収不要で直進可能
+      // 特殊ギミックステージはブロック回収不要で進入可能
       bot.aiState = 'BUILD';
       bot.targetLane = 1;
       bot.aiCapacityGoal = 0;
@@ -318,7 +317,6 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
     if (b) {
       let targetX = LANES[bot.targetLane];
 
-      // スカイダイブ（カタパルト中央）およびトラップドア（ハッチ中央）へ正確に向かう
       if (b.isSkydive || b.isTrapdoor || b.isCurvedSlide || b.isZipline || b.isFreefall) {
         targetX = 0;
       } else if (b.isElevator) {

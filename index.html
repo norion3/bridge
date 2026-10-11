@@ -52,7 +52,7 @@
   <!-- Virtual Touch Input Layer (全画面スワイプ操作) -->
   <div id="touch-control-layer"></div>
 
-  <!-- HUD Interface Overlay (完全オープン視界・数字＋単位直結) -->
+  <!-- HUD Interface Overlay -->
   <div class="fixed top-0 inset-x-0 z-20 pointer-events-none p-4 sm:p-6 safe-padding flex justify-between items-start">
     <!-- スコア (特大ゴールド数字 + 段) -->
     <div class="flex items-baseline drop-shadow-[0_2px_10px_rgba(0,0,0,0.85)] select-none">
@@ -60,9 +60,9 @@
       <span class="text-sm sm:text-base font-black text-amber-200 ml-1">段</span>
     </div>
 
-    <!-- タイマー (中央上・控えめデジタル数字のみ：5分) -->
-    <div class="flex items-center drop-shadow-[0_2px_8px_rgba(0,0,0,0.85)] select-none pt-0.5">
-      <span id="hud-timer" class="text-base sm:text-lg font-bold text-white/90 font-mono tracking-widest leading-none">05:00</span>
+    <!-- タイマー (中央上・白飛び防止高コントラストシャドウ) -->
+    <div class="flex items-center drop-shadow-[0_2px_8px_rgba(0,0,0,0.9)] select-none pt-0.5">
+      <span id="hud-timer" class="text-base sm:text-lg font-black text-white font-mono tracking-widest leading-none">05:00</span>
     </div>
 
     <!-- 所持数 (手持ちリソース・白数字 + 個) -->
@@ -114,7 +114,7 @@
     </div>
   </div>
 
-  <!-- 同一階層（フラット構成）のエントリポイント main.js をモジュールとして読み込み -->
-  <script type="module" src="./main.js"></script>
+  <!-- 最新の main_3.js をエントリポイントとして読み込み -->
+  <script type="module" src="./main_3.js"></script>
 </body>
 </html>

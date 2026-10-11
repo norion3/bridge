@@ -1,4 +1,4 @@
-// チーム設定、コース構成規格、およびエレベーター・スカイダイブ・トラップドア物理定数
+// チーム設定、コース構成規格、およびエレベーター・スカイダイブ・トラップドア物理・カメラ定数
 export const TEAMS = {
   BLUE: { id: 'blue', name: 'あなた (青)', hex: 0x06b6d4, emissive: 0x0891b2 },
   RED: { id: 'red', name: '赤Bot', hex: 0xef4444, emissive: 0xb91c1c },
@@ -63,8 +63,8 @@ export const STAGE_TYPES = {
   VERTICAL: 'vertical',
   ZIPLINE: 'zipline',
   ELEVATOR: 'elevator',
-  SKYDIVE: 'skydive',       // 【新】頭先行高速ダイビング（前進放物線）
-  TRAPDOOR: 'trapdoor'      // 【新】足先行バーティカルドロップ（直下急降下）
+  SKYDIVE: 'skydive',       // 頭先行高速ダイビング（前進放物線）
+  TRAPDOOR: 'trapdoor'      // 足先行バーティカルドロップ（直下急降下）
 };
 
 // エレベーター仕様定数（オープン展望リフト規格）
@@ -78,7 +78,7 @@ export const ELEVATOR_CONFIG = {
     accelPhase: 0.16,
     decelPhase: 0.20,
     arrivalBounceHeight: 0.08,
-    exitDelay: 0.35
+    exitDelay: 0.35 // 上の島到着後の下車歩行トランジション時間
   },
   LIFT: {
     platformWidth: 2.4,
@@ -88,7 +88,7 @@ export const ELEVATOR_CONFIG = {
   }
 };
 
-// ★ 【看板ステージ1】スカイダイブ仕様定数（頭先行・高速滑空・前進放物線）
+// ★ 看板ステージ1：スカイダイブ仕様定数（頭先行・高速滑空・前進放物線）
 export const SKYDIVE_CONFIG = {
   PHYSICS: {
     minHeightDrop: 30.0,            // 垂直落差 (-30m)
@@ -107,7 +107,7 @@ export const SKYDIVE_CONFIG = {
   }
 };
 
-// ★ 【看板ステージ2】トラップドア仕様定数（足先行・落とし穴スリル・垂直直下ドロップ）
+// ★ 看板ステージ2：トラップドア仕様定数（足先行・落とし穴スリル・垂直直下ドロップ・絶景パノラマ）
 export const TRAPDOOR_CONFIG = {
   PHYSICS: {
     minHeightDrop: 38.0,            // 圧倒的な垂直落差 (-38m)
@@ -122,6 +122,18 @@ export const TRAPDOOR_CONFIG = {
     doorOpenAngle: Math.PI * 0.48,  // 扉の下方開放角
     openDuration: 0.20,             // 扉開放所要時間（秒）
     exclusionRadius: 4.8            // ハッチ周辺の床ブロック生成禁止半径
+  },
+  // ★ ハイ・クォーター・パノラマカメラ定数（落ちる瞬間・全身シルエット・水平線遠景の完全両立）
+  CAMERA: {
+    offsetX: 5.5,                   // 自キャラの右斜め後方 +5.5m（キャラを画面左上に配置）
+    offsetY: 6.5,                   // 高さ +6.5m
+    offsetZ: 8.0,                   // 後方 +8.0m
+    lookOffsetX: 0.0,               // 注視点 X
+    lookOffsetY: -2.5,              // 注視点 Y（真下の穴ではなく水平線と着地島の中間を注視）
+    lookAheadZ: -18.0,              // 前方奥 -18.0m
+    lagPhase1Duration: 0.40,        // Phase 1: 開放直後の上空置き去り遅延時間（秒）
+    fovStart: 62,                   // 開始時FOV
+    fovDrop: 74                     // 追従加速時FOV（ワイドパノラマ）
   }
 };
 

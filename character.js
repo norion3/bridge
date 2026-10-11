@@ -78,7 +78,7 @@ export function createZiplineTrolleyMesh() {
   return group;
 }
 
-// 屋根を撤去したオープン展望リフト
+// 屋根を撤去したオープン展望リフト（高積みブロック突き抜けを完全防止）
 export function createElevatorCageMesh() {
   const lift = new THREE.Group();
 
@@ -265,7 +265,7 @@ export function refreshCharacterStackVisuals(char) {
   }
 }
 
-// ★ 背負いブロックの自動ゴースト化（落下中の視界完全クリア化）
+// 背負いブロックの自動ゴースト化（落下・滑空中の視界完全クリア化）
 function applyStackGhostOpacity(char, isGhost) {
   if (char.isPlayer) {
     for (let i = 0; i < MAX_VISUAL_STACK; i++) {
@@ -295,42 +295,48 @@ export function setStackGhostMode(char, isGhost) {
   applyStackGhostOpacity(char, isGhost);
 }
 
-// ★ 看板ステージ1：スカイダイブ専用ポーズ（頭先行・高速滑空・バンク傾き）
+// ★ 看板ステージ1：スカイダイブ専用ポーズ（北/進行方向へ頭先行ダイブ・両腕後方流し・ロール傾き）
 export function applySkydivePose(char, dirX, rollAngle) {
-  char.meshObj.root.rotation.set(-0.65, 0, -rollAngle);
+  // 進行方向（北 = -Z）を向き、頭先行で斜め前下へダイブ（x = 0.65 rad, y = Math.PI）
+  char.meshObj.root.rotation.set(0.65, Math.PI, rollAngle);
 
-  char.meshObj.leftArm.position.set(-0.52, 0.52, -0.32);
-  char.meshObj.rightArm.position.set(0.52, 0.52, -0.32);
-  char.meshObj.leftArm.rotation.set(-1.15, 0, 0.38);
-  char.meshObj.rightArm.rotation.set(-1.15, 0, -0.38);
+  // 両腕を後方（local -Z 方向）へ流し大気抵抗をカット
+  char.meshObj.leftArm.position.set(-0.50, 0.52, -0.28);
+  char.meshObj.rightArm.position.set(0.50, 0.52, -0.28);
+  char.meshObj.leftArm.rotation.set(-1.10, 0, 0.35);
+  char.meshObj.rightArm.rotation.set(-1.10, 0, -0.35);
 
-  char.meshObj.leftLeg.rotation.set(-0.48, 0, -0.12);
-  char.meshObj.rightLeg.rotation.set(-0.48, 0, 0.12);
+  char.meshObj.leftLeg.rotation.set(0.42, 0, -0.10);
+  char.meshObj.rightLeg.rotation.set(0.42, 0, 0.10);
 
   char.meshObj.body.position.y = 0.58;
   char.meshObj.head.position.y = 1.15;
 }
 
-// ★ 看板ステージ2：トラップドア専用ポーズ（足先行・完全直立・flutterアニメーション）
+// ★ 看板ステージ2：トラップドア専用ポーズ（北/進行方向へ完全直立・翼状エアバランス・足先リアルflutter）
 export function applyTrapdoorPose(char, dirX, timeSec) {
-  char.meshObj.root.rotation.set(-0.05, 0, -dirX * 0.12);
+  // 進行方向（北 = -Z）を向いた完全直立姿勢（y = Math.PI）
+  // 左右エアコントロール時の微細なロール傾きのみ反映
+  char.meshObj.root.rotation.set(0.04, Math.PI, -dirX * 0.10);
 
-  char.meshObj.leftArm.position.set(-0.56, 0.74, 0);
-  char.meshObj.rightArm.position.set(0.56, 0.74, 0);
-  char.meshObj.leftArm.rotation.set(0, 0, -0.62);
-  char.meshObj.rightArm.rotation.set(0, 0, 0.62);
+  // 両腕を鳥の翼のように左右斜め下〜後ろに広げてバランスをとる
+  char.meshObj.leftArm.position.set(-0.58, 0.74, -0.05);
+  char.meshObj.rightArm.position.set(0.58, 0.74, -0.05);
+  char.meshObj.leftArm.rotation.set(-0.14, 0, -0.68);
+  char.meshObj.rightArm.rotation.set(-0.14, 0, 0.68);
 
-  const flutter = Math.sin(timeSec * 24) * 0.14;
-  char.meshObj.leftLeg.rotation.set(flutter, 0, 0);
-  char.meshObj.rightLeg.rotation.set(-flutter, 0, 0);
+  // 足先は真下の海を向き、落下気流による微細なバタつき（flutter）
+  const flutter = Math.sin(timeSec * 26) * 0.10;
+  char.meshObj.leftLeg.rotation.set(0.10 + flutter, 0, -0.04);
+  char.meshObj.rightLeg.rotation.set(0.10 - flutter, 0, 0.04);
 
   char.meshObj.body.position.y = 0.65;
   char.meshObj.head.position.y = 1.25;
 }
 
-// ニュートラル姿勢への完全リセット
+// ★ ニュートラル姿勢への完全リセット（進行方向である北 y = Math.PI に正しく復帰）
 export function resetCharacterPose(char) {
-  char.meshObj.root.rotation.set(0, 0, 0);
+  char.meshObj.root.rotation.set(0, Math.PI, 0);
   char.meshObj.leftArm.position.set(-0.48, 0.68, 0);
   char.meshObj.rightArm.position.set(0.48, 0.68, 0);
   char.meshObj.leftArm.rotation.set(0, 0, 0);
@@ -365,13 +371,14 @@ export function removeBrickFromCharacter(char, updateHUD = null) {
 export function setupCharacters(scene, STAGES) {
   characters.length = 0;
   const pMesh = createCharacterMesh(TEAMS.BLUE);
+  pMesh.root.rotation.set(0, Math.PI, 0);
   scene.add(pMesh.root);
   player = {
     isPlayer: true,
     team: TEAMS.BLUE,
     meshObj: pMesh,
     pos: new THREE.Vector3(0, STAGES[0].y, STAGES[0].z + 4),
-    rotation: 0,
+    rotation: Math.PI,
     stackCount: 0,
     currentStage: 0,
     stunTimer: 0,
@@ -427,13 +434,14 @@ export function setupCharacters(scene, STAGES) {
   characters.push(player);
 
   const b1Mesh = createCharacterMesh(TEAMS.RED);
+  b1Mesh.root.rotation.set(0, Math.PI, 0);
   scene.add(b1Mesh.root);
   const bot1 = {
     isPlayer: false,
     team: TEAMS.RED,
     meshObj: b1Mesh,
     pos: new THREE.Vector3(-4.0, STAGES[0].y, STAGES[0].z + 4),
-    rotation: 0,
+    rotation: Math.PI,
     stackCount: 0,
     currentStage: 0,
     aiState: 'COLLECT',
@@ -494,13 +502,14 @@ export function setupCharacters(scene, STAGES) {
   characters.push(bot1);
 
   const b2Mesh = createCharacterMesh(TEAMS.YELLOW);
+  b2Mesh.root.rotation.set(0, Math.PI, 0);
   scene.add(b2Mesh.root);
   const bot2 = {
     isPlayer: false,
     team: TEAMS.YELLOW,
     meshObj: b2Mesh,
     pos: new THREE.Vector3(4.0, STAGES[0].y, STAGES[0].z + 4),
-    rotation: 0,
+    rotation: Math.PI,
     stackCount: 0,
     currentStage: 0,
     aiState: 'COLLECT',
