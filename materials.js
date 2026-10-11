@@ -1,5 +1,5 @@
 // 描画リソース・共有マテリアル・ジオメトリ・キャッシュ・破棄管理
-import { TEAMS, MAX_VISUAL_STACK, ELEVATOR_CONFIG, FREEFALL_CONFIG } from './constants.js';
+import { TEAMS, MAX_VISUAL_STACK, ELEVATOR_CONFIG, FREEFALL_CONFIG, ITEM_COLORS } from './constants.js';
 
 export const COLOR_NEUTRAL_PLANK = new THREE.Color(0xd1d5db);
 export const COLOR_BLUE_PLANK = new THREE.Color(TEAMS.BLUE.hex);
@@ -12,10 +12,10 @@ export const plankGeo = new THREE.BoxGeometry(3.6, 0.65, 1.6);
 export const verticalPlankGeo = new THREE.BoxGeometry(3.6, 1.25, 1.8);
 export const islandGeo = new THREE.CylinderGeometry(1, 1, 0.5, 36);
 
-// アイテム形状の差別化用ジオメトリ
+// アイテム形状ジオメトリ
 export const itemCrystalGeo = new THREE.OctahedronGeometry(0.68, 0); // 攻撃用
-export const itemSpeedGeo = new THREE.TetrahedronGeometry(0.75, 1); // スピード用 (四面体)
-export const itemMagnetGeo = new THREE.TorusGeometry(0.55, 0.15, 8, 16, Math.PI); // マグネット用 (U字型)
+export const itemSpeedGeo = new THREE.TetrahedronGeometry(0.75, 1);  // スピード用 (四面体)
+export const itemMagnetGeo = new THREE.TorusGeometry(0.55, 0.15, 8, 16, Math.PI); // マグネット用 (U字蹄鉄型)
 
 export const itemBeaconRingGeo = new THREE.RingGeometry(0.55, 0.95, 32);
 itemBeaconRingGeo.rotateX(-Math.PI / 2);
@@ -29,16 +29,16 @@ export const attackRingGeo = new THREE.TorusGeometry(0.72, 0.08, 8, 24);
 export const baseShockwaveGeo = new THREE.RingGeometry(0.3, 0.65, 32);
 baseShockwaveGeo.rotateX(-Math.PI / 2);
 
-// ★ エレベーター・フリーフォール用 共有ジオメトリ
-export const elevatorTowerTrussGeo = new THREE.BoxGeometry(0.12, 1.0, 0.12);
-export const elevatorCageFloorGeo = new THREE.BoxGeometry(2.4, 0.18, 2.2);
-export const elevatorCageRoofGeo = new THREE.BoxGeometry(2.4, 0.12, 2.2);
-export const elevatorHandrailGeo = new THREE.CylinderGeometry(0.045, 0.045, 1.0, 8);
+// ★ エレベーター＆フリーフォール刷新用 共有ジオメトリ
+export const elevatorPlatformFloorGeo = new THREE.BoxGeometry(2.4, 0.16, 2.0);
+export const elevatorHandrailPostGeo = new THREE.CylinderGeometry(0.035, 0.035, 0.95, 8);
+export const elevatorHandrailBarGeo = new THREE.CylinderGeometry(0.035, 0.035, 2.3, 8);
+export const elevatorCableWireGeo = new THREE.CylinderGeometry(0.025, 0.025, 1.0, 8);
 
-export const divePlatformGeo = new THREE.BoxGeometry(6.5, 0.38, 5.0);
-export const diveWarningBorderGeo = new THREE.BoxGeometry(6.5, 0.40, 0.45);
-export const freefallRingGeo = new THREE.TorusGeometry(1.6, 0.08, 8, 28);
-export const windStreakGeo = new THREE.CylinderGeometry(0.03, 0.03, 2.4, 6);
+// ハッチ（トラップドア）外枠・開閉扉ジオメトリ
+export const hatchFrameGeo = new THREE.BoxGeometry(3.6, 0.22, 3.6);
+export const hatchDoorGeo = new THREE.BoxGeometry(1.65, 0.14, 3.3);
+export const windStreakGeo = new THREE.CylinderGeometry(0.025, 0.025, 2.8, 6);
 
 // 計算用共通一時ベクトル（Zero-Allocation）
 export const _tempVec3A = new THREE.Vector3();
@@ -47,45 +47,49 @@ export const _tempVec3C = new THREE.Vector3();
 export const _tempVec3D = new THREE.Vector3();
 export const _tempAvoidResult = { x: 0, z: 0 };
 
+// 有機的な水面コースティクス（四角い格子感を排したリゾート海洋テクスチャ）
 export function createSeaTexture() {
   const cvs = document.createElement('canvas');
   cvs.width = 512;
   cvs.height = 512;
   const ctx = cvs.getContext('2d');
-  ctx.fillStyle = '#0284c7';
+  
+  // 海底グラデーション
+  const grad = ctx.createLinearGradient(0, 0, 512, 512);
+  grad.addColorStop(0, '#0284c7');
+  grad.addColorStop(1, '#0369a1');
+  ctx.fillStyle = grad;
   ctx.fillRect(0, 0, 512, 512);
 
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.16)';
-  ctx.lineWidth = 3.5;
-  for (let x = 0; x < 512; x += 64) {
+  // 波の有機的なコースティクス（曲線セル描画）
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.20)';
+  ctx.lineWidth = 2.4;
+  for (let i = 0; i < 48; i++) {
+    const cx = (i * 87) % 512;
+    const cy = (i * 123) % 512;
+    const r = 24 + ((i * 19) % 36);
     ctx.beginPath();
-    for (let y = 0; y <= 512; y += 32) {
-      const offsetX = Math.sin((y + x) * 0.05) * 12;
-      if (y === 0) ctx.moveTo(x + offsetX, y);
-      else ctx.lineTo(x + offsetX, y);
+    for (let a = 0; a <= Math.PI * 2 + 0.1; a += Math.PI / 4) {
+      const dist = r + Math.sin(a * 3 + i) * 8;
+      const px = cx + Math.cos(a) * dist;
+      const py = cy + Math.sin(a) * dist;
+      if (a === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
     }
-    ctx.stroke();
-  }
-  for (let y = 0; y < 512; y += 64) {
-    ctx.beginPath();
-    for (let x = 0; x <= 512; x += 32) {
-      const offsetY = Math.cos((x + y) * 0.05) * 12;
-      if (y === 0) ctx.moveTo(x, y + offsetY);
-      else ctx.lineTo(x, y + offsetY);
-    }
+    ctx.closePath();
     ctx.stroke();
   }
 
   const tex = new THREE.CanvasTexture(cvs);
   tex.wrapS = THREE.RepeatWrapping;
   tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(48, 48);
+  tex.repeat.set(36, 36);
   return tex;
 }
 
 export const seaTexture = createSeaTexture();
 
-// ★ 警告ストライプ（黄色×黒のハザードパターン）テクスチャ
+// 警告ハザードストライプテクスチャ（黄色×黒）
 export function createHazardTexture() {
   const cvs = document.createElement('canvas');
   cvs.width = 128;
@@ -182,8 +186,8 @@ export const sharedMats = {
   }),
 
   itemCrystal: new THREE.MeshStandardMaterial({
-    color: 0xfde047,
-    emissive: 0xeab308,
+    color: ITEM_COLORS.SPEED.hex,
+    emissive: ITEM_COLORS.SPEED.emissive,
     emissiveIntensity: 0.55,
     roughness: 0.1,
     metalness: 0.15
@@ -197,8 +201,8 @@ export const sharedMats = {
   }),
 
   itemAttackCrystal: new THREE.MeshStandardMaterial({
-    color: 0xf43f5e,
-    emissive: 0xd946ef,
+    color: ITEM_COLORS.ATTACK.hex,
+    emissive: ITEM_COLORS.ATTACK.emissive,
     emissiveIntensity: 0.85,
     roughness: 0.05,
     metalness: 0.2
@@ -252,42 +256,43 @@ export const sharedMats = {
     depthWrite: false
   }),
 
+  // ★ 磁石アイテム：ゲートや植物の緑と競合しない高輝度ネオンパープル
   itemMagnetCrystal: new THREE.MeshStandardMaterial({
-    color: 0x10b981,
-    emissive: 0x059669,
-    emissiveIntensity: 0.85,
-    roughness: 0.1,
-    metalness: 0.15
+    color: ITEM_COLORS.MAGNET.hex,
+    emissive: ITEM_COLORS.MAGNET.emissive,
+    emissiveIntensity: 0.90,
+    roughness: 0.12,
+    metalness: 0.25
   }),
   itemMagnetBeaconRing: new THREE.MeshBasicMaterial({
-    color: 0x34d399,
+    color: ITEM_COLORS.MAGNET.beaconHex,
     transparent: true,
     opacity: 0.85,
     side: THREE.DoubleSide,
     depthWrite: false
   }),
   magnetInwardRing: new THREE.MeshBasicMaterial({
-    color: 0x34d399,
+    color: ITEM_COLORS.MAGNET.beaconHex,
     transparent: true,
-    opacity: 0.75,
+    opacity: 0.80,
     side: THREE.DoubleSide,
     depthWrite: false
   }),
 
-  // ★ 刷新: エレベーター構造用・速度別マテリアル
-  elevatorTowerSteel: new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.3, metalness: 0.8 }),
-  elevatorGlassWall: new THREE.MeshStandardMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.35, roughness: 0.1, metalness: 0.1, depthWrite: false }),
-  elevatorFloorPlate: new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.6, metalness: 0.4 }),
-  elevatorFast: new THREE.MeshStandardMaterial({ color: 0x10b981, emissive: 0x059669, emissiveIntensity: 0.65, roughness: 0.2, metalness: 0.2 }),
-  elevatorMid: new THREE.MeshStandardMaterial({ color: 0xfacc15, emissive: 0xeab308, emissiveIntensity: 0.65, roughness: 0.2, metalness: 0.2 }),
-  elevatorSlow: new THREE.MeshStandardMaterial({ color: 0xef4444, emissive: 0xb91c1c, emissiveIntensity: 0.65, roughness: 0.2, metalness: 0.2 }),
+  // ★ エレベーター展望リフト用マテリアル（黒い重々しい柱を撤去し、白・シルバー・ネオンで統一）
+  elevatorDeckPlate: new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.25, metalness: 0.15 }),
+  elevatorHandrailSteel: new THREE.MeshStandardMaterial({ color: 0xe2e8f0, roughness: 0.20, metalness: 0.75 }),
+  elevatorGuideCable: new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.70 }),
+  elevatorFast: new THREE.MeshStandardMaterial({ color: 0x10b981, emissive: 0x059669, emissiveIntensity: 0.70, roughness: 0.2 }),
+  elevatorMid: new THREE.MeshStandardMaterial({ color: 0xfacc15, emissive: 0xeab308, emissiveIntensity: 0.70, roughness: 0.2 }),
+  elevatorSlow: new THREE.MeshStandardMaterial({ color: 0xef4444, emissive: 0xb91c1c, emissiveIntensity: 0.70, roughness: 0.2 }),
 
-  // ★ 刷新: フリーフォールダイブ台・大気エフェクト用マテリアル
-  divePlatformSurface: new THREE.MeshStandardMaterial({ color: 0x0284c7, roughness: 0.2, metalness: 0.3 }),
-  diveHazardWarning: new THREE.MeshStandardMaterial({ map: hazardTexture, roughness: 0.4 }),
-  diveHandrail: new THREE.MeshStandardMaterial({ color: 0xf97316, roughness: 0.3, metalness: 0.5 }),
-  freefallGuideRing: new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.7, side: THREE.DoubleSide, depthWrite: false }),
-  windStreakMat: new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.45, depthWrite: false })
+  // ★ フリーフォール・トラップドアハッチ用マテリアル
+  hatchFrameBorder: new THREE.MeshStandardMaterial({ color: 0x0284c7, roughness: 0.3, metalness: 0.2 }),
+  hatchHazardWarning: new THREE.MeshStandardMaterial({ map: hazardTexture, roughness: 0.4 }),
+  hatchDoorSurface: new THREE.MeshStandardMaterial({ color: 0x0ea5e9, roughness: 0.25, metalness: 0.1 }),
+  hatchInnerVoid: new THREE.MeshBasicMaterial({ color: 0x0369a1, transparent: true, opacity: 0.85 }),
+  windStreakMat: new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.50, depthWrite: false })
 };
 
 export const playerStackMaterials = [];
@@ -359,13 +364,12 @@ export const sharedGeometriesSet = new Set([
   attackTrailSphereGeo,
   attackRingGeo,
   baseShockwaveGeo,
-  elevatorTowerTrussGeo,
-  elevatorCageFloorGeo,
-  elevatorCageRoofGeo,
-  elevatorHandrailGeo,
-  divePlatformGeo,
-  diveWarningBorderGeo,
-  freefallRingGeo,
+  elevatorPlatformFloorGeo,
+  elevatorHandrailPostGeo,
+  elevatorHandrailBarGeo,
+  elevatorCableWireGeo,
+  hatchFrameGeo,
+  hatchDoorGeo,
   windStreakGeo
 ]);
 

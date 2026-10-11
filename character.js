@@ -1,12 +1,13 @@
-// 3Dキャラクター外観構築・手足メッシュ・スタックプール・トロリー・ケージ・姿勢管理
-import { TEAMS, MAX_VISUAL_STACK } from './constants.js';
+// 3Dキャラクター外観構築・手足メッシュ・スタックプール・トロリー・オープン展望リフト・姿勢管理
+import { TEAMS, MAX_VISUAL_STACK, ELEVATOR_CONFIG } from './constants.js';
 import {
   sharedMats,
   blockGeometry,
   playerStackMaterials,
   updatePlayerStackMaterials,
-  elevatorCageFloorGeo,
-  elevatorCageRoofGeo
+  elevatorPlatformFloorGeo,
+  elevatorHandrailPostGeo,
+  elevatorHandrailBarGeo
 } from './materials.js';
 
 export let characters = [];
@@ -71,70 +72,56 @@ export function createZiplineTrolleyMesh() {
   return group;
 }
 
-// 昇降ケージ（床プレート・手すり・天板キャノピー・安全バー）
+// ★ 屋根を完全撤去したオープン展望リフト（高積みブロック突き抜けを完全に防止）
 export function createElevatorCageMesh() {
-  const cage = new THREE.Group();
+  const lift = new THREE.Group();
 
-  // 床プレート
-  const floorMesh = new THREE.Mesh(elevatorCageFloorGeo, sharedMats.elevatorFloorPlate);
-  floorMesh.position.y = -0.09;
+  // 1. 白大理石のベースプレート
+  const floorMesh = new THREE.Mesh(elevatorPlatformFloorGeo, sharedMats.elevatorDeckPlate);
+  floorMesh.position.y = -0.08;
   floorMesh.castShadow = true;
   floorMesh.receiveShadow = true;
-  cage.add(floorMesh);
+  lift.add(floorMesh);
 
-  // 四隅の支柱
-  const postH = 2.4;
-  const postGeo = new THREE.CylinderGeometry(0.042, 0.042, postH, 8);
+  // 2. 四隅の腰高シルバー手すり支柱
+  const postH = ELEVATOR_CONFIG.LIFT.handrailHeight;
   const corners = [
-    [-1.1, -0.95],
-    [1.1, -0.95],
-    [-1.1, 0.95],
-    [1.1, 0.95]
+    [-1.08, -0.88],
+    [1.08, -0.88],
+    [-1.08, 0.88],
+    [1.08, 0.88]
   ];
   corners.forEach(([cx, cz]) => {
-    const post = new THREE.Mesh(postGeo, sharedMats.elevatorTowerSteel);
-    post.position.set(cx, postH / 2 - 0.09, cz);
-    cage.add(post);
+    const post = new THREE.Mesh(elevatorHandrailPostGeo, sharedMats.elevatorHandrailSteel);
+    post.position.set(cx, postH / 2 - 0.08, cz);
+    lift.add(post);
   });
 
-  // 安全手すり（腰高）
-  const railH = 0.95;
-  const backRailGeo = new THREE.CylinderGeometry(0.038, 0.038, 2.2, 8);
-  backRailGeo.rotateZ(Math.PI / 2);
-  const backRail = new THREE.Mesh(backRailGeo, sharedMats.elevatorTowerSteel);
-  backRail.position.set(0, railH, -0.95);
-  cage.add(backRail);
+  // 3. 後部・側面のセーフティ手すりバー
+  const backRail = new THREE.Mesh(elevatorHandrailBarGeo, sharedMats.elevatorHandrailSteel);
+  backRail.position.set(0, postH - 0.08, -0.88);
+  backRail.rotation.z = Math.PI / 2;
+  lift.add(backRail);
 
-  const sideRailGeo = new THREE.CylinderGeometry(0.038, 0.038, 1.9, 8);
-  sideRailGeo.rotateX(Math.PI / 2);
-  const leftRail = new THREE.Mesh(sideRailGeo, sharedMats.elevatorTowerSteel);
-  leftRail.position.set(-1.1, railH, 0);
-  cage.add(leftRail);
+  const sideBarGeo = new THREE.CylinderGeometry(0.035, 0.035, 1.8, 8);
+  sideBarGeo.rotateX(Math.PI / 2);
 
-  const rightRail = leftRail.clone();
-  rightRail.position.x = 1.1;
-  cage.add(rightRail);
+  const leftSideRail = new THREE.Mesh(sideBarGeo, sharedMats.elevatorHandrailSteel);
+  leftSideRail.position.set(-1.08, postH - 0.08, 0);
+  lift.add(leftSideRail);
 
-  // 前面把持用セーフティバー
-  const frontRailGeo = new THREE.CylinderGeometry(0.04, 0.04, 2.2, 8);
-  frontRailGeo.rotateZ(Math.PI / 2);
-  const frontRail = new THREE.Mesh(frontRailGeo, sharedMats.ziplinePylonTrim);
-  frontRail.position.set(0, 0.85, 0.95);
-  cage.add(frontRail);
+  const rightSideRail = leftSideRail.clone();
+  rightSideRail.position.x = 1.08;
+  lift.add(rightSideRail);
 
-  // 天板キャノピー（ルーフ）
-  const roofMesh = new THREE.Mesh(elevatorCageRoofGeo, sharedMats.elevatorFloorPlate);
-  roofMesh.position.y = postH - 0.09;
-  cage.add(roofMesh);
+  // 4. 前面の腰高ハンドグリップバー
+  const frontGrip = new THREE.Mesh(elevatorHandrailBarGeo, sharedMats.ziplinePylonTrim);
+  frontGrip.position.set(0, postH - 0.12, 0.88);
+  frontGrip.rotation.z = Math.PI / 2;
+  lift.add(frontGrip);
 
-  // 天板中央のサスペンション連結具
-  const hookGeo = new THREE.CylinderGeometry(0.06, 0.06, 0.35, 8);
-  const hookMesh = new THREE.Mesh(hookGeo, sharedMats.elevatorTowerSteel);
-  hookMesh.position.y = postH + 0.08;
-  cage.add(hookMesh);
-
-  cage.visible = false;
-  return cage;
+  lift.visible = false;
+  return lift;
 }
 
 export function createCharacterMesh(team) {
@@ -322,6 +309,8 @@ export function setupCharacters(scene, STAGES) {
     elevatorProgress: 0,
     activeElevator: null,
     elevatorLane: 0,
+    elevatorExiting: false,
+    elevatorExitTimer: 0,
     onFreefall: false,
     freefallProgress: 0,
     activeFreefall: null,
@@ -368,6 +357,8 @@ export function setupCharacters(scene, STAGES) {
     activeElevator: null,
     elevatorLane: 0,
     elevatorChoice: undefined,
+    elevatorExiting: false,
+    elevatorExitTimer: 0,
     onFreefall: false,
     freefallProgress: 0,
     activeFreefall: null,
@@ -419,6 +410,8 @@ export function setupCharacters(scene, STAGES) {
     activeElevator: null,
     elevatorLane: 0,
     elevatorChoice: undefined,
+    elevatorExiting: false,
+    elevatorExitTimer: 0,
     onFreefall: false,
     freefallProgress: 0,
     activeFreefall: null,
@@ -463,6 +456,8 @@ export function resetCharacters(STAGES) {
     c.onElevator = false;
     c.elevatorProgress = 0;
     c.activeElevator = null;
+    c.elevatorExiting = false;
+    c.elevatorExitTimer = 0;
     c.onFreefall = false;
     c.freefallProgress = 0;
     c.activeFreefall = null;

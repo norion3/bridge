@@ -83,7 +83,11 @@ export function updateTimerHUD(force = false) {
   const min = Math.floor(currentSecInt / 60).toString().padStart(2, '0');
   const sec = (currentSecInt % 60).toString().padStart(2, '0');
   const timerEl = document.getElementById('hud-timer');
-  if (timerEl) timerEl.innerText = `${min}:${sec}`;
+  if (timerEl) {
+    timerEl.innerText = `${min}:${sec}`;
+    // 背景が白飛びしても判読できるようドロップシャドウと背景コントラストを担保
+    timerEl.style.textShadow = '0 2px 8px rgba(0, 0, 0, 0.85), 0 0 2px rgba(0, 0, 0, 0.9)';
+  }
 }
 
 export function onTimeUp() {
@@ -136,7 +140,7 @@ export function setupControls() {
     if (!input.active) return;
     const dx = x - startX, dy = y - startY;
     const dist = Math.hypot(dx, dy), maxDist = 55;
-    
+
     if (dist > 5) {
       const clamped = Math.min(dist, maxDist);
       input.x = Math.cos(Math.atan2(dy, dx)) * (clamped / maxDist);
@@ -506,7 +510,7 @@ export function animate(currentTime) {
         addBrickToCharacter(mb.targetChar, mb.targetChar.team, 1);
         if (mb.targetChar.isPlayer) {
           sound.playMagnetDock(incMagnetDockStep());
-          triggerLandingShockwave(_tempVec3A.x, _tempVec3A.y, _tempVec3A.z, 0.95, 0x34d399);
+          triggerLandingShockwave(_tempVec3A.x, _tempVec3A.y, _tempVec3A.z, 0.95, 0xa855f7);
         }
         mb.targetChar.dockBounceTimer = 0.085;
         mb.targetChar.meshObj.stackGroup.scale.set(1.10, 1.15, 1.10);
@@ -551,7 +555,7 @@ export function animate(currentTime) {
       }
     }
 
-    // ★ フリーフォール風切りストリークの更新と生成
+    // フリーフォール中の風切りスピードライン生成
     if (player && player.onFreefall) {
       spawnWindStreak(player.pos.x, player.pos.y, player.pos.z, player.freefallRoll || 0);
     }
@@ -566,7 +570,7 @@ export function animate(currentTime) {
       } else {
         const prog = w.life / w.maxLife;
         w.mesh.position.y -= dt * w.speed;
-        w.mesh.position.z += dt * (w.speed * 0.35);
+        w.mesh.position.z += dt * (w.speed * 0.25);
         w.material.opacity = (1.0 - prog) * 0.45;
       }
     }
@@ -583,17 +587,6 @@ export function animate(currentTime) {
         if (Math.abs(blk.mesh.position.z - playerZ) > 95) return;
         blk.mesh.rotation.y = timeSec * 3.2 + blk.t * 4.5;
         blk.mesh.position.y = blk.baseY + Math.sin(timeSec * 3.5 + blk.zi) * 0.14;
-      }
-    });
-
-    freefallBonusBlocks.forEach(blk => {
-      if (!blk.collected && blk.mesh) {
-        if (Math.abs(blk.mesh.position.z - playerZ) > 95) return;
-        blk.mesh.rotation.x = timeSec * 2.5 + blk.t * 3.0;
-        blk.mesh.rotation.y = timeSec * 3.5 + blk.t * 4.5;
-        if (blk.ringMesh) {
-          blk.ringMesh.rotation.z = timeSec * 2.0;
-        }
       }
     });
 
@@ -634,11 +627,14 @@ export function animate(currentTime) {
     const isJumping = player.isJumping;
     const isFreefall = player.onFreefall;
 
+    // 高積みブロックによる視界遮蔽を解消するため、スタック数に応じてカメラ高さを動的オフセット
+    const stackLift = Math.min((player.stackCount || 0) * 0.08, 3.2);
+
     let targetCamX = player.pos.x * 0.2;
-    let targetCamY = player.pos.y + 24;
-    let targetCamZ = player.pos.z + 12;
+    let targetCamY = player.pos.y + 24 + stackLift;
+    let targetCamZ = player.pos.z + 12 + (stackLift * 0.6);
     let targetLookX = player.pos.x * 0.1;
-    let targetLookY = player.pos.y;
+    let targetLookY = player.pos.y + (stackLift * 0.3);
     let targetLookAheadZ = player.pos.z - 5;
     let targetFOV = player.speedBoostActive ? 65 : 60;
 
@@ -693,24 +689,23 @@ export function animate(currentTime) {
       targetLookY = player.pos.y - 1;
       targetFOV = 63;
     } else if (isElevator) {
-      // エレベーター搭乗中：リフト昇降と周囲のタワーを見通すスムーズな仰角構図
-      targetCamX = player.pos.x * 0.4;
-      targetCamY = player.pos.y + 7.5;
-      targetCamZ = player.pos.z + 11.5;
-      targetLookX = player.pos.x * 0.2;
+      // オープン展望リフト搭乗中：前方の島とリフト昇降を見通す広々とした仰角構図
+      targetCamX = player.pos.x * 0.35;
+      targetCamY = player.pos.y + 7.2 + stackLift;
+      targetCamZ = player.pos.z + 12.0;
+      targetLookX = player.pos.x * 0.15;
       targetLookY = player.pos.y + 1.8;
-      targetLookAheadZ = player.pos.z - 10.0;
-      targetFOV = 63;
+      targetLookAheadZ = player.pos.z - 12.0;
+      targetFOV = 64;
     } else if (isFreefall) {
-      // フリーフォール急降下中：真下見下ろしを廃止し、斜め後方上部から着地先を見通す爽快な構図
-      const rollOffset = (player.freefallRoll || 0) * 1.6;
-      targetCamX = (player.freefallX || player.pos.x) * 0.45 + rollOffset;
-      targetCamY = player.pos.y + 7.2;
-      targetCamZ = player.pos.z + 9.8;
-      targetLookX = (player.freefallX || player.pos.x) * 0.25;
-      targetLookY = player.pos.y - 6.0;
-      targetLookAheadZ = player.pos.z - 24.0;
-      targetFOV = 74; // スピード感を保ちつつ被写体の歪みを抑えた広角
+      // 直立垂直急降下中：真下見下ろしを廃止し、斜め後方上部から着地先を見晴らす見通しの良い構図
+      targetCamX = (player.freefallX || player.pos.x) * 0.35;
+      targetCamY = player.pos.y + 8.5;
+      targetCamZ = player.pos.z + 10.5;
+      targetLookX = (player.freefallX || player.pos.x) * 0.2;
+      targetLookY = player.pos.y - 4.5;
+      targetLookAheadZ = player.pos.z - 22.0;
+      targetFOV = 72;
     }
 
     const lerpFactorPos = (isJumping || isFreefall) ? 0.12 : 0.14;

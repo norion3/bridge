@@ -1,4 +1,4 @@
-// 物理移動判定・階段敷設・タックル衝突・ゲート判定・誘導弾・アイテム処理・エレベーター＆フリーフォール物理
+// 物理移動判定・階段敷設・タックル衝突・ゲート判定・誘導弾・アイテム処理・エレベーター到着下車・フリーフォール直立ドロップ
 import {
   TEAMS,
   TRAMPOLINE_TIERS,
@@ -238,15 +238,17 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
   }
 
   if (!isFarFromBridges) {
-    // フリーフォールへの突入判定（ダイブ台の先端通過）
+    // ★ フリーフォール：足元のトラップドアハッチ乗車判定
     const ffB = localBridges.find(b => b.isFreefall && b.stageIdx === char.currentStage);
     if (ffB && char.slideCooldown <= 0) {
-      if (nextZ <= ffB.startZ + 0.8 && isForwardIntent) {
+      const distToHatch = Math.hypot(nextX, nextZ - ffB.startZ);
+      if (distToHatch < 2.0 && isForwardIntent) {
         char.onFreefall = true;
         char.freefallProgress = 0;
         char.activeFreefall = ffB;
         char.freefallX = char.pos.x;
         char.freefallRoll = 0;
+        ffB.isHatchOpen = true;
 
         if (char.isPlayer && soundRef) soundRef.playDiveLaunch();
         return;
@@ -279,9 +281,9 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
       }
     }
 
-    // エレベーターの乗車判定（発着デッキ進入＆始動ロック）
+    // ★ エレベーターの乗車判定（白大理石デッキ・スリム化）
     const eleB = localBridges.find(b => b.isElevator && b.stageIdx === char.currentStage);
-    if (eleB && char.slideCooldown <= 0) {
+    if (eleB && char.slideCooldown <= 0 && !char.elevatorExiting) {
       let onLane = false;
       let closestLane = 0;
       let minDist = 999;
@@ -295,6 +297,8 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
         char.elevatorProgress = 0;
         char.activeElevator = eleB;
         char.elevatorLane = closestLane;
+        char.elevatorExiting = false;
+        char.elevatorExitTimer = 0;
 
         if (char.isPlayer && soundRef) soundRef.playElevatorStart();
         return;
@@ -614,9 +618,18 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     }
   }
 
-  // フリーフォール（放物線重力落下・空中スラローム制御・大気ノイズ音）
+  // ★ フリーフォール：扉がパカッと開き、頭からではなく直立（足から）垂直落下
   if (char.onFreefall && char.activeFreefall) {
     const b = char.activeFreefall;
+
+    // トラップドア開閉アニメーション
+    if (b.doorLeftPivot && b.doorRightPivot) {
+      b.hatchOpenProgress = Math.min(1.0, (b.hatchOpenProgress || 0) + dt / FREEFALL_CONFIG.HATCH.openDuration);
+      const angle = b.hatchOpenProgress * FREEFALL_CONFIG.HATCH.doorOpenAngle;
+      b.doorLeftPivot.rotation.z = angle;
+      b.doorRightPivot.rotation.z = -angle;
+    }
+
     const totalFlyTime = FREEFALL_CONFIG.PHYSICS.totalDuration;
     char.freefallProgress += dt / totalFlyTime;
 
@@ -632,6 +645,7 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
       triggerLandingShockwave(char.pos.x, char.pos.y, char.pos.z, 3.2);
       if (char.isPlayer && soundRef) soundRef.playLanding();
 
+      // 直立着地姿勢リセット
       char.meshObj.root.rotation.set(0, 0, 0);
       char.meshObj.leftArm.position.set(-0.48, 0.68, 0);
       char.meshObj.rightArm.position.set(0.48, 0.68, 0);
@@ -650,101 +664,110 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     } else {
       const t = Math.min(0.999, Math.max(0, char.freefallProgress));
 
+      // 左右エアコントロール（直立のままスライド）
       const airSpeed = FREEFALL_CONFIG.PHYSICS.horizontalAirControlSpeed;
       const maxAirX = FREEFALL_CONFIG.PHYSICS.maxAirOffsetX;
       char.freefallX = Math.max(-maxAirX, Math.min(maxAirX, char.freefallX + dirX * airSpeed * dt));
-
-      const targetRoll = -dirX * FREEFALL_CONFIG.PHYSICS.bankRollMax;
-      char.freefallRoll = THREE.MathUtils.lerp(char.freefallRoll || 0, targetRoll, 0.22);
 
       const pZ = THREE.MathUtils.lerp(b.startZ, b.endZ, t);
       const fallPower = FREEFALL_CONFIG.PHYSICS.gravityPower;
       const pY = b.startY + (b.endY - b.startY) * Math.pow(t, fallPower);
       char.pos.set(char.freefallX, pY, pZ);
 
-      char.meshObj.root.rotation.set(Math.PI * 0.38, 0, char.freefallRoll);
-      char.meshObj.leftArm.position.set(-0.55, 0.50, -0.2);
-      char.meshObj.rightArm.position.set(0.55, 0.50, -0.2);
-      char.meshObj.leftArm.rotation.set(0.4, 0, 0.5);
-      char.meshObj.rightArm.rotation.set(0.4, 0, -0.5);
-      char.meshObj.leftLeg.rotation.x = -0.65;
-      char.meshObj.rightLeg.rotation.x = -0.65;
+      // ★ 直立姿勢（頭から突っ込まず、足から垂直に落下）
+      char.meshObj.root.rotation.set(-0.06, 0, -dirX * 0.14); // わずかな風圧仰角と左右スライド傾き
+      char.meshObj.leftArm.position.set(-0.54, 0.76, 0);
+      char.meshObj.rightArm.position.set(0.54, 0.76, 0);
+      char.meshObj.leftArm.rotation.set(0, 0, -0.55); // 両腕を広げてバランスをとる
+      char.meshObj.rightArm.rotation.set(0, 0, 0.55);
+
+      const nowSec = performance.now() * 0.001;
+      const legFlutter = Math.sin(nowSec * 22) * 0.12;
+      char.meshObj.leftLeg.rotation.set(legFlutter, 0, 0);
+      char.meshObj.rightLeg.rotation.set(-legFlutter, 0, 0);
 
       if (char.isPlayer && soundRef) {
         soundRef.playFreefallWind(t);
-      }
-
-      if (b.bonusBlocks && b.bonusBlocks.length > 0) {
-        const pickupRadiusSq = FREEFALL_CONFIG.BONUS_TRACK.pickupRadiusSq;
-        for (let i = 0; i < b.bonusBlocks.length; i++) {
-          const blk = b.bonusBlocks[i];
-          if (!blk.collected) {
-            const dx = char.pos.x - blk.pos.x;
-            const dy = char.pos.y - blk.pos.y;
-            const dz = char.pos.z - blk.pos.z;
-            if (dx * dx + dy * dy + dz * dz < pickupRadiusSq) {
-              blk.collected = true;
-              blk.mesh.visible = false;
-              if (blk.ringMesh) blk.ringMesh.visible = false;
-              addBrickToCharacter(char, char.team, 1, soundRef, updateHUDRef);
-            }
-          }
-        }
       }
     }
     char.meshObj.root.position.copy(char.pos);
     return;
   }
 
-  // エレベーター（イージング加減速・手すり把持姿勢・モーター音・到着バウンド）
+  // ★ エレベーター：オープン展望リフト昇降＆上の島へゴンドラごと到着・下車トランジション
   if (char.onElevator && char.activeElevator) {
     const b = char.activeElevator;
     const laneData = b.elevators.find(e => e.laneIdx === char.elevatorLane) || b.elevators[0];
+
+    // 上の島へ到着後の下車シーケンス
+    if (char.elevatorExiting) {
+      char.elevatorExitTimer -= dt;
+      const exitProgress = 1.0 - (char.elevatorExitTimer / ELEVATOR_CONFIG.EASING.exitDelay);
+
+      // ゴンドラから前方のフロアへ歩み出る
+      char.pos.z = b.endZ - 1.0 - exitProgress * 1.8;
+      char.pos.y = STAGES[b.nextStageIdx].y;
+
+      char.meshObj.leftArm.rotation.set(Math.sin(exitProgress * 12) * 0.5, 0, 0);
+      char.meshObj.rightArm.rotation.set(-Math.sin(exitProgress * 12) * 0.5, 0, 0);
+      char.meshObj.leftLeg.rotation.set(-Math.sin(exitProgress * 12) * 0.5, 0, 0);
+      char.meshObj.rightLeg.rotation.set(Math.sin(exitProgress * 12) * 0.5, 0, 0);
+
+      if (char.elevatorExitTimer <= 0) {
+        char.onElevator = false;
+        char.elevatorExiting = false;
+        char.currentStage = b.nextStageIdx;
+        const nextStageObj = STAGES[b.nextStageIdx];
+        char.pos.set(LANES[char.elevatorLane] * 0.6, nextStageObj.y, nextStageObj.z + nextStageObj.r * 0.4);
+        char.slideCooldown = 0.5;
+        char.lastPlankIdx = -1;
+        char.activeElevator = null;
+        char.meshObj.elevatorGroup.visible = false;
+
+        char.meshObj.root.rotation.set(0, 0, 0);
+        char.meshObj.leftArm.position.set(-0.48, 0.68, 0);
+        char.meshObj.rightArm.position.set(0.48, 0.68, 0);
+        char.meshObj.leftArm.rotation.set(0, 0, 0);
+        char.meshObj.rightArm.rotation.set(0, 0, 0);
+        char.meshObj.leftLeg.rotation.set(0, 0, 0);
+        char.meshObj.rightLeg.rotation.set(0, 0, 0);
+        char.meshObj.body.position.y = 0.65;
+        char.meshObj.head.position.y = 1.25;
+
+        if (!char.isPlayer) {
+          char.aiState = 'COLLECT';
+          char.targetLane = undefined;
+          char.elevatorChoice = undefined;
+          char.aiCapacityGoal = 14 + Math.floor(Math.random() * 5);
+        }
+      }
+      char.meshObj.root.position.copy(char.pos);
+      return;
+    }
 
     char.elevatorProgress += dt / laneData.duration;
     char.meshObj.elevatorGroup.visible = true;
 
     if (char.elevatorProgress >= 1.0) {
-      char.onElevator = false;
-      char.currentStage = b.nextStageIdx;
-      const nextStageObj = STAGES[b.nextStageIdx];
-      char.pos.set(LANES[char.elevatorLane] * 0.6, nextStageObj.y, nextStageObj.z + nextStageObj.r * 0.4);
-      char.slideCooldown = 0.5;
-      char.lastPlankIdx = -1;
-      char.activeElevator = null;
-      char.meshObj.elevatorGroup.visible = false;
+      // 上の島へゴンドラごと到着した瞬間
+      char.elevatorExiting = true;
+      char.elevatorExitTimer = ELEVATOR_CONFIG.EASING.exitDelay;
+      char.pos.set(LANES[char.elevatorLane], b.endY + 0.10, b.endZ - 1.0);
 
-      triggerLandingShockwave(char.pos.x, char.pos.y, char.pos.z, 2.0);
-      if (char.isPlayer && soundRef) {
-        soundRef.playElevatorArrival();
-      }
-
-      char.meshObj.root.rotation.set(0, 0, 0);
-      char.meshObj.leftArm.position.set(-0.48, 0.68, 0);
-      char.meshObj.rightArm.position.set(0.48, 0.68, 0);
-      char.meshObj.leftArm.rotation.set(0, 0, 0);
-      char.meshObj.rightArm.rotation.set(0, 0, 0);
-      char.meshObj.leftLeg.rotation.set(0, 0, 0);
-      char.meshObj.rightLeg.rotation.set(0, 0, 0);
-      char.meshObj.body.position.y = 0.65;
-      char.meshObj.head.position.y = 1.25;
-
-      if (!char.isPlayer) {
-        char.aiState = 'COLLECT';
-        char.targetLane = undefined;
-        char.elevatorChoice = undefined;
-        char.aiCapacityGoal = 14 + Math.floor(Math.random() * 5);
-      }
+      triggerLandingShockwave(char.pos.x, b.endY, b.endZ - 1.0, 1.8);
+      if (char.isPlayer && soundRef) soundRef.playElevatorArrival();
     } else {
       const rawT = Math.min(0.999, Math.max(0, char.elevatorProgress));
 
+      // 物理加減速イージング (EaseInOutQuad)
       const easeT = rawT < 0.5
         ? 2 * rawT * rawT
         : 1 - Math.pow(-2 * rawT + 2, 2) / 2;
 
-      const pZ = THREE.MathUtils.lerp(b.startZ, b.endZ, easeT);
+      const pZ = THREE.MathUtils.lerp(b.startZ + 1.0, b.endZ - 1.0, easeT);
       let pY = THREE.MathUtils.lerp(b.startY, b.endY, easeT);
 
+      // 到着直前のソフトクッションバウンド
       if (rawT > 0.88) {
         const bouncePhase = (rawT - 0.88) / 0.12;
         pY += Math.sin(bouncePhase * Math.PI) * ELEVATOR_CONFIG.EASING.arrivalBounceHeight;
@@ -752,14 +775,15 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
 
       char.pos.set(LANES[char.elevatorLane], pY + 0.10, pZ);
 
+      // オープン展望リフト搭乗ポーズ（前向き直立、手すり把持、屋根がないためブロック突き抜けなし）
       char.meshObj.root.rotation.set(0, 0, 0);
       char.meshObj.leftLeg.rotation.set(0, 0, 0);
       char.meshObj.rightLeg.rotation.set(0, 0, 0);
 
-      char.meshObj.leftArm.position.set(-0.42, 0.85, 0.35);
-      char.meshObj.rightArm.position.set(0.42, 0.85, 0.35);
-      char.meshObj.leftArm.rotation.set(-0.8, 0, -0.2);
-      char.meshObj.rightArm.rotation.set(-0.8, 0, 0.2);
+      char.meshObj.leftArm.position.set(-0.42, 0.82, 0.35);
+      char.meshObj.rightArm.position.set(0.42, 0.82, 0.35);
+      char.meshObj.leftArm.rotation.set(-0.7, 0, -0.15);
+      char.meshObj.rightArm.rotation.set(-0.7, 0, 0.15);
       char.meshObj.body.position.y = 0.65;
       char.meshObj.head.position.y = 1.25;
 
