@@ -194,7 +194,7 @@ export const sharedMats = {
   blockYellow: new THREE.MeshStandardMaterial({ color: TEAMS.YELLOW.hex, emissive: TEAMS.YELLOW.emissive, emissiveIntensity: 0.2, roughness: 0.35 }),
   blockNeutral: new THREE.MeshStandardMaterial({ color: TEAMS.NEUTRAL.hex, emissive: TEAMS.NEUTRAL.emissive, emissiveIntensity: 0.2, roughness: 0.35 }),
 
-  // ★ キャラクターのトイ・フィギュア化マテリアル
+  // キャラクターのトイ・フィギュア化マテリアル
   charBlue: new THREE.MeshStandardMaterial({
     color: TEAMS.BLUE.hex,
     emissive: TEAMS.BLUE.emissive,
@@ -250,7 +250,7 @@ export const sharedMats = {
     roughness: 0.05,
     metalness: 0.2
   }),
-  // ★ 起動不能バグの修正：`MeshBasicMaterial` -> `THREE.MeshBasicMaterial` に変更
+  // ★ 修正：THREE.MeshBasicMaterial を正しく参照
   itemAttackBeaconRing: new THREE.MeshBasicMaterial({
     color: 0xf43f5e,
     transparent: true,
@@ -402,6 +402,24 @@ for (let i = 0; i < MAX_VISUAL_STACK; i++) {
   }));
 }
 
+// ★ 修正：character.js が参照する Bot 用スタックマテリアル配列を定義・エクスポート
+export const botRedStackMaterials = [];
+export const botYellowStackMaterials = [];
+for (let i = 0; i < MAX_VISUAL_STACK; i++) {
+  botRedStackMaterials.push(new THREE.MeshStandardMaterial({
+    color: TEAMS.RED.hex,
+    emissive: TEAMS.RED.emissive,
+    emissiveIntensity: 0.15,
+    roughness: 0.3
+  }));
+  botYellowStackMaterials.push(new THREE.MeshStandardMaterial({
+    color: TEAMS.YELLOW.hex,
+    emissive: TEAMS.YELLOW.emissive,
+    emissiveIntensity: 0.15,
+    roughness: 0.3
+  }));
+}
+
 export function updatePlayerStackMaterials(stackCount) {
   const bColor = new THREE.Color();
   const tColor = new THREE.Color();
@@ -448,6 +466,8 @@ updatePlayerStackMaterials(0);
 export const sharedMaterialsSet = new Set();
 Object.values(sharedMats).forEach(mat => sharedMaterialsSet.add(mat));
 playerStackMaterials.forEach(mat => sharedMaterialsSet.add(mat));
+botRedStackMaterials.forEach(mat => sharedMaterialsSet.add(mat));
+botYellowStackMaterials.forEach(mat => sharedMaterialsSet.add(mat));
 
 export const sharedGeometriesSet = new Set([
   blockGeometry,
