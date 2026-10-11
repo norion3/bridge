@@ -1,4 +1,3 @@
-// 3Dキャラクター外観構築・手足メッシュ・スタックプール・トロリー・オープン展望リフト・スカイダイブ＆トラップドア姿勢管理
 import {
   TEAMS,
   MAX_VISUAL_STACK,
@@ -79,7 +78,6 @@ export function createZiplineTrolleyMesh() {
   return group;
 }
 
-// 屋根を撤去したオープン展望リフト（高積みブロック突き抜けを完全防止）
 export function createElevatorCageMesh() {
   const lift = new THREE.Group();
 
@@ -248,9 +246,8 @@ export function getBrickMaterialForStackIndex(char, index) {
 export function refreshCharacterStackVisuals(char) {
   if (char.isPlayer) {
     updatePlayerStackMaterials(char.stackCount);
-    if (char.isGhostStacked) {
-      applyStackGhostOpacity(char, true);
-    }
+    // 透過残留バグの完全防止：現在のゴースト状態に合わせて透過フラグを明示的・強制同期
+    applyStackGhostOpacity(char, !!char.isGhostStacked);
   }
   const pool = char.meshObj.stackPool;
   const visibleLimit = Math.min(char.stackCount, MAX_VISUAL_STACK);
@@ -266,7 +263,6 @@ export function refreshCharacterStackVisuals(char) {
   }
 }
 
-// 背負いブロックの自動ゴースト化（落下・滑空中の視界完全クリア化）
 function applyStackGhostOpacity(char, isGhost) {
   if (char.isPlayer) {
     for (let i = 0; i < MAX_VISUAL_STACK; i++) {
@@ -291,17 +287,16 @@ function applyStackGhostOpacity(char, isGhost) {
 }
 
 export function setStackGhostMode(char, isGhost) {
-  if (!char || char.isGhostStacked === isGhost) return;
+  if (!char) return;
   char.isGhostStacked = isGhost;
   applyStackGhostOpacity(char, isGhost);
 }
 
-// ★ 看板ステージ1：スカイダイブ専用ポーズ（北/進行方向へ頭先行ダイブ・両腕後方流し・ロール傾き）
 export function applySkydivePose(char, dirX, rollAngle) {
   // 進行方向（北 = -Z）を向き、頭先行で斜め前下へダイブ（x = 0.65 rad, y = Math.PI）
   char.meshObj.root.rotation.set(0.65, Math.PI, rollAngle);
 
-  // 両腕を後方（local -Z 方向）へ流し大気抵抗をカット
+  // 両腕を後方へ流し大気抵抗をカット
   char.meshObj.leftArm.position.set(-0.50, 0.52, -0.28);
   char.meshObj.rightArm.position.set(0.50, 0.52, -0.28);
   char.meshObj.leftArm.rotation.set(-1.10, 0, 0.35);
@@ -314,19 +309,17 @@ export function applySkydivePose(char, dirX, rollAngle) {
   char.meshObj.head.position.y = 1.15;
 }
 
-// ★ 看板ステージ2：トラップドア専用ポーズ（北/進行方向へ完全直立・翼状エアバランス・足先リアルflutter）
 export function applyTrapdoorPose(char, dirX, timeSec) {
   // 進行方向（北 = -Z）を向いた完全直立姿勢（y = Math.PI）
-  // 左右エアコントロール時の微細なロール傾きのみ反映
   char.meshObj.root.rotation.set(0.04, Math.PI, -dirX * 0.10);
 
-  // 両腕を鳥の翼のように左右斜め下〜後ろに広げてバランスをとる
+  // 両腕を鳥の翼のように広げてバランスを取る
   char.meshObj.leftArm.position.set(-0.58, 0.74, -0.05);
   char.meshObj.rightArm.position.set(0.58, 0.74, -0.05);
   char.meshObj.leftArm.rotation.set(-0.14, 0, -0.68);
   char.meshObj.rightArm.rotation.set(-0.14, 0, 0.68);
 
-  // 足先は真下の海を向き、落下気流による微細なバタつき（flutter）
+  // 足先は真下の海を向き、気流による微細なバタつき
   const flutter = Math.sin(timeSec * 26) * 0.10;
   char.meshObj.leftLeg.rotation.set(0.10 + flutter, 0, -0.04);
   char.meshObj.rightLeg.rotation.set(0.10 - flutter, 0, 0.04);
@@ -335,7 +328,6 @@ export function applyTrapdoorPose(char, dirX, timeSec) {
   char.meshObj.head.position.y = 1.25;
 }
 
-// ★ ニュートラル姿勢への完全リセット（進行方向である北 y = Math.PI に正しく復帰）
 export function resetCharacterPose(char) {
   char.meshObj.root.rotation.set(0, Math.PI, 0);
   char.meshObj.leftArm.position.set(-0.48, 0.68, 0);
@@ -346,7 +338,10 @@ export function resetCharacterPose(char) {
   char.meshObj.rightLeg.rotation.set(0, 0, 0);
   char.meshObj.body.position.y = 0.65;
   char.meshObj.head.position.y = 1.25;
+
+  // 着地時は確実にゴーストモードを解除し、完全不透明ソリッド描画を強制復帰
   setStackGhostMode(char, false);
+  applyStackGhostOpacity(char, false);
 }
 
 export function addBrickToCharacter(char, team, count = 1, sound = null, updateHUD = null) {
@@ -402,20 +397,20 @@ export function setupCharacters(scene, STAGES) {
     elevatorExiting: false,
     elevatorExitTimer: 0,
 
-    // ★ 看板ステージ1：スカイダイブ専用ステート（頭先行・前進放物線）
+    // 看板ステージ1：スカイダイブ専用ステート（頭先行・前進放物線）
     onSkydive: false,
     skydiveProgress: 0,
     activeSkydive: null,
     skydiveX: 0,
     skydiveRoll: 0,
 
-    // ★ 看板ステージ2：トラップドア専用ステート（足先行・垂直直下ドロップ）
+    // 看板ステージ2：トラップドア専用ステート（足先行・垂直直下ドロップ）
     onTrapdoor: false,
     trapdoorProgress: 0,
     activeTrapdoor: null,
     trapdoorX: 0,
 
-    // 既存コードとの後方互換用
+    // 後方互換用
     onFreefall: false,
     freefallProgress: 0,
     activeFreefall: null,

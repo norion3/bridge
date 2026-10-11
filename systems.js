@@ -1,4 +1,4 @@
-// 物理移動判定・階段敷設・タックル衝突・ゲート判定・誘導弾・アイテム処理・エレベーター前向き下車・トランポリン点滅撤廃
+// 物理移動判定・階段敷設・タックル衝突・ゲート判定・誘導弾・アイテム処理・エレベーター前向き下車・超高速1.2秒急降下
 import {
   TEAMS,
   TRAMPOLINE_TIERS,
@@ -260,11 +260,11 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
       }
     }
 
-    // トラップドア・ハッチ乗車判定
+    // ドロップタワー・スカイゲート乗車判定
     const trapB = localBridges.find(b => b.isTrapdoor && b.stageIdx === char.currentStage);
     if (trapB && char.slideCooldown <= 0) {
       const distToHatch = Math.hypot(nextX, nextZ - trapB.startZ);
-      if (distToHatch < 2.2 && isForwardIntent) {
+      if (distToHatch < 2.4 && isForwardIntent) {
         char.onTrapdoor = true;
         char.trapdoorProgress = 0;
         char.activeTrapdoor = trapB;
@@ -640,6 +640,7 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     }
   }
 
+  // ★ 看板ステージ1：スカイダイブ物理（頭先行・前進放物線）
   if (char.onSkydive && char.activeSkydive) {
     const b = char.activeSkydive;
     const totalFlyTime = SKYDIVE_CONFIG.PHYSICS.totalDuration;
@@ -654,7 +655,7 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
       char.lastPlankIdx = -1;
       char.activeSkydive = null;
 
-      triggerLandingShockwave(char.pos.x, char.pos.y, char.pos.z, 3.8, 0x06b6d4);
+      triggerLandingShockwave(char.pos.x, char.pos.y, char.pos.z, 3.8, 0x0066ff);
       if (char.isPlayer && soundRef) soundRef.playLanding();
 
       resetCharacterPose(char);
@@ -699,7 +700,8 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
       b.doorRightPivot.rotation.z = -angle;
     }
 
-    const totalFlyTime = TRAPDOOR_CONFIG.PHYSICS.totalDuration;
+    // ★ 爆速1.2秒急降下（初速からストンと一気に落下）
+    const totalFlyTime = TRAPDOOR_CONFIG.PHYSICS.totalDuration; // 1.2s
     char.trapdoorProgress = (char.trapdoorProgress || char.freefallProgress || 0) + dt / totalFlyTime;
 
     if (char.trapdoorProgress >= 1.0) {
@@ -713,9 +715,10 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
       char.activeTrapdoor = null;
       char.activeFreefall = null;
 
-      triggerLandingShockwave(char.pos.x, char.pos.y, char.pos.z, 3.4, 0x0284c7);
+      triggerLandingShockwave(char.pos.x, char.pos.y, char.pos.z, 3.8, 0x0284c7);
       if (char.isPlayer && soundRef) soundRef.playLanding();
 
+      // 着地時は確実にゴースト解除し完全ソリッド描画を復帰
       resetCharacterPose(char);
 
       if (!char.isPlayer) {
@@ -730,6 +733,7 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
       const maxAirX = TRAPDOOR_CONFIG.PHYSICS.maxAirOffsetX;
       char.trapdoorX = Math.max(-maxAirX, Math.min(maxAirX, (char.trapdoorX || char.freefallX || 0) + dirX * airSpeed * dt));
 
+      // 急速重力加速カーブ（t^1.6）により初速から一気に垂直急降下
       const pZ = THREE.MathUtils.lerp(b.startZ, b.endZ, t);
       const fallPower = TRAPDOOR_CONFIG.PHYSICS.gravityPower;
       const pY = b.startY + (b.endY - b.startY) * Math.pow(t, fallPower);

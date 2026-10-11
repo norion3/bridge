@@ -20,10 +20,10 @@ export const plankGeo = new THREE.BoxGeometry(3.6, 0.65, 1.6);
 export const verticalPlankGeo = new THREE.BoxGeometry(3.6, 1.25, 1.8);
 export const islandGeo = new THREE.CylinderGeometry(1, 1, 0.5, 36);
 
-// アイテム形状ジオメトリ（磁石は太い蹄鉄型で視認性ブースト）
-export const itemCrystalGeo = new THREE.OctahedronGeometry(0.68, 0);
-export const itemSpeedGeo = new THREE.TetrahedronGeometry(0.75, 1);
-export const itemMagnetGeo = new THREE.TorusGeometry(0.60, 0.22, 12, 24, Math.PI); // 太い蹄鉄型
+// ★ アイテム形状ジオメトリ：磁石を壊れた輪っかから洗練された「12面体幾何学ジュエル」へ刷新！
+export const itemCrystalGeo = new THREE.OctahedronGeometry(0.68, 0);       // アタック（八面体ダイヤ）
+export const itemSpeedGeo = new THREE.TetrahedronGeometry(0.75, 1);        // スピード（四面体クリスタル）
+export const itemMagnetGeo = new THREE.DodecahedronGeometry(0.72, 0);      // ★ 磁石（12面体幾何学ジュエル）
 
 export const itemBeaconRingGeo = new THREE.RingGeometry(0.55, 0.95, 32);
 itemBeaconRingGeo.rotateX(-Math.PI / 2);
@@ -48,7 +48,13 @@ export const catapultRampGeo = new THREE.BoxGeometry(3.6, 0.28, 5.2);
 export const catapultTrimGeo = new THREE.CylinderGeometry(0.065, 0.065, 5.2, 8);
 catapultTrimGeo.rotateX(Math.PI / 2);
 
-// トラップドア（足先行）ハッチ用ジオメトリ
+// ★ ドロップタワー・スカイゲート用ジオメトリ（白床と同化しない独立建築アトラクション）
+export const dropDeckGeo = new THREE.CylinderGeometry(2.8, 2.8, 0.18, 32);         // 強化ガラス円形デッキ
+export const dropPylonGeo = new THREE.BoxGeometry(0.35, 7.5, 0.35);                // ツインタワー支柱
+export const dropIndicatorGeo = new THREE.BoxGeometry(0.12, 6.2, 0.12);            // シアンブルー発光インジケーター
+export const gatePedestalGeo = new THREE.CylinderGeometry(0.32, 0.42, 0.35, 16);  // ゲート看板の安定ベース台座
+
+// トラップドア（足先行）ハッチ用ジオメトリ（後方互換用）
 export const hatchFrameGeo = new THREE.BoxGeometry(3.6, 0.22, 3.6);
 export const hatchDoorGeo = new THREE.BoxGeometry(1.65, 0.14, 3.3);
 export const windStreakGeo = new THREE.CylinderGeometry(0.025, 0.025, 2.8, 6);
@@ -60,31 +66,36 @@ export const _tempVec3C = new THREE.Vector3();
 export const _tempVec3D = new THREE.Vector3();
 export const _tempAvoidResult = { x: 0, z: 0 };
 
-// ★ 目に優しい透明感あふれるエメラルドブルー〜スカイブルー海面テクスチャ（チカチカ緩和）
+// ★ 【海面の完全シームレス化】
+// 斜めグラデーションによるタイリング境界（つぎはぎ線）を完全消滅させるシームレス波光キャンバス
 export function createSeaTexture() {
   const cvs = document.createElement('canvas');
   cvs.width = 512;
   cvs.height = 512;
   const ctx = cvs.getContext('2d');
 
-  // 深みと透明感を両立したグラデーション
-  const grad = ctx.createLinearGradient(0, 0, 512, 512);
-  grad.addColorStop(0, '#0284c7');
-  grad.addColorStop(0.5, '#0369a1');
-  grad.addColorStop(1, '#075985');
-  ctx.fillStyle = grad;
+  // 四隅および境界のベースカラーを完全一致（#0284c7）させてシーム段差をゼロ化
+  ctx.fillStyle = '#0284c7';
   ctx.fillRect(0, 0, 512, 512);
 
-  // 線の太さと不透明度を大幅に抑え、ソフトな水面の波光へ変更（視覚ノイズ一掃）
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
-  ctx.lineWidth = 1.4;
-  for (let i = 0; i < 36; i++) {
-    const cx = (i * 97) % 512;
-    const cy = (i * 139) % 512;
-    const r = 28 + ((i * 23) % 42);
+  // キャンバス中央に向かって広がるソフトな水深トーン（端色は完全同一の #0284c7）
+  const radialGrad = ctx.createRadialGradient(256, 256, 30, 256, 256, 256);
+  radialGrad.addColorStop(0, '#0369a1');
+  radialGrad.addColorStop(0.85, '#0284c7');
+  radialGrad.addColorStop(1, '#0284c7');
+  ctx.fillStyle = radialGrad;
+  ctx.fillRect(0, 0, 512, 512);
+
+  // 境界線を跨がないよう、周期性を保ったソフトな波光リングを描画
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
+  ctx.lineWidth = 1.2;
+  for (let i = 0; i < 28; i++) {
+    const cx = (i * 128 + 64) % 512;
+    const cy = (i * 182 + 64) % 512;
+    const r = 24 + ((i * 17) % 32);
     ctx.beginPath();
     for (let a = 0; a <= Math.PI * 2 + 0.1; a += Math.PI / 4) {
-      const dist = r + Math.sin(a * 3 + i) * 6;
+      const dist = r + Math.sin(a * 3 + i) * 5;
       const px = cx + Math.cos(a) * dist;
       const py = cy + Math.sin(a) * dist;
       if (a === 0) ctx.moveTo(px, py);
@@ -97,25 +108,23 @@ export function createSeaTexture() {
   const tex = new THREE.CanvasTexture(cvs);
   tex.wrapS = THREE.RepeatWrapping;
   tex.wrapT = THREE.RepeatWrapping;
-  tex.repeat.set(24, 24); // タイリングの密度を適正化
+  tex.repeat.set(16, 16); // つぎはぎ線のない広大な大海原
   return tex;
 }
 
 export const seaTexture = createSeaTexture();
 
-// ★ 上品なサイバーブルーLEDフレームテクスチャ（黄色×黒トラ柄警戒色を完全撤廃）
+// 上品なサイバーブルーLEDフレームテクスチャ
 export function createCyberFrameTexture() {
   const cvs = document.createElement('canvas');
   cvs.width = 128;
   cvs.height = 128;
   const ctx = cvs.getContext('2d');
 
-  // 清潔な白大理石ベース
   ctx.fillStyle = '#f8fafc';
   ctx.fillRect(0, 0, 128, 128);
 
-  // 上品なサイバーブルーLEDボーダー
-  ctx.strokeStyle = '#06b6d4';
+  ctx.strokeStyle = '#0066ff';
   ctx.lineWidth = 12;
   ctx.strokeRect(6, 6, 116, 116);
 
@@ -131,7 +140,7 @@ export function createCyberFrameTexture() {
 }
 
 export const cyberFrameTexture = createCyberFrameTexture();
-export const hazardTexture = cyberFrameTexture; // 後方互換用エイリアス
+export const hazardTexture = cyberFrameTexture;
 
 // 共有マテリアル
 export const sharedMats = {
@@ -142,7 +151,7 @@ export const sharedMats = {
   sea: new THREE.MeshStandardMaterial({
     map: seaTexture,
     color: 0x38bdf8,
-    roughness: 0.1,
+    roughness: 0.08,
     metalness: 0.05
   }),
   oceanSand: new THREE.MeshStandardMaterial({ color: 0xfef08a, roughness: 0.85 }),
@@ -165,26 +174,40 @@ export const sharedMats = {
   }),
 
   neutralPlank: new THREE.MeshStandardMaterial({ color: 0xd1d5db, roughness: 0.7 }),
+  // ★ カーブスライダーの立体感とパイプレール質感を強化
   slideSurface: new THREE.MeshStandardMaterial({
-    color: 0x38bdf8,
-    roughness: 0.08,
-    metalness: 0.15,
-    emissive: 0x0284c7,
-    emissiveIntensity: 0.2,
+    color: 0x0284c7,
+    roughness: 0.12,
+    metalness: 0.25,
+    emissive: 0x0369a1,
+    emissiveIntensity: 0.22,
     side: THREE.DoubleSide
   }),
-  slideRail: new THREE.MeshStandardMaterial({ color: 0xf97316, roughness: 0.3 }),
+  slideRail: new THREE.MeshStandardMaterial({
+    color: 0xf97316,
+    roughness: 0.20,
+    metalness: 0.40 // 金属光沢を強化
+  }),
   gateFrame: new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.2 }),
-  bluePlank: new THREE.MeshStandardMaterial({ color: TEAMS.BLUE.hex, emissive: TEAMS.BLUE.emissive, emissiveIntensity: 0.15, roughness: 0.3 }),
+  gatePedestal: new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.3, metalness: 0.6 }),
+
+  bluePlank: new THREE.MeshStandardMaterial({ color: TEAMS.BLUE.hex, emissive: TEAMS.BLUE.emissive, emissiveIntensity: 0.20, roughness: 0.28 }),
   redPlank: new THREE.MeshStandardMaterial({ color: TEAMS.RED.hex, emissive: TEAMS.RED.emissive, emissiveIntensity: 0.15, roughness: 0.3 }),
   yellowPlank: new THREE.MeshStandardMaterial({ color: TEAMS.YELLOW.hex, emissive: TEAMS.YELLOW.emissive, emissiveIntensity: 0.15, roughness: 0.3 }),
 
-  blockBlue: new THREE.MeshStandardMaterial({ color: TEAMS.BLUE.hex, emissive: TEAMS.BLUE.emissive, emissiveIntensity: 0.2, roughness: 0.35, metalness: 0.05 }),
+  blockBlue: new THREE.MeshStandardMaterial({ color: TEAMS.BLUE.hex, emissive: TEAMS.BLUE.emissive, emissiveIntensity: 0.25, roughness: 0.30, metalness: 0.05 }),
   blockRed: new THREE.MeshStandardMaterial({ color: TEAMS.RED.hex, emissive: TEAMS.RED.emissive, emissiveIntensity: 0.2, roughness: 0.35 }),
   blockYellow: new THREE.MeshStandardMaterial({ color: TEAMS.YELLOW.hex, emissive: TEAMS.YELLOW.emissive, emissiveIntensity: 0.2, roughness: 0.35 }),
   blockNeutral: new THREE.MeshStandardMaterial({ color: TEAMS.NEUTRAL.hex, emissive: TEAMS.NEUTRAL.emissive, emissiveIntensity: 0.2, roughness: 0.35 }),
 
-  charBlue: new THREE.MeshStandardMaterial({ color: TEAMS.BLUE.hex, roughness: 0.25, metalness: 0.05 }),
+  // ★ 自キャラマテリアル：白大理石の上でも圧倒的コントラストを誇るヴィヴィッド・ロイヤルブルー
+  charBlue: new THREE.MeshStandardMaterial({
+    color: TEAMS.BLUE.hex,
+    emissive: TEAMS.BLUE.emissive,
+    emissiveIntensity: 0.22,
+    roughness: 0.22,
+    metalness: 0.08
+  }),
   charRed: new THREE.MeshStandardMaterial({ color: TEAMS.RED.hex, roughness: 0.25, metalness: 0.05 }),
   charYellow: new THREE.MeshStandardMaterial({ color: TEAMS.YELLOW.hex, roughness: 0.25, metalness: 0.05 }),
 
@@ -278,12 +301,12 @@ export const sharedMats = {
     depthWrite: false
   }),
 
-  // ★ 磁石アイテム：白床の上でも遠くから一目で識別できるブースト発光ネオンパープル
+  // ★ 磁石アイテム：12面体幾何学ジュエル用ネオンパープル
   itemMagnetCrystal: new THREE.MeshStandardMaterial({
     color: ITEM_COLORS.MAGNET.hex,
     emissive: ITEM_COLORS.MAGNET.emissive,
-    emissiveIntensity: 1.15, // 発光強度ブースト
-    roughness: 0.08,
+    emissiveIntensity: 1.25, // 神秘的な高輝度発光
+    roughness: 0.04,
     metalness: 0.35
   }),
   itemMagnetBeaconRing: new THREE.MeshBasicMaterial({
@@ -316,8 +339,8 @@ export const sharedMats = {
     metalness: 0.15
   }),
   catapultNeonRail: new THREE.MeshStandardMaterial({
-    color: 0x06b6d4,
-    emissive: 0x0891b2,
+    color: 0x0066ff,
+    emissive: 0x1d4ed8,
     emissiveIntensity: 0.85,
     roughness: 0.10,
     metalness: 0.20
@@ -329,30 +352,53 @@ export const sharedMats = {
     depthWrite: false
   }),
 
-  // ★ トラップドア（足先行）ハッチ用マテリアル（白大理石＋サイバーブルーLED統一）
+  // ★ 【ドロップタワー・スカイゲート専用マテリアル】（白床と同化しない独立アトラクション施設）
+  dropGlassFloor: new THREE.MeshStandardMaterial({
+    color: 0x0284c7,
+    emissive: 0x0369a1,
+    emissiveIntensity: 0.25,
+    roughness: 0.08,
+    metalness: 0.30,
+    transparent: true,
+    opacity: 0.55 // 下の虚空が透けて見える強化ガラスフロア
+  }),
+  dropPylonSteel: new THREE.MeshStandardMaterial({
+    color: 0x1e293b,
+    roughness: 0.20,
+    metalness: 0.85
+  }),
+  dropIndicatorNeon: new THREE.MeshStandardMaterial({
+    color: 0x00f0ff,
+    emissive: 0x00e5ff,
+    emissiveIntensity: 1.2
+  }),
+
+  // ハッチマテリアル（後方互換用）
   hatchFrameBorder: new THREE.MeshStandardMaterial({
-    color: 0x06b6d4,
-    emissive: 0x0891b2,
+    color: 0x0066ff,
+    emissive: 0x1d4ed8,
     emissiveIntensity: 0.65,
     roughness: 0.2,
     metalness: 0.3
   }),
   hatchHazardWarning: new THREE.MeshStandardMaterial({
-    map: cyberFrameTexture, // トラ柄警戒色を廃止し、白大理石＋サイバーブルーLED
+    map: cyberFrameTexture,
     roughness: 0.25,
     metalness: 0.20
   }),
   hatchDoorSurface: new THREE.MeshStandardMaterial({
-    color: 0xf8fafc,
-    emissive: 0x0284c7,
-    emissiveIntensity: 0.18,
-    roughness: 0.20,
-    metalness: 0.15
+    color: 0x0284c7,
+    emissive: 0x0369a1,
+    emissiveIntensity: 0.25,
+    roughness: 0.15,
+    metalness: 0.30,
+    transparent: true,
+    opacity: 0.70
   }),
   hatchInnerVoid: new THREE.MeshBasicMaterial({
-    color: 0x0284c7,
+    color: 0x001a4d,
     transparent: true,
-    opacity: 0.80
+    opacity: 0.90
   }),
   windStreakMat: new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.50, depthWrite: false })
 };
@@ -360,40 +406,42 @@ export const sharedMats = {
 export const playerStackMaterials = [];
 for (let i = 0; i < MAX_VISUAL_STACK; i++) {
   playerStackMaterials.push(new THREE.MeshStandardMaterial({
-    roughness: 0.3,
-    metalness: 0.1
+    roughness: 0.28,
+    metalness: 0.08
   }));
 }
 
+// ★ 【200個以上積んでも白飛びしないソリッドカラーパレット】
 export function updatePlayerStackMaterials(stackCount) {
   const bColor = new THREE.Color();
   const tColor = new THREE.Color();
   const emColor = new THREE.Color();
-  let emIntensity = 0.2;
-  let rough = 0.3;
-  let metal = 0.1;
+  let emIntensity = 0.22;
+  let rough = 0.28;
+  let metal = 0.08;
 
   if (stackCount < 30) {
-    bColor.setHex(TEAMS.BLUE.hex);
-    tColor.setHex(0x22d3ee);
-    emColor.setHex(TEAMS.BLUE.emissive);
-    emIntensity = 0.15;
-    rough = 0.35;
-    metal = 0.05;
-  } else if (stackCount < 60) {
-    bColor.setHex(0x0284c7);
-    tColor.setHex(0x38bdf8);
-    emColor.setHex(0x0369a1);
+    bColor.setHex(0x0052cc); // ディープ・ロイヤルブルー
+    tColor.setHex(0x0066ff); // ヴィヴィッド・ブルー
+    emColor.setHex(0x1d4ed8);
     emIntensity = 0.20;
+    rough = 0.30;
+    metal = 0.05;
+  } else if (stackCount < 80) {
+    bColor.setHex(0x0066ff);
+    tColor.setHex(0x0284c7); // スカイシアン
+    emColor.setHex(0x0369a1);
+    emIntensity = 0.24;
     rough = 0.25;
     metal = 0.10;
   } else {
-    bColor.setHex(0x0ea5e9);
-    tColor.setHex(0xa5f3fc);
-    emColor.setHex(0x38bdf8);
-    emIntensity = 0.25;
-    rough = 0.15;
-    metal = 0.15;
+    // 80〜200個以上の超高密度スタック時も、白飛びせず重厚なディープブルー〜シアンエメラルドを維持
+    bColor.setHex(0x0052cc);
+    tColor.setHex(0x0ea5e9);
+    emColor.setHex(0x0284c7);
+    emIntensity = 0.26;
+    rough = 0.22;
+    metal = 0.12;
   }
 
   for (let i = 0; i < MAX_VISUAL_STACK; i++) {
@@ -432,6 +480,10 @@ export const sharedGeometriesSet = new Set([
   elevatorCableWireGeo,
   catapultRampGeo,
   catapultTrimGeo,
+  dropDeckGeo,
+  dropPylonGeo,
+  dropIndicatorGeo,
+  gatePedestalGeo,
   hatchFrameGeo,
   hatchDoorGeo,
   windStreakGeo
@@ -440,7 +492,7 @@ export const sharedGeometriesSet = new Set([
 export const gateTextureCache = new Map();
 export const gateMaterialsCache = new Map();
 
-// ★ 遠くからでも瞬時に読める高コントラスト太字ゲート文字テクスチャ
+// 遠くからでも瞬時に読める高コントラスト太字ゲート文字テクスチャ
 export function getOrCreateGateTexture(label, isPositive) {
   const cacheKey = `${label}_${isPositive}`;
   if (gateTextureCache.has(cacheKey)) {
@@ -452,8 +504,7 @@ export function getOrCreateGateTexture(label, isPositive) {
   canvas.height = 256;
   const ctx = canvas.getContext('2d');
 
-  // 海と同化しない高不透明度ベース
-  ctx.fillStyle = isPositive ? 'rgba(16, 185, 129, 0.92)' : 'rgba(239, 68, 68, 0.92)';
+  ctx.fillStyle = isPositive ? 'rgba(16, 185, 129, 0.94)' : 'rgba(239, 68, 68, 0.94)';
   ctx.strokeStyle = '#ffffff';
   ctx.lineWidth = 14;
 
@@ -472,8 +523,7 @@ export function getOrCreateGateTexture(label, isPositive) {
   ctx.fill();
   ctx.stroke();
 
-  // くっきりした太字＆黒ドロップシャドウで視認性最大化
-  ctx.shadowColor = 'rgba(0, 0, 0, 0.85)';
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.88)';
   ctx.shadowBlur = 10;
   ctx.shadowOffsetX = 0;
   ctx.shadowOffsetY = 4;

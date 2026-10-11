@@ -36,11 +36,16 @@
     .hidden {
       display: none !important;
     }
-    .safe-padding {
-      padding-top: env(safe-area-inset-top, 16px);
-      padding-bottom: env(safe-area-inset-bottom, 16px);
-      padding-left: env(safe-area-inset-left, 16px);
-      padding-right: env(safe-area-inset-right, 16px);
+    /* iPhoneのDynamic Islandやノッチとの干渉を完全に防ぐセーフエリア余白 */
+    .safe-top-padding {
+      padding-top: max(env(safe-area-inset-top, 20px), 18px);
+    }
+    .safe-bottom-padding {
+      padding-bottom: max(env(safe-area-inset-bottom, 20px), 16px);
+    }
+    .safe-x-padding {
+      padding-left: max(env(safe-area-inset-left, 16px), 16px);
+      padding-right: max(env(safe-area-inset-right, 16px), 16px);
     }
   </style>
 </head>
@@ -52,28 +57,31 @@
   <!-- Virtual Touch Input Layer (全画面スワイプ操作) -->
   <div id="touch-control-layer"></div>
 
-  <!-- HUD Interface Overlay -->
-  <div class="fixed top-0 inset-x-0 z-20 pointer-events-none p-4 sm:p-6 safe-padding flex justify-between items-start">
+  <!-- HUD Interface Overlay (Dynamic Island・ノッチを避けたスマートレイアウト) -->
+  <div class="fixed top-0 inset-x-0 z-20 pointer-events-none safe-top-padding safe-x-padding flex justify-between items-start">
     <!-- スコア (特大ゴールド数字 + 段) -->
-    <div class="flex items-baseline drop-shadow-[0_2px_10px_rgba(0,0,0,0.85)] select-none">
-      <span id="hud-score" class="text-3xl sm:text-4xl font-black text-amber-300 font-mono tracking-tight leading-none">0</span>
-      <span class="text-sm sm:text-base font-black text-amber-200 ml-1">段</span>
+    <div class="flex items-baseline bg-slate-950/45 backdrop-blur-md px-3.5 py-1.5 rounded-2xl border border-white/10 shadow-lg select-none">
+      <span id="hud-score" class="text-2xl sm:text-3xl font-black text-amber-300 font-mono tracking-tight leading-none">0</span>
+      <span class="text-xs sm:text-sm font-black text-amber-200 ml-1">段</span>
     </div>
 
-    <!-- タイマー (中央上・白飛び防止高コントラストシャドウ) -->
-    <div class="flex items-center drop-shadow-[0_2px_8px_rgba(0,0,0,0.9)] select-none pt-0.5">
-      <span id="hud-timer" class="text-base sm:text-lg font-black text-white font-mono tracking-widest leading-none">05:00</span>
+    <!-- タイマー (中央上・Dynamic Islandの下に程よく配置された半透明カプセルバッジ) -->
+    <div class="flex items-center bg-slate-950/55 backdrop-blur-md px-4 py-1.5 rounded-full border border-white/15 shadow-xl select-none mt-1">
+      <svg class="w-3.5 h-3.5 text-cyan-300 mr-1.5 opacity-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+      </svg>
+      <span id="hud-timer" class="text-sm sm:text-base font-black text-white font-mono tracking-widest leading-none">05:00</span>
     </div>
 
     <!-- 所持数 (手持ちリソース・白数字 + 個) -->
-    <div class="flex items-baseline drop-shadow-[0_2px_10px_rgba(0,0,0,0.85)] select-none">
+    <div class="flex items-baseline bg-slate-950/45 backdrop-blur-md px-3.5 py-1.5 rounded-2xl border border-white/10 shadow-lg select-none">
       <span id="hud-stack-count" class="text-2xl sm:text-3xl font-black text-white font-mono tracking-tight leading-none">0</span>
-      <span class="text-sm sm:text-base font-black text-slate-200 ml-1">個</span>
+      <span class="text-xs sm:text-sm font-black text-slate-200 ml-1">個</span>
     </div>
   </div>
 
   <!-- Floating Sound Button -->
-  <div class="fixed bottom-0 right-0 z-20 p-4 sm:p-6 safe-padding pointer-events-none flex justify-end items-end">
+  <div class="fixed bottom-0 right-0 z-20 p-4 sm:p-6 safe-bottom-padding safe-x-padding pointer-events-none flex justify-end items-end">
     <button id="btn-sound" type="button" aria-label="Toggle Sound" class="pointer-events-auto w-11 h-11 rounded-full bg-slate-900/80 backdrop-blur-md border border-white/15 flex items-center justify-center shadow-lg hover:bg-slate-800 active:scale-90 transition cursor-pointer">
       <svg id="icon-sound-off" class="w-5 h-5 text-slate-400 fill-current" viewBox="0 0 24 24">
         <path d="M3.63 3.63a.996.996 0 000 1.41L7.29 8.7 7 9H4c-.55 0-1 .45-1 1v4c0 .55.45 1 1 1h3l3.29 3.29c.63.63 1.71.18 1.71-.71v-4.17l4.18 4.18c-.49.37-1.02.68-1.6.91-.36.15-.58.53-.58.92 0 .69.67 1.2 1.33.97.8-.29 1.53-.72 2.18-1.25l1.39 1.39a.996.996 0 101.41-1.41L5.05 3.63a.996.996 0 00-1.42 0zM19 12c0 .82-.15 1.61-.41 2.34l1.53 1.53c.56-1.17.88-2.48.88-3.87 0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zm-7-8l-1.88 1.88L12 7.76zm4.5 8A4.5 4.5 0 0014 7.97v1.79l2.48 2.48c.01-.08.02-.16.02-.24z"/>

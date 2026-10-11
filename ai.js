@@ -1,4 +1,4 @@
-// Bot AI自律思考ロジック・レーン評価・スカイダイブ＆トラップドア進入・空中姿勢同期
+// Bot AI自律思考ロジック・レーン評価・スカイダイブ＆ドロップタワー進入・空中姿勢同期
 import {
   LANES,
   ELEVATOR_CONFIG,
@@ -107,7 +107,7 @@ export function avoidGateObstacles(bot, dirX, dirZ) {
 }
 
 export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStepRing) {
-  // ギミック空中搭乗中（スカイダイブ・トラップドア・エレベーター・カーブ・ジップライン）の自動ステアリング
+  // ギミック空中搭乗中（スカイダイブ・ドロップタワー・エレベーター・カーブ・ジップライン）の自動ステアリング
   if (
     bot.onSkydive ||
     bot.onTrapdoor ||
@@ -123,9 +123,9 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
       const timeSec = performance.now() * 0.0018 + bot.team.hex;
       steerX = Math.sin(timeSec) * 0.35;
     } else if (bot.onTrapdoor && bot.activeTrapdoor) {
-      // トラップドア中：直立バンジー姿勢を保ったまま中央ラインを維持
+      // ドロップタワー爆速1.2秒急降下中：直立バンジー姿勢を保ったまま中央軸を安定キープ
       const currentX = bot.trapdoorX || 0;
-      steerX = -Math.sign(currentX) * Math.min(0.4, Math.abs(currentX) * 0.5);
+      steerX = -Math.sign(currentX) * Math.min(0.4, Math.abs(currentX) * 0.6);
     } else if (bot.onCurvedSlide) {
       const targetOffset = bot.botSlideOffsetTarget || 0;
       const diff = targetOffset - bot.curvedSlideOffset;
@@ -317,6 +317,7 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
     if (b) {
       let targetX = LANES[bot.targetLane];
 
+      // スカイダイブカタパルトおよびドロップタワー強化ガラスデッキ中央へ進入
       if (b.isSkydive || b.isTrapdoor || b.isCurvedSlide || b.isZipline || b.isFreefall) {
         targetX = 0;
       } else if (b.isElevator) {

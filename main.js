@@ -87,7 +87,6 @@ export function updateTimerHUD(force = false) {
   const timerEl = document.getElementById('hud-timer');
   if (timerEl) {
     timerEl.innerText = `${min}:${sec}`;
-    timerEl.style.textShadow = '0 2px 8px rgba(0, 0, 0, 0.95), 0 0 4px rgba(0, 0, 0, 0.9)';
   }
 }
 
@@ -348,13 +347,10 @@ export function animate(currentTime) {
       if (item.active && item.group) {
         if (Math.abs(item.pos.z - playerZ) > 95) return;
         if (item.crystal) {
+          // 12面体幾何学ジュエル（磁石）およびダイヤクリスタルのリズミカルな回転
           item.crystal.rotation.y = timeSec * 3.2;
           item.crystal.rotation.z = Math.sin(timeSec * 2.5) * 0.25;
-          if (item.type !== 'magnet') {
-            item.crystal.position.y = 1.35 + Math.sin(timeSec * 4.5 + item.stageIdx) * 0.35;
-          } else {
-            item.crystal.position.y = 1.15 + Math.sin(timeSec * 4.5 + item.stageIdx) * 0.35;
-          }
+          item.crystal.position.y = 1.35 + Math.sin(timeSec * 4.5 + item.stageIdx) * 0.32;
         }
         if (item.beaconRing) {
           const pulse = 1.0 + Math.sin(timeSec * 5.0) * 0.25;
@@ -688,25 +684,27 @@ export function animate(currentTime) {
       targetLookAheadZ = player.pos.z - 28.0;
       targetFOV = 76;
     } else if (isTrapdoor) {
-      // ★ トラップドア専用：ハイ・クォーター・パノラマカメラ ＆ 3段フェーズ・カメララグ
+      // ★ 爆速1.2秒急降下にジャストフィットした3段フェーズ・ハイ・クォーター・パノラマカメラ
       const b = player.activeTrapdoor || player.activeFreefall;
       const prog = player.trapdoorProgress || player.freefallProgress || 0;
       const tX = player.trapdoorX || player.freefallX || player.pos.x;
       const camCfg = TRAPDOOR_CONFIG.CAMERA;
 
-      if (b && prog < 0.18) {
-        // Phase 1: 開放直後の上空置き去りラグ（キャラだけが足元からヒュッと落ちる瞬間）
-        const lagRatio = prog / 0.18;
+      // 1.2秒急降下に合わせたフェーズ配分：
+      // Phase 1 (0.0s〜0.20s / prog < 0.16): 開放直後の上空置き去り
+      // Phase 2 (0.20s〜1.00s / 0.16 <= prog < 0.83): ダイナミックパノラマチェイス
+      // Phase 3 (1.00s〜1.20s / prog >= 0.83): 先行ランディング
+      if (b && prog < 0.16) {
+        const lagRatio = prog / 0.16;
         targetCamX = tX + camCfg.offsetX;
-        targetCamY = b.startY + camCfg.offsetY - (lagRatio * 1.6);
+        targetCamY = b.startY + camCfg.offsetY - (lagRatio * 1.5);
         targetCamZ = b.startZ + camCfg.offsetZ;
         targetLookX = tX;
         targetLookY = player.pos.y + camCfg.lookOffsetY;
         targetLookAheadZ = player.pos.z + camCfg.lookAheadZ;
         targetFOV = camCfg.fovStart;
-      } else if (b && prog < 0.82) {
-        // Phase 2: ダイナミックチェイス（全身直立シルエット＋奥の水平線パノラマ）
-        const chaseRatio = (prog - 0.18) / 0.64;
+      } else if (b && prog < 0.83) {
+        const chaseRatio = (prog - 0.16) / 0.67;
         targetCamX = tX + camCfg.offsetX;
         targetCamY = player.pos.y + camCfg.offsetY;
         targetCamZ = player.pos.z + camCfg.offsetZ;
@@ -715,8 +713,7 @@ export function animate(currentTime) {
         targetLookAheadZ = player.pos.z + camCfg.lookAheadZ;
         targetFOV = THREE.MathUtils.lerp(camCfg.fovStart, camCfg.fovDrop, chaseRatio);
       } else if (b) {
-        // Phase 3: 先行ランディング（着地島のフロアを先回りして捉え、両足でドスンと着地）
-        const landRatio = (prog - 0.82) / 0.18;
+        const landRatio = (prog - 0.83) / 0.17;
         targetCamX = tX + camCfg.offsetX * (1.0 - landRatio * 0.35);
         targetCamY = b.endY + camCfg.offsetY * 0.88;
         targetCamZ = b.endZ + camCfg.offsetZ * 0.88;
@@ -735,9 +732,9 @@ export function animate(currentTime) {
       }
     }
 
-    const lerpFactorPos = isTrapdoor ? 0.22 : ((isJumping || isSkydive) ? 0.16 : 0.14);
+    const lerpFactorPos = isTrapdoor ? 0.24 : ((isJumping || isSkydive) ? 0.16 : 0.14);
     camera.position.x = THREE.MathUtils.lerp(camera.position.x, targetCamX, lerpFactorPos);
-    camera.position.y = THREE.MathUtils.lerp(camera.position.y, targetCamY, isTrapdoor ? 0.18 : 0.16);
+    camera.position.y = THREE.MathUtils.lerp(camera.position.y, targetCamY, isTrapdoor ? 0.20 : 0.16);
     camera.position.z = THREE.MathUtils.lerp(camera.position.z, targetCamZ, lerpFactorPos);
 
     if (Math.abs(camera.fov - targetFOV) > 0.1) {
