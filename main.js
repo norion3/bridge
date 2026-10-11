@@ -25,7 +25,7 @@ import {
   floorItems,
   curvedSlideBonusBlocks,
   ziplineBonusBlocks,
-  freefallBonusBlocks, // ★ ステップ2: 落下中のブロックアニメーション用に追加
+  freefallBonusBlocks,
   activeMagnetBlocks,
   cloudObjects,
   seaMesh,
@@ -40,8 +40,10 @@ import {
   shockwavePool,
   projectilePool,
   drainBlockPool,
+  windStreakPool,
   spawnPuffCloud,
   spawnSpeedStepRing,
+  spawnWindStreak,
   triggerLandingShockwave
 } from './particles.js';
 import {
@@ -549,6 +551,26 @@ export function animate(currentTime) {
       }
     }
 
+    // ★ フリーフォール風切りストリークの更新と生成
+    if (player && player.onFreefall) {
+      spawnWindStreak(player.pos.x, player.pos.y, player.pos.z, player.freefallRoll || 0);
+    }
+
+    for (let i = 0; i < windStreakPool.length; i++) {
+      const w = windStreakPool[i];
+      if (!w.active) continue;
+      w.life += dt;
+      if (w.life >= w.maxLife) {
+        w.active = false;
+        w.mesh.visible = false;
+      } else {
+        const prog = w.life / w.maxLife;
+        w.mesh.position.y -= dt * w.speed;
+        w.mesh.position.z += dt * (w.speed * 0.35);
+        w.material.opacity = (1.0 - prog) * 0.45;
+      }
+    }
+
     curvedSlideBonusBlocks.forEach(blk => {
       if (!blk.collected && blk.mesh) {
         if (Math.abs(blk.mesh.position.z - playerZ) > 95) return;
@@ -564,12 +586,14 @@ export function animate(currentTime) {
       }
     });
 
-    // ★ ステップ2: 落下中の空中ブロックアニメーション
     freefallBonusBlocks.forEach(blk => {
       if (!blk.collected && blk.mesh) {
         if (Math.abs(blk.mesh.position.z - playerZ) > 95) return;
         blk.mesh.rotation.x = timeSec * 2.5 + blk.t * 3.0;
         blk.mesh.rotation.y = timeSec * 3.5 + blk.t * 4.5;
+        if (blk.ringMesh) {
+          blk.ringMesh.rotation.z = timeSec * 2.0;
+        }
       }
     });
 
@@ -608,7 +632,7 @@ export function animate(currentTime) {
     const isZiplining = player.onZipline;
     const isElevator = player.onElevator;
     const isJumping = player.isJumping;
-    const isFreefall = player.onFreefall; // ★ 追加
+    const isFreefall = player.onFreefall;
 
     let targetCamX = player.pos.x * 0.2;
     let targetCamY = player.pos.y + 24;
@@ -669,20 +693,27 @@ export function animate(currentTime) {
       targetLookY = player.pos.y - 1;
       targetFOV = 63;
     } else if (isElevator) {
-      targetCamY = player.pos.y + 20;
-      targetCamZ = player.pos.z + 14;
-      targetLookY = player.pos.y;
-      targetFOV = 60;
+      // エレベーター搭乗中：リフト昇降と周囲のタワーを見通すスムーズな仰角構図
+      targetCamX = player.pos.x * 0.4;
+      targetCamY = player.pos.y + 7.5;
+      targetCamZ = player.pos.z + 11.5;
+      targetLookX = player.pos.x * 0.2;
+      targetLookY = player.pos.y + 1.8;
+      targetLookAheadZ = player.pos.z - 10.0;
+      targetFOV = 63;
     } else if (isFreefall) {
-      // ★ ステップ2: 落下中のダイナミックなカメラアングル（急降下）
-      targetCamY = player.pos.y + 12;
-      targetCamZ = player.pos.z + 6;
-      targetLookY = player.pos.y - 15; // 大きく下を向く
-      targetLookAheadZ = player.pos.z - 10;
-      targetFOV = 85; // スピード感を出すため広角に
+      // フリーフォール急降下中：真下見下ろしを廃止し、斜め後方上部から着地先を見通す爽快な構図
+      const rollOffset = (player.freefallRoll || 0) * 1.6;
+      targetCamX = (player.freefallX || player.pos.x) * 0.45 + rollOffset;
+      targetCamY = player.pos.y + 7.2;
+      targetCamZ = player.pos.z + 9.8;
+      targetLookX = (player.freefallX || player.pos.x) * 0.25;
+      targetLookY = player.pos.y - 6.0;
+      targetLookAheadZ = player.pos.z - 24.0;
+      targetFOV = 74; // スピード感を保ちつつ被写体の歪みを抑えた広角
     }
 
-    const lerpFactorPos = isJumping ? 0.10 : 0.14;
+    const lerpFactorPos = (isJumping || isFreefall) ? 0.12 : 0.14;
     camera.position.x = THREE.MathUtils.lerp(camera.position.x, targetCamX, lerpFactorPos);
     camera.position.y = THREE.MathUtils.lerp(camera.position.y, targetCamY, 0.16);
     camera.position.z = THREE.MathUtils.lerp(camera.position.z, targetCamZ, lerpFactorPos);

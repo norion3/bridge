@@ -1,5 +1,5 @@
-// Bot AI自律思考ロジック・レーン評価・ゲート回避ベクトル・タイムスライス探索
-import { LANES } from './constants.js';
+// Bot AI自律思考ロジック・レーン評価・エレベーター速度査定・フリーフォール空中追従
+import { LANES, ELEVATOR_CONFIG, FREEFALL_CONFIG } from './constants.js';
 import { _tempAvoidResult } from './materials.js';
 import { characters, player, addBrickToCharacter } from './character.js';
 import { STAGES, CONNECTIONS, bridgesByStage, modifierGates, getFloorBlocksForStage, floorItems } from './world.js';
@@ -85,7 +85,7 @@ export function avoidGateObstacles(bot, dirX, dirZ) {
 }
 
 export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStepRing) {
-  // ★ ステップ2: AIの空中制御（落下中のブロック追従）
+  // ギミック搭乗中の自動ステアリング（カーブ・ジップライン・エレベーター・フリーフォール）
   if (bot.onCurvedSlide || bot.onZipline || bot.onElevator || bot.onFreefall) {
     let steerX = 0;
     if (bot.onCurvedSlide) {
@@ -93,23 +93,23 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
       const diff = targetOffset - bot.curvedSlideOffset;
       steerX = Math.abs(diff) > 0.08 ? Math.sign(diff) * 0.45 : 0;
     } else if (bot.onFreefall && bot.activeFreefall) {
+      // フリーフォール中の空中スラローム追従（直近前方の未回収ブロックへスムーズに接近）
       let targetX = bot.freefallX;
-      let minDist = 999;
+      let minProgDelta = 999;
       if (bot.activeFreefall.bonusBlocks) {
         for (let i = 0; i < bot.activeFreefall.bonusBlocks.length; i++) {
           const blk = bot.activeFreefall.bonusBlocks[i];
-          // 落下プログレスより少し下にある未回収ブロックを狙う
           if (!blk.collected && blk.t > bot.freefallProgress) {
             const d = blk.t - bot.freefallProgress;
-            if (d < minDist) {
-              minDist = d;
-              targetX = blk.pos.x;
+            if (d < minProgDelta) {
+              minProgDelta = d;
+              targetX = blk.x !== undefined ? blk.x : blk.pos.x;
             }
           }
         }
       }
       const diff = targetX - bot.freefallX;
-      steerX = Math.abs(diff) > 0.3 ? Math.sign(diff) * 0.8 : 0;
+      steerX = Math.abs(diff) > 0.25 ? Math.sign(diff) * Math.min(1.0, Math.abs(diff) * 1.5) : 0;
     }
     updateSingleCharacter(scene, bot, steerX, -1.0, dt, spawnPuffCloud, spawnSpeedStepRing);
     return;
@@ -258,19 +258,20 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
       if (b.isCurvedSlide || b.isZipline || b.isFreefall) {
         targetX = 0;
       } else if (b.isElevator) {
+        // エレベーターレーンの賢明な選択（75%の確率で最速レーンを選択、25%でランダム）
         if (bot.elevatorChoice === undefined) {
-          if (Math.random() < 0.20) {
+          if (Math.random() < 0.25) {
             bot.elevatorChoice = Math.floor(Math.random() * 3);
           } else {
             let minDur = 999;
-            let bestL = 0;
-            for(let i=0; i<3; i++) {
+            let bestLaneIdx = 0;
+            for (let i = 0; i < b.elevators.length; i++) {
               if (b.elevators[i].duration < minDur) {
                 minDur = b.elevators[i].duration;
-                bestL = i;
+                bestLaneIdx = b.elevators[i].laneIdx;
               }
             }
-            bot.elevatorChoice = bestL;
+            bot.elevatorChoice = bestLaneIdx;
           }
         }
         targetX = LANES[bot.elevatorChoice];

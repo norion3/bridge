@@ -1,10 +1,12 @@
-// 3Dキャラクター外観構築・手足メッシュ・スタックプール・トロリー・姿勢管理
+// 3Dキャラクター外観構築・手足メッシュ・スタックプール・トロリー・ケージ・姿勢管理
 import { TEAMS, MAX_VISUAL_STACK } from './constants.js';
 import {
   sharedMats,
   blockGeometry,
   playerStackMaterials,
-  updatePlayerStackMaterials
+  updatePlayerStackMaterials,
+  elevatorCageFloorGeo,
+  elevatorCageRoofGeo
 } from './materials.js';
 
 export let characters = [];
@@ -67,6 +69,72 @@ export function createZiplineTrolleyMesh() {
   group.add(capR);
 
   return group;
+}
+
+// 昇降ケージ（床プレート・手すり・天板キャノピー・安全バー）
+export function createElevatorCageMesh() {
+  const cage = new THREE.Group();
+
+  // 床プレート
+  const floorMesh = new THREE.Mesh(elevatorCageFloorGeo, sharedMats.elevatorFloorPlate);
+  floorMesh.position.y = -0.09;
+  floorMesh.castShadow = true;
+  floorMesh.receiveShadow = true;
+  cage.add(floorMesh);
+
+  // 四隅の支柱
+  const postH = 2.4;
+  const postGeo = new THREE.CylinderGeometry(0.042, 0.042, postH, 8);
+  const corners = [
+    [-1.1, -0.95],
+    [1.1, -0.95],
+    [-1.1, 0.95],
+    [1.1, 0.95]
+  ];
+  corners.forEach(([cx, cz]) => {
+    const post = new THREE.Mesh(postGeo, sharedMats.elevatorTowerSteel);
+    post.position.set(cx, postH / 2 - 0.09, cz);
+    cage.add(post);
+  });
+
+  // 安全手すり（腰高）
+  const railH = 0.95;
+  const backRailGeo = new THREE.CylinderGeometry(0.038, 0.038, 2.2, 8);
+  backRailGeo.rotateZ(Math.PI / 2);
+  const backRail = new THREE.Mesh(backRailGeo, sharedMats.elevatorTowerSteel);
+  backRail.position.set(0, railH, -0.95);
+  cage.add(backRail);
+
+  const sideRailGeo = new THREE.CylinderGeometry(0.038, 0.038, 1.9, 8);
+  sideRailGeo.rotateX(Math.PI / 2);
+  const leftRail = new THREE.Mesh(sideRailGeo, sharedMats.elevatorTowerSteel);
+  leftRail.position.set(-1.1, railH, 0);
+  cage.add(leftRail);
+
+  const rightRail = leftRail.clone();
+  rightRail.position.x = 1.1;
+  cage.add(rightRail);
+
+  // 前面把持用セーフティバー
+  const frontRailGeo = new THREE.CylinderGeometry(0.04, 0.04, 2.2, 8);
+  frontRailGeo.rotateZ(Math.PI / 2);
+  const frontRail = new THREE.Mesh(frontRailGeo, sharedMats.ziplinePylonTrim);
+  frontRail.position.set(0, 0.85, 0.95);
+  cage.add(frontRail);
+
+  // 天板キャノピー（ルーフ）
+  const roofMesh = new THREE.Mesh(elevatorCageRoofGeo, sharedMats.elevatorFloorPlate);
+  roofMesh.position.y = postH - 0.09;
+  cage.add(roofMesh);
+
+  // 天板中央のサスペンション連結具
+  const hookGeo = new THREE.CylinderGeometry(0.06, 0.06, 0.35, 8);
+  const hookMesh = new THREE.Mesh(hookGeo, sharedMats.elevatorTowerSteel);
+  hookMesh.position.y = postH + 0.08;
+  cage.add(hookMesh);
+
+  cage.visible = false;
+  return cage;
 }
 
 export function createCharacterMesh(team) {
@@ -157,31 +225,25 @@ export function createCharacterMesh(team) {
   trolleyGroup.visible = false;
   root.add(trolleyGroup);
 
-  const elevatorGroup = new THREE.Group();
-  const platGeo = new THREE.BoxGeometry(2.0, 0.15, 2.0);
-  const platMesh = new THREE.Mesh(platGeo, sharedMats.gateFrame);
-  platMesh.position.y = -0.075;
-  platMesh.castShadow = true;
-  elevatorGroup.add(platMesh);
-
-  const pipeGeo = new THREE.CylinderGeometry(0.04, 0.04, 2.0, 8);
-  pipeGeo.rotateZ(Math.PI / 2);
-  const p1 = new THREE.Mesh(pipeGeo, sharedMats.slideRail);
-  p1.position.set(0, 0.6, -0.9);
-  elevatorGroup.add(p1);
-  const p2 = p1.clone();
-  p2.position.set(0, 0.6, 0.9);
-  elevatorGroup.add(p2);
-  
-  const hangerGeo = new THREE.CylinderGeometry(0.03, 0.03, 3.2, 8);
-  const hanger = new THREE.Mesh(hangerGeo, sharedMats.slideRail);
-  hanger.position.set(0, 1.6, 0);
-  elevatorGroup.add(hanger);
-
-  elevatorGroup.visible = false;
+  const elevatorGroup = createElevatorCageMesh();
+  elevatorGroup.position.set(0, 0, 0);
   root.add(elevatorGroup);
 
-  return { root, body, head, leftLeg, rightLeg, leftArm, rightArm, stackGroup, trolleyGroup, elevatorGroup, footAura, magnetAura, stackPool };
+  return {
+    root,
+    body,
+    head,
+    leftLeg,
+    rightLeg,
+    leftArm,
+    rightArm,
+    stackGroup,
+    trolleyGroup,
+    elevatorGroup,
+    footAura,
+    magnetAura,
+    stackPool
+  };
 }
 
 export function getBrickMaterialForStackIndex(char, index) {
@@ -236,17 +298,42 @@ export function setupCharacters(scene, STAGES) {
   const pMesh = createCharacterMesh(TEAMS.BLUE);
   scene.add(pMesh.root);
   player = {
-    isPlayer: true, team: TEAMS.BLUE, meshObj: pMesh,
+    isPlayer: true,
+    team: TEAMS.BLUE,
+    meshObj: pMesh,
     pos: new THREE.Vector3(0, STAGES[0].y, STAGES[0].z + 4),
-    rotation: 0, stackCount: 0, currentStage: 0, stunTimer: 0, invulnerableTimer: 0, walkCycle: 0,
-    isJumping: false, activeJumpTier: null, onSlide: false, onCurvedSlide: false, curvedSlideProgress: 0, curvedSlideOffset: 0, slideCooldown: 0,
-    onZipline: false, ziplineProgress: 0, activeZipline: null,
-    onElevator: false, elevatorProgress: 0, activeElevator: null, elevatorLane: 0,
-    // ★ ステップ2: フリーフォール用のステート追加
-    onFreefall: false, freefallProgress: 0, activeFreefall: null, freefallX: 0,
-    jumpProgress: 0, lastPlankIdx: -1,
-    speedBoostActive: false, speedBoostTimer: 0, puffTimer: 0,
-    magnetActive: false, magnetTimer: 0
+    rotation: 0,
+    stackCount: 0,
+    currentStage: 0,
+    stunTimer: 0,
+    invulnerableTimer: 0,
+    walkCycle: 0,
+    isJumping: false,
+    activeJumpTier: null,
+    onSlide: false,
+    onCurvedSlide: false,
+    curvedSlideProgress: 0,
+    curvedSlideOffset: 0,
+    slideCooldown: 0,
+    onZipline: false,
+    ziplineProgress: 0,
+    activeZipline: null,
+    onElevator: false,
+    elevatorProgress: 0,
+    activeElevator: null,
+    elevatorLane: 0,
+    onFreefall: false,
+    freefallProgress: 0,
+    activeFreefall: null,
+    freefallX: 0,
+    freefallRoll: 0,
+    jumpProgress: 0,
+    lastPlankIdx: -1,
+    speedBoostActive: false,
+    speedBoostTimer: 0,
+    puffTimer: 0,
+    magnetActive: false,
+    magnetTimer: 0
   };
   pMesh.root.position.copy(player.pos);
   characters.push(player);
@@ -254,19 +341,50 @@ export function setupCharacters(scene, STAGES) {
   const b1Mesh = createCharacterMesh(TEAMS.RED);
   scene.add(b1Mesh.root);
   const bot1 = {
-    isPlayer: false, team: TEAMS.RED, meshObj: b1Mesh,
+    isPlayer: false,
+    team: TEAMS.RED,
+    meshObj: b1Mesh,
     pos: new THREE.Vector3(-4.0, STAGES[0].y, STAGES[0].z + 4),
-    rotation: 0, stackCount: 0, currentStage: 0,
-    aiState: 'COLLECT', aiCapacityGoal: 15, stunTimer: 0, invulnerableTimer: 0, walkCycle: 0,
-    isJumping: false, activeJumpTier: null, onSlide: false, onCurvedSlide: false, curvedSlideProgress: 0, curvedSlideOffset: 0, slideCooldown: 0,
-    onZipline: false, ziplineProgress: 0, activeZipline: null,
-    onElevator: false, elevatorProgress: 0, activeElevator: null, elevatorLane: 0, elevatorChoice: undefined,
-    onFreefall: false, freefallProgress: 0, activeFreefall: null, freefallX: 0,
-    jumpProgress: 0, lastPlankIdx: -1, botSlideOffsetTarget: 0,
-    speedBoostActive: false, speedBoostTimer: 0, puffTimer: 0,
-    magnetActive: false, magnetTimer: 0,
-    aiDirX: 0, aiDirZ: -1,
-    searchCooldown: 0, targetBlock: null
+    rotation: 0,
+    stackCount: 0,
+    currentStage: 0,
+    aiState: 'COLLECT',
+    aiCapacityGoal: 15,
+    stunTimer: 0,
+    invulnerableTimer: 0,
+    walkCycle: 0,
+    isJumping: false,
+    activeJumpTier: null,
+    onSlide: false,
+    onCurvedSlide: false,
+    curvedSlideProgress: 0,
+    curvedSlideOffset: 0,
+    slideCooldown: 0,
+    onZipline: false,
+    ziplineProgress: 0,
+    activeZipline: null,
+    onElevator: false,
+    elevatorProgress: 0,
+    activeElevator: null,
+    elevatorLane: 0,
+    elevatorChoice: undefined,
+    onFreefall: false,
+    freefallProgress: 0,
+    activeFreefall: null,
+    freefallX: 0,
+    freefallRoll: 0,
+    jumpProgress: 0,
+    lastPlankIdx: -1,
+    botSlideOffsetTarget: 0,
+    speedBoostActive: false,
+    speedBoostTimer: 0,
+    puffTimer: 0,
+    magnetActive: false,
+    magnetTimer: 0,
+    aiDirX: 0,
+    aiDirZ: -1,
+    searchCooldown: 0,
+    targetBlock: null
   };
   b1Mesh.root.position.copy(bot1.pos);
   characters.push(bot1);
@@ -274,19 +392,50 @@ export function setupCharacters(scene, STAGES) {
   const b2Mesh = createCharacterMesh(TEAMS.YELLOW);
   scene.add(b2Mesh.root);
   const bot2 = {
-    isPlayer: false, team: TEAMS.YELLOW, meshObj: b2Mesh,
+    isPlayer: false,
+    team: TEAMS.YELLOW,
+    meshObj: b2Mesh,
     pos: new THREE.Vector3(4.0, STAGES[0].y, STAGES[0].z + 4),
-    rotation: 0, stackCount: 0, currentStage: 0,
-    aiState: 'COLLECT', aiCapacityGoal: 17, stunTimer: 0, invulnerableTimer: 0, walkCycle: 0,
-    isJumping: false, activeJumpTier: null, onSlide: false, onCurvedSlide: false, curvedSlideProgress: 0, curvedSlideOffset: 0, slideCooldown: 0,
-    onZipline: false, ziplineProgress: 0, activeZipline: null,
-    onElevator: false, elevatorProgress: 0, activeElevator: null, elevatorLane: 0, elevatorChoice: undefined,
-    onFreefall: false, freefallProgress: 0, activeFreefall: null, freefallX: 0,
-    jumpProgress: 0, lastPlankIdx: -1, botSlideOffsetTarget: 0,
-    speedBoostActive: false, speedBoostTimer: 0, puffTimer: 0,
-    magnetActive: false, magnetTimer: 0,
-    aiDirX: 0, aiDirZ: -1,
-    searchCooldown: 0.06, targetBlock: null
+    rotation: 0,
+    stackCount: 0,
+    currentStage: 0,
+    aiState: 'COLLECT',
+    aiCapacityGoal: 17,
+    stunTimer: 0,
+    invulnerableTimer: 0,
+    walkCycle: 0,
+    isJumping: false,
+    activeJumpTier: null,
+    onSlide: false,
+    onCurvedSlide: false,
+    curvedSlideProgress: 0,
+    curvedSlideOffset: 0,
+    slideCooldown: 0,
+    onZipline: false,
+    ziplineProgress: 0,
+    activeZipline: null,
+    onElevator: false,
+    elevatorProgress: 0,
+    activeElevator: null,
+    elevatorLane: 0,
+    elevatorChoice: undefined,
+    onFreefall: false,
+    freefallProgress: 0,
+    activeFreefall: null,
+    freefallX: 0,
+    freefallRoll: 0,
+    jumpProgress: 0,
+    lastPlankIdx: -1,
+    botSlideOffsetTarget: 0,
+    speedBoostActive: false,
+    speedBoostTimer: 0,
+    puffTimer: 0,
+    magnetActive: false,
+    magnetTimer: 0,
+    aiDirX: 0,
+    aiDirZ: -1,
+    searchCooldown: 0.06,
+    targetBlock: null
   };
   b2Mesh.root.position.copy(bot2.pos);
   characters.push(bot2);
@@ -298,21 +447,37 @@ export function resetCharacters(STAGES) {
   characters.forEach(c => {
     c.stackCount = 0;
     refreshCharacterStackVisuals(c);
-    c.stunTimer = 0; c.invulnerableTimer = 0; c.currentStage = 0;
-    c.isJumping = false; c.activeJumpTier = null;
+    c.stunTimer = 0;
+    c.invulnerableTimer = 0;
+    c.currentStage = 0;
+    c.isJumping = false;
+    c.activeJumpTier = null;
     c.onSlide = false;
-    c.onCurvedSlide = false; c.curvedSlideProgress = 0; c.curvedSlideOffset = 0; c.slideCooldown = 0;
-    c.onZipline = false; c.ziplineProgress = 0; c.activeZipline = null;
-    c.onElevator = false; c.elevatorProgress = 0; c.activeElevator = null;
-    c.onFreefall = false; c.freefallProgress = 0; c.activeFreefall = null; c.freefallX = 0;
+    c.onCurvedSlide = false;
+    c.curvedSlideProgress = 0;
+    c.curvedSlideOffset = 0;
+    c.slideCooldown = 0;
+    c.onZipline = false;
+    c.ziplineProgress = 0;
+    c.activeZipline = null;
+    c.onElevator = false;
+    c.elevatorProgress = 0;
+    c.activeElevator = null;
+    c.onFreefall = false;
+    c.freefallProgress = 0;
+    c.activeFreefall = null;
+    c.freefallX = 0;
+    c.freefallRoll = 0;
     c.lastPlankIdx = -1;
     c.speedBoostActive = false;
     c.speedBoostTimer = 0;
     c.puffTimer = 0;
     c.magnetActive = false;
     c.magnetTimer = 0;
+
     if (c.meshObj.footAura) c.meshObj.footAura.visible = false;
     if (c.meshObj.magnetAura) c.meshObj.magnetAura.visible = false;
+
     if (!c.isPlayer) {
       c.botSlideOffsetTarget = 0;
       c.aiDirX = 0;
@@ -321,6 +486,7 @@ export function resetCharacters(STAGES) {
       c.targetBlock = null;
       c.elevatorChoice = undefined;
     }
+
     c.meshObj.trolleyGroup.visible = false;
     c.meshObj.elevatorGroup.visible = false;
     c.meshObj.stackGroup.scale.set(1.0, 1.0, 1.0);
@@ -337,7 +503,9 @@ export function resetCharacters(STAGES) {
     c.meshObj.rightLeg.rotation.set(0, 0, 0);
     c.meshObj.body.position.y = 0.65;
     c.meshObj.head.position.y = 1.25;
+    c.meshObj.root.rotation.set(0, 0, 0);
   });
+
   if (player && STAGES[0]) {
     player.pos.set(0, STAGES[0].y, STAGES[0].z + 4);
     player.meshObj.root.position.copy(player.pos);

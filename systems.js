@@ -1,8 +1,10 @@
-// 物理移動判定・階段敷設・タックル衝突・ゲート判定・誘導弾・アイテム処理
+// 物理移動判定・階段敷設・タックル衝突・ゲート判定・誘導弾・アイテム処理・エレベーター＆フリーフォール物理
 import {
   TEAMS,
   TRAMPOLINE_TIERS,
-  LANES
+  LANES,
+  ELEVATOR_CONFIG,
+  FREEFALL_CONFIG
 } from './constants.js';
 import {
   sharedMats,
@@ -236,15 +238,17 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
   }
 
   if (!isFarFromBridges) {
-    // ★ ステップ2: フリーフォールへの突入判定
+    // フリーフォールへの突入判定（ダイブ台の先端通過）
     const ffB = localBridges.find(b => b.isFreefall && b.stageIdx === char.currentStage);
     if (ffB && char.slideCooldown <= 0) {
-      if (nextZ <= ffB.startZ + 0.5 && isForwardIntent) {
+      if (nextZ <= ffB.startZ + 0.8 && isForwardIntent) {
         char.onFreefall = true;
         char.freefallProgress = 0;
         char.activeFreefall = ffB;
-        char.freefallX = char.pos.x; // 飛び出した瞬間のX座標
-        if (char.isPlayer && soundRef) soundRef.playJump('mega');
+        char.freefallX = char.pos.x;
+        char.freefallRoll = 0;
+
+        if (char.isPlayer && soundRef) soundRef.playDiveLaunch();
         return;
       }
     }
@@ -275,7 +279,7 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
       }
     }
 
-    // ★ ステップ1: エレベーターの乗車判定バグ修正（四角いボックス判定で吸い込みやすく）
+    // エレベーターの乗車判定（発着デッキ進入＆始動ロック）
     const eleB = localBridges.find(b => b.isElevator && b.stageIdx === char.currentStage);
     if (eleB && char.slideCooldown <= 0) {
       let onLane = false;
@@ -283,15 +287,16 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
       let minDist = 999;
       for (let i = 0; i < 3; i++) {
         const d = Math.abs(nextX - LANES[i]);
-        if (d < 1.5) onLane = true;
+        if (d < 1.6) onLane = true;
         if (d < minDist) { minDist = d; closestLane = i; }
       }
-      if (onLane && nextZ <= eleB.startZ + 1.0 && isForwardIntent) {
+      if (onLane && nextZ <= eleB.startZ + 1.8 && isForwardIntent) {
         char.onElevator = true;
         char.elevatorProgress = 0;
         char.activeElevator = eleB;
         char.elevatorLane = closestLane;
-        if (char.isPlayer && soundRef) soundRef.playJump('normal');
+
+        if (char.isPlayer && soundRef) soundRef.playElevatorStart();
         return;
       }
     }
@@ -430,7 +435,7 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
               blocked = true;
               const blockedZ = onBridge.startZ - ((pIndex - 1) / onBridge.planks.length) * (onBridge.startZ - onBridge.endZ);
               char.pos.x = LANES[onBridge.laneIdx];
-              char.pos.z = blockedZ + 0.12; 
+              char.pos.z = blockedZ + 0.12;
               char.pos.y = onBridge.planks[pIndex - 1].y;
               if (!char.isPlayer) {
                 char.aiState = 'COLLECT';
@@ -475,7 +480,7 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
                 blocked = true;
                 const blockedZ = onBridge.startZ - (pIndex / onBridge.planks.length) * (onBridge.startZ - onBridge.endZ);
                 char.pos.x = LANES[onBridge.laneIdx];
-                char.pos.z = blockedZ + 0.12; 
+                char.pos.z = blockedZ + 0.12;
                 char.pos.y = currentP.y;
                 if (!char.isPlayer) {
                   char.aiState = 'COLLECT';
@@ -609,11 +614,11 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     }
   }
 
-  // ★ ステップ2: フリーフォール（落下）の処理と空中操作
+  // フリーフォール（放物線重力落下・空中スラローム制御・大気ノイズ音）
   if (char.onFreefall && char.activeFreefall) {
     const b = char.activeFreefall;
-    const flyTime = 2.5; // 2.5秒かけて落下する
-    char.freefallProgress += dt / flyTime;
+    const totalFlyTime = FREEFALL_CONFIG.PHYSICS.totalDuration;
+    char.freefallProgress += dt / totalFlyTime;
 
     if (char.freefallProgress >= 1.0) {
       char.onFreefall = false;
@@ -624,15 +629,18 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
       char.lastPlankIdx = -1;
       char.activeFreefall = null;
 
-      triggerLandingShockwave(char.pos.x, char.pos.y, char.pos.z, 2.5);
+      triggerLandingShockwave(char.pos.x, char.pos.y, char.pos.z, 3.2);
       if (char.isPlayer && soundRef) soundRef.playLanding();
 
-      // 着地後の姿勢リセット
       char.meshObj.root.rotation.set(0, 0, 0);
+      char.meshObj.leftArm.position.set(-0.48, 0.68, 0);
+      char.meshObj.rightArm.position.set(0.48, 0.68, 0);
       char.meshObj.leftArm.rotation.set(0, 0, 0);
       char.meshObj.rightArm.rotation.set(0, 0, 0);
       char.meshObj.leftLeg.rotation.set(0, 0, 0);
       char.meshObj.rightLeg.rotation.set(0, 0, 0);
+      char.meshObj.body.position.y = 0.65;
+      char.meshObj.head.position.y = 1.25;
 
       if (!char.isPlayer) {
         char.aiState = 'COLLECT';
@@ -641,33 +649,43 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
       }
     } else {
       const t = Math.min(0.999, Math.max(0, char.freefallProgress));
-      // 左右の空中制御
-      char.freefallX = Math.max(-4.5, Math.min(4.5, char.freefallX + dirX * 12 * dt));
+
+      const airSpeed = FREEFALL_CONFIG.PHYSICS.horizontalAirControlSpeed;
+      const maxAirX = FREEFALL_CONFIG.PHYSICS.maxAirOffsetX;
+      char.freefallX = Math.max(-maxAirX, Math.min(maxAirX, char.freefallX + dirX * airSpeed * dt));
+
+      const targetRoll = -dirX * FREEFALL_CONFIG.PHYSICS.bankRollMax;
+      char.freefallRoll = THREE.MathUtils.lerp(char.freefallRoll || 0, targetRoll, 0.22);
 
       const pZ = THREE.MathUtils.lerp(b.startZ, b.endZ, t);
-      const pY = b.startY + (b.endY - b.startY) * Math.pow(t, 1.5); // 加速して落ちるカーブ
+      const fallPower = FREEFALL_CONFIG.PHYSICS.gravityPower;
+      const pY = b.startY + (b.endY - b.startY) * Math.pow(t, fallPower);
       char.pos.set(char.freefallX, pY, pZ);
 
-      // スカイダイビングのポーズ（うつ伏せバンザイ）
-      char.meshObj.root.rotation.x = Math.PI / 2.2;
-      char.meshObj.root.rotation.y = Math.PI; 
-      char.meshObj.root.rotation.z = -dirX * 0.4; // 左右スワイプで少し傾く
-      char.meshObj.leftArm.rotation.z = 2.0;
-      char.meshObj.rightArm.rotation.z = -2.0;
-      char.meshObj.leftLeg.rotation.x = -0.5;
-      char.meshObj.rightLeg.rotation.x = -0.5;
+      char.meshObj.root.rotation.set(Math.PI * 0.38, 0, char.freefallRoll);
+      char.meshObj.leftArm.position.set(-0.55, 0.50, -0.2);
+      char.meshObj.rightArm.position.set(0.55, 0.50, -0.2);
+      char.meshObj.leftArm.rotation.set(0.4, 0, 0.5);
+      char.meshObj.rightArm.rotation.set(0.4, 0, -0.5);
+      char.meshObj.leftLeg.rotation.x = -0.65;
+      char.meshObj.rightLeg.rotation.x = -0.65;
 
-      // 落下中のブロック回収判定
+      if (char.isPlayer && soundRef) {
+        soundRef.playFreefallWind(t);
+      }
+
       if (b.bonusBlocks && b.bonusBlocks.length > 0) {
+        const pickupRadiusSq = FREEFALL_CONFIG.BONUS_TRACK.pickupRadiusSq;
         for (let i = 0; i < b.bonusBlocks.length; i++) {
           const blk = b.bonusBlocks[i];
           if (!blk.collected) {
             const dx = char.pos.x - blk.pos.x;
             const dy = char.pos.y - blk.pos.y;
             const dz = char.pos.z - blk.pos.z;
-            if (dx * dx + dy * dy + dz * dz < 4.0) { // 2m以内で回収
+            if (dx * dx + dy * dy + dz * dz < pickupRadiusSq) {
               blk.collected = true;
               blk.mesh.visible = false;
+              if (blk.ringMesh) blk.ringMesh.visible = false;
               addBrickToCharacter(char, char.team, 1, soundRef, updateHUDRef);
             }
           }
@@ -678,10 +696,11 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     return;
   }
 
+  // エレベーター（イージング加減速・手すり把持姿勢・モーター音・到着バウンド）
   if (char.onElevator && char.activeElevator) {
     const b = char.activeElevator;
     const laneData = b.elevators.find(e => e.laneIdx === char.elevatorLane) || b.elevators[0];
-    
+
     char.elevatorProgress += dt / laneData.duration;
     char.meshObj.elevatorGroup.visible = true;
 
@@ -695,8 +714,20 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
       char.activeElevator = null;
       char.meshObj.elevatorGroup.visible = false;
 
-      triggerLandingShockwave(char.pos.x, char.pos.y, char.pos.z, 1.8);
-      if (char.isPlayer && soundRef) soundRef.playLanding();
+      triggerLandingShockwave(char.pos.x, char.pos.y, char.pos.z, 2.0);
+      if (char.isPlayer && soundRef) {
+        soundRef.playElevatorArrival();
+      }
+
+      char.meshObj.root.rotation.set(0, 0, 0);
+      char.meshObj.leftArm.position.set(-0.48, 0.68, 0);
+      char.meshObj.rightArm.position.set(0.48, 0.68, 0);
+      char.meshObj.leftArm.rotation.set(0, 0, 0);
+      char.meshObj.rightArm.rotation.set(0, 0, 0);
+      char.meshObj.leftLeg.rotation.set(0, 0, 0);
+      char.meshObj.rightLeg.rotation.set(0, 0, 0);
+      char.meshObj.body.position.y = 0.65;
+      char.meshObj.head.position.y = 1.25;
 
       if (!char.isPlayer) {
         char.aiState = 'COLLECT';
@@ -705,21 +736,37 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
         char.aiCapacityGoal = 14 + Math.floor(Math.random() * 5);
       }
     } else {
-      const t = Math.min(0.999, Math.max(0, char.elevatorProgress));
-      const pZ = THREE.MathUtils.lerp(b.startZ, b.endZ, t);
-      const pY = THREE.MathUtils.lerp(b.startY, b.endY, t);
+      const rawT = Math.min(0.999, Math.max(0, char.elevatorProgress));
 
-      char.pos.set(LANES[char.elevatorLane], pY + 0.1, pZ);
+      const easeT = rawT < 0.5
+        ? 2 * rawT * rawT
+        : 1 - Math.pow(-2 * rawT + 2, 2) / 2;
 
-      char.meshObj.root.rotation.x = 0;
-      char.meshObj.root.rotation.y = Math.PI; 
-      char.meshObj.root.rotation.z = 0;
-      char.meshObj.leftLeg.rotation.x = 0;
-      char.meshObj.rightLeg.rotation.x = 0;
-      char.meshObj.leftArm.rotation.x = 0;
-      char.meshObj.rightArm.rotation.x = 0;
+      const pZ = THREE.MathUtils.lerp(b.startZ, b.endZ, easeT);
+      let pY = THREE.MathUtils.lerp(b.startY, b.endY, easeT);
+
+      if (rawT > 0.88) {
+        const bouncePhase = (rawT - 0.88) / 0.12;
+        pY += Math.sin(bouncePhase * Math.PI) * ELEVATOR_CONFIG.EASING.arrivalBounceHeight;
+      }
+
+      char.pos.set(LANES[char.elevatorLane], pY + 0.10, pZ);
+
+      char.meshObj.root.rotation.set(0, 0, 0);
+      char.meshObj.leftLeg.rotation.set(0, 0, 0);
+      char.meshObj.rightLeg.rotation.set(0, 0, 0);
+
+      char.meshObj.leftArm.position.set(-0.42, 0.85, 0.35);
+      char.meshObj.rightArm.position.set(0.42, 0.85, 0.35);
+      char.meshObj.leftArm.rotation.set(-0.8, 0, -0.2);
+      char.meshObj.rightArm.rotation.set(-0.8, 0, 0.2);
       char.meshObj.body.position.y = 0.65;
       char.meshObj.head.position.y = 1.25;
+
+      if (char.isPlayer && soundRef) {
+        const speedRatio = Math.sin(rawT * Math.PI);
+        soundRef.playElevatorMotor(speedRatio);
+      }
     }
 
     char.meshObj.root.position.copy(char.pos);
@@ -746,9 +793,9 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
       char.meshObj.rightLeg.rotation.x = 0;
 
       triggerLandingShockwave(char.pos.x, char.pos.y, char.pos.z, tier.shockRadius);
-      
+
       char.invulnerableTimer = Math.max(char.invulnerableTimer, 1.5);
-      
+
       for (let i = 0; i < characters.length; i++) {
         const other = characters[i];
         if (other !== char && other.currentStage === char.currentStage) {

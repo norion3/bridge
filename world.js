@@ -1,9 +1,11 @@
-// コース伸長・浮島・橋・スライド・ジップライン・ゲート・ブロック配置・破棄
+// コース伸長・浮島・橋・スライド・ジップライン・エレベータータワー・フリーフォールダイブ台・ブロック配置・破棄
 import {
   BLOCK_TYPES,
   TRAMPOLINE_TIERS,
   LANES,
-  PLANK_LENGTH
+  PLANK_LENGTH,
+  ELEVATOR_CONFIG,
+  FREEFALL_CONFIG
 } from './constants.js';
 import {
   sharedMats,
@@ -15,6 +17,10 @@ import {
   itemSpeedGeo,
   itemMagnetGeo,
   itemBeaconRingGeo,
+  elevatorTowerTrussGeo,
+  divePlatformGeo,
+  diveWarningBorderGeo,
+  freefallRingGeo,
   COLOR_NEUTRAL_PLANK,
   COLOR_BLUE_PLANK,
   COLOR_RED_PLANK,
@@ -36,7 +42,6 @@ export const bridges = [];
 export const floorItems = [];
 export const curvedSlideBonusBlocks = [];
 export const ziplineBonusBlocks = [];
-// ★ ステップ2: フリーフォールボーナスブロック用配列
 export const freefallBonusBlocks = [];
 export const activeMagnetBlocks = [];
 export const floorBlocksByStage = new Map();
@@ -157,6 +162,145 @@ export function createTrampolineMesh(x, y, z, tier) {
 
   group.position.set(x, y, z);
   return { group, net, ring };
+}
+
+// エレベーター昇降タワー・トラス支柱・発着デッキ・速度看板の構築
+export function createElevatorTowerStructure(scene, startX, startY, startZ, endY, endZ, laneCfg) {
+  const group = new THREE.Group();
+  const heightDelta = endY - startY;
+  const distZ = startZ - endZ;
+  const totalLength = Math.hypot(heightDelta, distZ);
+  const inclineAngle = Math.atan2(heightDelta, distZ);
+
+  // 1. 始点乗車デッキ（プラットフォーム）
+  const startPlatGeo = new THREE.BoxGeometry(2.8, 0.35, 2.8);
+  const startPlat = new THREE.Mesh(startPlatGeo, sharedMats.elevatorFloorPlate);
+  startPlat.position.set(startX, startY + 0.10, startZ + 1.2);
+  startPlat.receiveShadow = true;
+  group.add(startPlat);
+
+  // 乗車口のハザードボーダーライン
+  const hazardStripeGeo = new THREE.BoxGeometry(2.8, 0.37, 0.3);
+  const hazardStripe = new THREE.Mesh(hazardStripeGeo, sharedMats.diveHazardWarning);
+  hazardStripe.position.set(startX, startY + 0.11, startZ + 2.5);
+  group.add(hazardStripe);
+
+  // 速度インジケーターネオンバー（床面）
+  let padMat;
+  if (laneCfg.speedTier === 'fast') padMat = sharedMats.elevatorFast;
+  else if (laneCfg.speedTier === 'mid') padMat = sharedMats.elevatorMid;
+  else padMat = sharedMats.elevatorSlow;
+
+  const speedPadGeo = new THREE.BoxGeometry(2.2, 0.38, 1.8);
+  const speedPad = new THREE.Mesh(speedPadGeo, padMat);
+  speedPad.position.set(startX, startY + 0.12, startZ + 1.2);
+  group.add(speedPad);
+
+  // 2. 終点降車デッキ
+  const endPlat = new THREE.Mesh(startPlatGeo, sharedMats.elevatorFloorPlate);
+  endPlat.position.set(startX, endY + 0.05, endZ - 1.2);
+  endPlat.receiveShadow = true;
+  group.add(endPlat);
+
+  // 3. 傾斜昇降トラスガイドレール（左右2本の大口径スチールビーム）
+  const railGeo = new THREE.CylinderGeometry(0.12, 0.12, totalLength + 1.5, 12);
+  const midY = (startY + endY) / 2 + 1.1;
+  const midZ = (startZ + endZ) / 2;
+
+  const leftBeam = new THREE.Mesh(railGeo, sharedMats.elevatorTowerSteel);
+  leftBeam.position.set(startX - 1.35, midY, midZ);
+  leftBeam.rotation.x = inclineAngle;
+  leftBeam.castShadow = true;
+  group.add(leftBeam);
+
+  const rightBeam = new THREE.Mesh(railGeo, sharedMats.elevatorTowerSteel);
+  rightBeam.position.set(startX + 1.35, midY, midZ);
+  rightBeam.rotation.x = inclineAngle;
+  rightBeam.castShadow = true;
+  group.add(rightBeam);
+
+  // 中央牽引スチールケーブル
+  const cableGeo = new THREE.CylinderGeometry(0.045, 0.045, totalLength + 2.0, 8);
+  const centerCable = new THREE.Mesh(cableGeo, sharedMats.ziplineCable);
+  centerCable.position.set(startX, midY + 1.4, midZ);
+  centerCable.rotation.x = inclineAngle;
+  group.add(centerCable);
+
+  // 4. トラス補強ブレース（等間隔の横梁フレーム）
+  const numBraces = Math.max(4, Math.floor(totalLength / 5.0));
+  const braceGeo = new THREE.BoxGeometry(2.7, 0.14, 0.14);
+  for (let b = 1; b < numBraces; b++) {
+    const bt = b / numBraces;
+    const by = startY + bt * heightDelta + 1.1;
+    const bz = startZ - bt * distZ;
+    const brace = new THREE.Mesh(braceGeo, sharedMats.ziplinePylonTrim);
+    brace.position.set(startX, by, bz);
+    brace.rotation.x = inclineAngle;
+    group.add(brace);
+  }
+
+  // 5. 始点ゲートアーチ ＆ 速度表記ホログラム看板
+  const archPostGeo = new THREE.CylinderGeometry(0.08, 0.08, 3.2, 8);
+  const leftArch = new THREE.Mesh(archPostGeo, sharedMats.elevatorTowerSteel);
+  leftArch.position.set(startX - 1.35, startY + 1.6, startZ + 2.4);
+  group.add(leftArch);
+
+  const rightArch = leftArch.clone();
+  rightArch.position.x = startX + 1.35;
+  group.add(rightArch);
+
+  const topSignGeo = new THREE.BoxGeometry(2.8, 0.65, 0.18);
+  const topSign = new THREE.Mesh(topSignGeo, padMat);
+  topSign.position.set(startX, startY + 3.2, startZ + 2.4);
+  group.add(topSign);
+
+  scene.add(group);
+  return group;
+}
+
+// フリーフォール専用ダイビング発射台（崖先へ突き出たプラットフォーム・安全柵）
+export function createFreefallLaunchDeck(scene, startX, startY, startZ) {
+  const group = new THREE.Group();
+
+  // 突き出しメインデッキ
+  const deck = new THREE.Mesh(divePlatformGeo, sharedMats.divePlatformSurface);
+  deck.position.set(startX, startY - 0.15, startZ + 1.8);
+  deck.receiveShadow = true;
+  deck.castShadow = true;
+  group.add(deck);
+
+  // 先端部の警告ストライプ（黄色×黒ハザード）
+  const hazardTip = new THREE.Mesh(diveWarningBorderGeo, sharedMats.diveHazardWarning);
+  hazardTip.position.set(startX, startY - 0.14, startZ - 0.5);
+  group.add(hazardTip);
+
+  // 左右の安全ガイド手すり
+  const railH = FREEFALL_CONFIG.LAUNCH_PLATFORM.railHeight;
+  const sideRailGeo = new THREE.CylinderGeometry(0.06, 0.06, 4.8, 8);
+  sideRailGeo.rotateX(Math.PI / 2);
+
+  const leftRail = new THREE.Mesh(sideRailGeo, sharedMats.diveHandrail);
+  leftRail.position.set(startX - 3.2, startY + railH * 0.7, startZ + 1.8);
+  group.add(leftRail);
+
+  const rightRail = leftRail.clone();
+  rightRail.position.x = startX + 3.2;
+  group.add(rightRail);
+
+  // 支柱ピラー
+  const pillarGeo = new THREE.CylinderGeometry(0.08, 0.08, railH, 8);
+  [-2.2, 0.2, 2.6].forEach(oz => {
+    const pL = new THREE.Mesh(pillarGeo, sharedMats.gateFrame);
+    pL.position.set(startX - 3.2, startY + railH / 2, startZ + 1.8 + oz);
+    group.add(pL);
+
+    const pR = pL.clone();
+    pR.position.x = startX + 3.2;
+    group.add(pR);
+  });
+
+  scene.add(group);
+  return group;
 }
 
 export function createZiplinePylonMesh(x, y, z, topAnchorY, isDeparture = true) {
@@ -352,7 +496,6 @@ export function spawnItem(scene, stageIdx, type = 'speed') {
   if (!validPos) return;
 
   const itemGroup = new THREE.Group();
-  
   let crystalMat, ringMat;
   let crystalGeoToUse = itemCrystalGeo;
 
@@ -453,47 +596,60 @@ export function spawnGatesOnIsland(scene, stageIdx, islandZ, islandY) {
 }
 
 export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, nextIslandZ, prevR, nextR, startY, endY, type) {
-  // ★ ステップ2: フリーフォール（長距離落下）の生成
+  // フリーフォール（ダイブ台＋誘導リング＋スラローム配置）
   if (type === 'freefall') {
     const startZ = prevIslandZ - prevR + 1.2;
     const endZ = nextIslandZ + nextR - 1.2;
 
-    // 飛び出し用の踏み切り板
-    const platGeo = new THREE.BoxGeometry(6.0, 0.4, 4.0);
-    const platMesh = new THREE.Mesh(platGeo, sharedMats.slideSurface);
-    platMesh.position.set(0, startY - 0.2, startZ + 1.0);
-    scene.add(platMesh);
+    const launchDeckGroup = createFreefallLaunchDeck(scene, 0, startY, startZ);
 
     const freefallBridge = {
       stageIdx, nextStageIdx, laneIdx: 1, planks: [],
-      visualMeshes: [platMesh],
+      visualMeshes: [launchDeckGroup],
       startZ, endZ, startY, endY,
       isJump: false, isSlide: false, isVertical: false, isCurvedSlide: false, isZipline: false, isElevator: false, isFreefall: true,
-      bonusBlocks: []
+      bonusBlocks: [],
+      guideRings: []
     };
 
-    // 空中軌道上にブロックを配置
-    const numBlocks = 18;
+    // スラローム軌道（S字の空中配置＋誘導リング）
+    const numBlocks = FREEFALL_CONFIG.BONUS_TRACK.blockCount;
     for (let i = 0; i < numBlocks; i++) {
-      const t = 0.1 + (i / numBlocks) * 0.8;
-      const bPos = new THREE.Vector3(
-        (Math.random() - 0.5) * 8.0, // 左右4m幅に散らす
-        startY + (endY - startY) * Math.pow(t, 1.2), // 自然な落下カーブ
-        startZ - (startZ - endZ) * t
-      );
+      const t = 0.15 + (i / numBlocks) * 0.72;
+      const z = THREE.MathUtils.lerp(startZ, endZ, t);
+      const y = startY + (endY - startY) * Math.pow(t, FREEFALL_CONFIG.PHYSICS.gravityPower);
+
+      // 左右に弧を描くスラローム配置
+      const slalomAngle = (i / numBlocks) * Math.PI * 2.5;
+      const x = Math.sin(slalomAngle) * 3.4;
+
+      const bPos = new THREE.Vector3(x, y, z);
       const bMesh = new THREE.Mesh(blockGeometry, sharedMats.blockNeutral);
       bMesh.position.copy(bPos);
+      bMesh.castShadow = true;
       scene.add(bMesh);
+
+      // 3ブロックごとに誘導リングを配置して回収ルートを視覚化
+      let ringMesh = null;
+      if (i % 3 === 0) {
+        ringMesh = new THREE.Mesh(freefallRingGeo, sharedMats.freefallGuideRing);
+        ringMesh.position.set(x, y, z);
+        ringMesh.rotation.x = Math.PI * 0.35;
+        scene.add(ringMesh);
+        freefallBridge.guideRings.push(ringMesh);
+      }
 
       const bonusData = {
         mesh: bMesh,
+        ringMesh: ringMesh,
         pos: bPos,
         t: t,
+        x: x,
         collected: false,
         stageIdx: stageIdx
       };
       freefallBridge.bonusBlocks.push(bonusData);
-      freefallBonusBlocks.push(bonusData); // 全体管理用へ
+      freefallBonusBlocks.push(bonusData);
     }
 
     if (!bridgesByStage.has(stageIdx)) bridgesByStage.set(stageIdx, []);
@@ -502,12 +658,10 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     return;
   }
 
+  // エレベーター（3基のトラス昇降タワー・速度看板）
   if (type === 'elevator') {
     const startZ = prevIslandZ - prevR + 1.2;
     const endZ = nextIslandZ + nextR - 1.2;
-
-    const durations = [3.0, 4.5, 6.0];
-    durations.sort(() => Math.random() - 0.5);
 
     const elevatorBridge = {
       stageIdx, nextStageIdx, laneIdx: 1, planks: [], visualMeshes: [],
@@ -516,36 +670,18 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       elevators: []
     };
 
-    for (let laneIdx = 0; laneIdx < 3; laneIdx++) {
-      const laneX = LANES[laneIdx];
-      const dur = durations[laneIdx];
-      
-      let padMat;
-      if (dur === 3.0) padMat = sharedMats.elevatorFast;       // 緑色 (最速)
-      else if (dur === 4.5) padMat = sharedMats.elevatorMid;   // 黄色 (中間)
-      else padMat = sharedMats.elevatorSlow;                   // 赤色 (低速)
+    ELEVATOR_CONFIG.LANES.forEach(cfg => {
+      const laneX = LANES[cfg.laneIdx];
+      const towerMesh = createElevatorTowerStructure(scene, laneX, startY, startZ, endY, endZ, cfg);
+      elevatorBridge.visualMeshes.push(towerMesh);
 
-      const platGeo = new THREE.BoxGeometry(2.4, 0.25, 2.4);
-      const platBase = new THREE.Mesh(platGeo, padMat);
-      platBase.position.set(laneX, startY + 0.05, startZ + 1.0);
-      scene.add(platBase);
-      elevatorBridge.visualMeshes.push(platBase);
-
-      const wireH = Math.hypot(startZ - endZ, endY - startY);
-      const wireGeo = new THREE.CylinderGeometry(0.04, 0.04, wireH, 8);
-      const wireMesh = new THREE.Mesh(wireGeo, sharedMats.ziplineCable);
-      wireMesh.position.set(laneX, (startY + endY) / 2 + 3.0, (startZ + endZ) / 2);
-      wireMesh.rotation.x = Math.atan2(endY - startY, startZ - endZ);
-      scene.add(wireMesh);
-      elevatorBridge.visualMeshes.push(wireMesh);
-
-      const platEnd = new THREE.Mesh(platGeo, sharedMats.gateFrame);
-      platEnd.position.set(laneX, endY, endZ - 1.0);
-      scene.add(platEnd);
-      elevatorBridge.visualMeshes.push(platEnd);
-
-      elevatorBridge.elevators.push({ laneIdx, duration: dur });
-    }
+      elevatorBridge.elevators.push({
+        laneIdx: cfg.laneIdx,
+        duration: cfg.duration,
+        speedTier: cfg.speedTier,
+        label: cfg.label
+      });
+    });
 
     if (!bridgesByStage.has(stageIdx)) bridgesByStage.set(stageIdx, []);
     bridgesByStage.get(stageIdx).push(elevatorBridge);
@@ -871,7 +1007,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       bridge.solidMesh = solidMesh;
       bridge.visualMeshes.push(ghostMesh, solidMesh);
     }
-    
+
     if (!bridgesByStage.has(stageIdx)) bridgesByStage.set(stageIdx, []);
     bridgesByStage.get(stageIdx).push(bridge);
     bridges.push(bridge);
@@ -911,50 +1047,53 @@ export function extendCourse(scene) {
   } else {
     const rand = Math.random();
     if (prev.y >= 14.0) {
-      if (rand < 0.25) {
+      if (rand < 0.32) {
+        type = 'freefall';
+        nextY = Math.max(5.0, prev.y - FREEFALL_CONFIG.PHYSICS.minHeightDrop);
+        distZ = FREEFALL_CONFIG.PHYSICS.forwardDistance;
+        r = 12.5;
+      } else if (rand < 0.58) {
         type = 'zipline';
         nextY = Math.max(7.0, prev.y - 12.0);
-        distZ = 68; r = 10.5;
-      } else if (rand < 0.50) {
-        // ★ ステップ2: 落下コース（フリーフォール）を追加しやすく調整
-        type = 'freefall';
-        nextY = 6.0; // 一気に下層まで落ちる
-        distZ = 55; r = 12;
-      } else if (rand < 0.75) {
+        distZ = 68;
+        r = 10.5;
+      } else if (rand < 0.80) {
         type = 'curved_slide';
         nextY = Math.max(6.0, prev.y - 8.0);
-        distZ = 46; r = 11;
+        distZ = 46;
+        r = 11;
       } else {
         type = 'slide';
         nextY = Math.max(6.0, prev.y - 6.5);
-        distZ = 36; r = 10;
+        distZ = 36;
+        r = 10;
       }
     } else {
-      if (rand < 0.20) {
+      if (rand < 0.28) {
         type = 'elevator';
-        nextY = prev.y + 14.0;
-        distZ = 28; r = 10;
-      } else if (rand < 0.40) {
+        nextY = prev.y + 18.0;
+        distZ = 32;
+        r = 11;
+      } else if (rand < 0.52) {
         type = 'vertical';
-        nextY = prev.y + 10.0;
-        distZ = 24; r = 10;
-      } else if (rand < 0.60) {
+        nextY = prev.y + 11.0;
+        distZ = 24;
+        r = 10;
+      } else if (rand < 0.74) {
         type = 'jump';
         nextY = prev.y + 1.0;
-        distZ = 30; r = 9.5;
-      } else if (rand < 0.80) {
+        distZ = 30;
+        r = 9.5;
+      } else {
         type = 'bridge';
         nextY = prev.y + 7.0;
-        distZ = 34; r = 10;
-      } else {
-        type = 'curved_slide';
-        nextY = Math.max(6.0, prev.y - 4.0);
-        distZ = 46; r = 11;
+        distZ = 34;
+        r = 10;
       }
     }
   }
 
-  nextY = Math.max(6.0, nextY);
+  nextY = Math.max(5.0, nextY);
   const nextZ = prev.z - distZ;
   const stageInfo = { z: nextZ, y: nextY, r: r, type: type };
   STAGES.push(stageInfo);
@@ -1032,6 +1171,12 @@ export function buildWorld(scene) {
       disposeHierarchy(vm);
       scene.remove(vm);
     });
+    if (b.guideRings) {
+      b.guideRings.forEach(gr => {
+        disposeHierarchy(gr);
+        scene.remove(gr);
+      });
+    }
   });
   modifierGates.forEach(g => {
     disposeHierarchy(g.meshGroup);
@@ -1061,7 +1206,6 @@ export function buildWorld(scene) {
       scene.remove(b.mesh);
     }
   });
-  // ★ ステップ2: フリーフォールボーナスのクリア
   freefallBonusBlocks.forEach(b => {
     if (b.mesh) {
       disposeHierarchy(b.mesh);
@@ -1074,7 +1218,7 @@ export function buildWorld(scene) {
       scene.remove(item.group);
     }
   });
-  
+
   activeMagnetBlocks.forEach(mb => {
     if (mb.poolItem) {
       mb.poolItem.active = false;
@@ -1161,10 +1305,16 @@ export function cleanupOldData(scene) {
         disposeHierarchy(vm);
         scene.remove(vm);
       });
+      if (bridges[i].guideRings) {
+        bridges[i].guideRings.forEach(gr => {
+          disposeHierarchy(gr);
+          scene.remove(gr);
+        });
+      }
       bridges.splice(i, 1);
     }
   }
-  
+
   for (let key of bridgesByStage.keys()) {
     if (key < safeStage) bridgesByStage.delete(key);
   }
@@ -1179,7 +1329,7 @@ export function cleanupOldData(scene) {
       STAGES[sIdx]._pruned = true;
     }
   }
-  
+
   floorBlocksByStage.forEach((bucket, stageKey) => {
     if (stageKey < safeStage) {
       bucket.forEach(b => {
@@ -1241,7 +1391,6 @@ export function cleanupOldData(scene) {
       ziplineBonusBlocks.splice(i, 1);
     }
   }
-  // ★ ステップ2: フリーフォールボーナスのクリーンアップ
   for (let i = freefallBonusBlocks.length - 1; i >= 0; i--) {
     if (freefallBonusBlocks[i].stageIdx < safeStage) {
       if (freefallBonusBlocks[i].mesh) {

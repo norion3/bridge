@@ -7,6 +7,8 @@ export class SoundEngine {
     this.muted = true;
     this.lastSlideSound = 0;
     this.lastZipSound = 0;
+    this.lastElevatorSound = 0;
+    this.lastWindSound = 0;
   }
 
   init() {
@@ -14,11 +16,10 @@ export class SoundEngine {
       const AudioContext = window.AudioContext || window.webkitAudioContext;
       if (AudioContext) {
         this.ctx = new AudioContext();
-        
-        // コンプレッサーの導入によるクリッピング（音割れ）の完全防止
+
         this.masterGain = this.ctx.createGain();
         this.masterGain.gain.value = 0.8;
-        
+
         this.compressor = this.ctx.createDynamicsCompressor();
         this.compressor.threshold.value = -24;
         this.compressor.knee.value = 30;
@@ -49,9 +50,7 @@ export class SoundEngine {
           if (n && typeof n.disconnect === 'function') n.disconnect();
         });
         osc.onended = null;
-      } catch (e) {
-        // 例外キャッチによるクラッシュ防止
-      }
+      } catch (e) {}
     };
   }
 
@@ -71,7 +70,7 @@ export class SoundEngine {
       this.autoDisconnect(osc, gain);
       osc.start(now);
       osc.stop(now + 0.09);
-    } catch(e) {}
+    } catch (e) {}
   }
 
   playGateBoost() {
@@ -93,7 +92,7 @@ export class SoundEngine {
         osc.start(start);
         osc.stop(start + 0.17);
       });
-    } catch(e) {}
+    } catch (e) {}
   }
 
   playItemGet() {
@@ -125,7 +124,7 @@ export class SoundEngine {
       this.autoDisconnect(osc2, gain2);
       osc2.start(now + 0.04);
       osc2.stop(now + 0.29);
-    } catch(e) {}
+    } catch (e) {}
   }
 
   playAttackShoot() {
@@ -157,7 +156,7 @@ export class SoundEngine {
       this.autoDisconnect(osc2, gain2);
       osc2.start(now + 0.02);
       osc2.stop(now + 0.16);
-    } catch(e) {}
+    } catch (e) {}
   }
 
   playAttackHit() {
@@ -189,7 +188,7 @@ export class SoundEngine {
       this.autoDisconnect(osc2, gain2);
       osc2.start(now);
       osc2.stop(now + 0.17);
-    } catch(e) {}
+    } catch (e) {}
   }
 
   playDrainCollect(pitchStep = 0) {
@@ -224,7 +223,7 @@ export class SoundEngine {
       this.autoDisconnect(chime, cGain);
       chime.start(now + 0.02);
       chime.stop(now + 0.15);
-    } catch(e) {}
+    } catch (e) {}
   }
 
   playMagnetCharge() {
@@ -256,7 +255,7 @@ export class SoundEngine {
       this.autoDisconnect(osc2, gain2);
       osc2.start(now + 0.05);
       osc2.stop(now + 0.36);
-    } catch(e) {}
+    } catch (e) {}
   }
 
   playMagnetDock(step = 0) {
@@ -278,7 +277,7 @@ export class SoundEngine {
       this.autoDisconnect(osc, gain);
       osc.start(now);
       osc.stop(now + 0.08);
-    } catch(e) {}
+    } catch (e) {}
   }
 
   playBuildPlank() {
@@ -297,7 +296,7 @@ export class SoundEngine {
       this.autoDisconnect(osc, gain);
       osc.start(now);
       osc.stop(now + 0.08);
-    } catch(e) {}
+    } catch (e) {}
   }
 
   playSlide() {
@@ -318,7 +317,7 @@ export class SoundEngine {
       this.autoDisconnect(osc, gain);
       osc.start(now);
       osc.stop(now + 0.11);
-    } catch(e) {}
+    } catch (e) {}
   }
 
   playZipline(speedProgress = 0.5) {
@@ -340,7 +339,147 @@ export class SoundEngine {
       this.autoDisconnect(osc, gain);
       osc.start(now);
       osc.stop(now + 0.08);
-    } catch(e) {}
+    } catch (e) {}
+  }
+
+  // エレベーター始動ロック音（カシャン＋機械起動）
+  playElevatorStart() {
+    if (this.muted || !this.ctx) return;
+    try {
+      const now = this.ctx.currentTime;
+      const osc1 = this.ctx.createOscillator();
+      const gain1 = this.ctx.createGain();
+      osc1.type = 'triangle';
+      osc1.frequency.setValueAtTime(160, now);
+      osc1.frequency.exponentialRampToValueAtTime(320, now + 0.09);
+      gain1.gain.setValueAtTime(0.35, now);
+      gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
+      osc1.connect(gain1);
+      gain1.connect(this.masterGain);
+      this.autoDisconnect(osc1, gain1);
+      osc1.start(now);
+      osc1.stop(now + 0.15);
+
+      const osc2 = this.ctx.createOscillator();
+      const gain2 = this.ctx.createGain();
+      osc2.type = 'sawtooth';
+      osc2.frequency.setValueAtTime(440, now + 0.03);
+      osc2.frequency.exponentialRampToValueAtTime(880, now + 0.12);
+      gain2.gain.setValueAtTime(0.20, now + 0.03);
+      gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
+      osc2.connect(gain2);
+      gain2.connect(this.masterGain);
+      this.autoDisconnect(osc2, gain2);
+      osc2.start(now + 0.03);
+      osc2.stop(now + 0.17);
+    } catch (e) {}
+  }
+
+  // エレベーター昇降中のモーター唸り音
+  playElevatorMotor(speedRatio = 0.5) {
+    if (this.muted || !this.ctx) return;
+    const now = this.ctx.currentTime;
+    if (now - this.lastElevatorSound < 0.09) return;
+    this.lastElevatorSound = now;
+    try {
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sawtooth';
+      const baseFreq = 95 + speedRatio * 180;
+      osc.frequency.setValueAtTime(baseFreq, now);
+      osc.frequency.linearRampToValueAtTime(baseFreq + 24, now + 0.085);
+      gain.gain.setValueAtTime(0.12, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.085);
+      osc.connect(gain);
+      gain.connect(this.masterGain);
+      this.autoDisconnect(osc, gain);
+      osc.start(now);
+      osc.stop(now + 0.09);
+    } catch (e) {}
+  }
+
+  // エレベーター到着時の「ピンポン」チャイム＆メカ停止
+  playElevatorArrival() {
+    if (this.muted || !this.ctx) return;
+    try {
+      const now = this.ctx.currentTime;
+      const chime1 = this.ctx.createOscillator();
+      const g1 = this.ctx.createGain();
+      chime1.type = 'sine';
+      chime1.frequency.setValueAtTime(880, now);
+      g1.gain.setValueAtTime(0.28, now);
+      g1.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
+      chime1.connect(g1);
+      g1.connect(this.masterGain);
+      this.autoDisconnect(chime1, g1);
+      chime1.start(now);
+      chime1.stop(now + 0.29);
+
+      const chime2 = this.ctx.createOscillator();
+      const g2 = this.ctx.createGain();
+      chime2.type = 'sine';
+      chime2.frequency.setValueAtTime(1174.66, now + 0.12);
+      g2.gain.setValueAtTime(0.25, now + 0.12);
+      g2.gain.exponentialRampToValueAtTime(0.001, now + 0.42);
+      chime2.connect(g2);
+      g2.connect(this.masterGain);
+      this.autoDisconnect(chime2, g2);
+      chime2.start(now + 0.12);
+      chime2.stop(now + 0.43);
+    } catch (e) {}
+  }
+
+  // フリーフォール飛び出し音（鋭いスルー音）
+  playDiveLaunch() {
+    if (this.muted || !this.ctx) return;
+    try {
+      const now = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(320, now);
+      osc.frequency.exponentialRampToValueAtTime(1400, now + 0.18);
+      gain.gain.setValueAtTime(0.40, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+      osc.connect(gain);
+      gain.connect(this.masterGain);
+      this.autoDisconnect(osc, gain);
+      osc.start(now);
+      osc.stop(now + 0.23);
+    } catch (e) {}
+  }
+
+  // フリーフォール急降下中の大気風切りノイズ音
+  playFreefallWind(intensity = 0.5) {
+    if (this.muted || !this.ctx) return;
+    const now = this.ctx.currentTime;
+    if (now - this.lastWindSound < 0.08) return;
+    this.lastWindSound = now;
+    try {
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      const filter = this.ctx.createBiquadFilter();
+
+      osc.type = 'sawtooth';
+      const baseFreq = 160 + intensity * 380;
+      osc.frequency.setValueAtTime(baseFreq, now);
+      osc.frequency.linearRampToValueAtTime(baseFreq + 60, now + 0.075);
+
+      filter.type = 'bandpass';
+      filter.frequency.setValueAtTime(600 + intensity * 1800, now);
+      filter.Q.value = 2.5;
+
+      const vol = 0.08 + intensity * 0.18;
+      gain.gain.setValueAtTime(vol, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.075);
+
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.masterGain);
+      this.autoDisconnect(osc, filter, gain);
+      osc.start(now);
+      osc.stop(now + 0.08);
+    } catch (e) {}
   }
 
   playLanding() {
@@ -372,7 +511,7 @@ export class SoundEngine {
       this.autoDisconnect(osc2, gain2);
       osc2.start(now + 0.02);
       osc2.stop(now + 0.25);
-    } catch(e) {}
+    } catch (e) {}
   }
 
   playJump(tierId = 'normal') {
@@ -467,7 +606,7 @@ export class SoundEngine {
           chOsc.stop(startT + 0.32);
         });
       }
-    } catch(e) {}
+    } catch (e) {}
   }
 
   playTackle() {
@@ -486,7 +625,7 @@ export class SoundEngine {
       this.autoDisconnect(osc, gain);
       osc.start(now);
       osc.stop(now + 0.19);
-    } catch(e) {}
+    } catch (e) {}
   }
 
   playVictory() {
@@ -507,6 +646,6 @@ export class SoundEngine {
         osc.start(start);
         osc.stop(start + 0.37);
       });
-    } catch(e) {}
+    } catch (e) {}
   }
 }

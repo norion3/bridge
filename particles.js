@@ -1,4 +1,4 @@
-// パーティクル・エフェクト・飛翔体・ドレインブロックのオブジェクトプール
+// パーティクル・エフェクト・風切りライン・飛翔体・床ブロックのオブジェクトプール
 import {
   sharedMats,
   sharedMaterialsSet,
@@ -8,7 +8,8 @@ import {
   itemCrystalGeo,
   attackRingGeo,
   attackTrailSphereGeo,
-  blockGeometry
+  blockGeometry,
+  windStreakGeo
 } from './materials.js';
 
 export const PUFF_POOL_SIZE = 24;
@@ -17,7 +18,8 @@ export const SHOCKWAVE_POOL_SIZE = 16;
 export const PROJECTILE_POOL_SIZE = 3;
 export const NUM_TRAILS_PER_PROJ = 14;
 export const DRAIN_POOL_SIZE = 8;
-export const FLOOR_BLOCK_POOL_SIZE = 400; // ★ フェーズ3: 床ブロックの完全プール化
+export const FLOOR_BLOCK_POOL_SIZE = 400;
+export const WIND_STREAK_POOL_SIZE = 20; // フリーフォール急降下スピードライン用
 
 export const puffCloudPool = [];
 export const speedStepRingPool = [];
@@ -25,6 +27,7 @@ export const shockwavePool = [];
 export const projectilePool = [];
 export const drainBlockPool = [];
 export const floorBlockPool = [];
+export const windStreakPool = [];
 
 export function triggerLandingShockwave(x, y, z, customRadius = 1.5, customColorHex = null) {
   let sw = shockwavePool.find(item => !item.active);
@@ -177,7 +180,7 @@ export function initParticlePools(scene) {
     }
   }
 
-  // ★ フェーズ3: 床ブロックプールの初期化（事前生成）
+  // 床ブロックプール
   if (floorBlockPool.length === 0) {
     for (let i = 0; i < FLOOR_BLOCK_POOL_SIZE; i++) {
       const mesh = new THREE.Mesh(blockGeometry, sharedMats.blockNeutral);
@@ -192,6 +195,25 @@ export function initParticlePools(scene) {
         pos: mesh.position,
         stageIdx: -1,
         attracting: false
+      });
+    }
+  }
+
+  // フリーフォール風切りストリークプール
+  if (windStreakPool.length === 0) {
+    for (let w = 0; w < WIND_STREAK_POOL_SIZE; w++) {
+      const streakMat = sharedMats.windStreakMat.clone();
+      sharedMaterialsSet.add(streakMat);
+      const mesh = new THREE.Mesh(windStreakGeo, streakMat);
+      mesh.visible = false;
+      scene.add(mesh);
+      windStreakPool.push({
+        mesh: mesh,
+        material: streakMat,
+        active: false,
+        life: 0,
+        maxLife: 0.28,
+        speed: 40.0
       });
     }
   }
@@ -224,12 +246,44 @@ export function resetParticlePools() {
     d.mesh.visible = false;
     d.mesh.scale.set(1.0, 1.0, 1.0);
   }
-  // ★ フェーズ3: 床ブロックプールのリセット
   for (let i = 0; i < floorBlockPool.length; i++) {
     floorBlockPool[i].active = false;
     floorBlockPool[i].mesh.visible = false;
     floorBlockPool[i].attracting = false;
   }
+  for (let i = 0; i < windStreakPool.length; i++) {
+    windStreakPool[i].active = false;
+    windStreakPool[i].mesh.visible = false;
+  }
+}
+
+export function spawnWindStreak(charX, charY, charZ, rollAngle = 0) {
+  let streak = windStreakPool.find(s => !s.active);
+  if (!streak) {
+    streak = windStreakPool[0];
+    let maxLife = streak.life;
+    for (let i = 1; i < windStreakPool.length; i++) {
+      if (windStreakPool[i].life > maxLife) {
+        maxLife = windStreakPool[i].life;
+        streak = windStreakPool[i];
+      }
+    }
+  }
+
+  streak.active = true;
+  streak.life = 0;
+  streak.maxLife = 0.22 + Math.random() * 0.12;
+
+  // キャラクター周囲（半径1.5〜3.5m）にランダム配置
+  const rad = 1.4 + Math.random() * 2.2;
+  const ang = Math.random() * Math.PI * 2;
+  const ox = Math.cos(ang) * rad;
+  const oz = Math.sin(ang) * rad;
+
+  streak.mesh.position.set(charX + ox, charY + 1.2 + Math.random() * 1.5, charZ + oz);
+  streak.mesh.rotation.set(Math.PI * 0.38, 0, rollAngle);
+  streak.mesh.visible = true;
+  streak.material.opacity = 0.45;
 }
 
 export function spawnPuffCloud(x, y, z) {
