@@ -37,7 +37,7 @@ export const attackRingGeo = new THREE.TorusGeometry(0.72, 0.08, 8, 24);
 export const baseShockwaveGeo = new THREE.RingGeometry(0.3, 0.65, 32);
 baseShockwaveGeo.rotateX(-Math.PI / 2);
 
-// エレベーター展望リフト用ジオメトリ（邪魔なワイヤー類を全撤去しホバーリフトへ）
+// エレベーター展望リフト用ジオメトリ（邪魔なワイヤー類を完全撤去しホバーリフトへ）
 export const elevatorPlatformFloorGeo = new THREE.BoxGeometry(2.4, 0.16, 2.0);
 export const elevatorHandrailPostGeo = new THREE.CylinderGeometry(0.035, 0.035, 0.95, 8);
 export const elevatorHandrailBarGeo = new THREE.CylinderGeometry(0.035, 0.035, 2.3, 8);
@@ -194,15 +194,20 @@ export const sharedMats = {
   blockYellow: new THREE.MeshStandardMaterial({ color: TEAMS.YELLOW.hex, emissive: TEAMS.YELLOW.emissive, emissiveIntensity: 0.2, roughness: 0.35 }),
   blockNeutral: new THREE.MeshStandardMaterial({ color: TEAMS.NEUTRAL.hex, emissive: TEAMS.NEUTRAL.emissive, emissiveIntensity: 0.2, roughness: 0.35 }),
 
+  // ★ キャラクターのトイ・フィギュア化マテリアル
   charBlue: new THREE.MeshStandardMaterial({
     color: TEAMS.BLUE.hex,
     emissive: TEAMS.BLUE.emissive,
-    emissiveIntensity: 0.22,
-    roughness: 0.22,
-    metalness: 0.08
+    emissiveIntensity: 0.15,
+    roughness: 0.28,
+    metalness: 0.12
   }),
-  charRed: new THREE.MeshStandardMaterial({ color: TEAMS.RED.hex, roughness: 0.25, metalness: 0.05 }),
-  charYellow: new THREE.MeshStandardMaterial({ color: TEAMS.YELLOW.hex, roughness: 0.25, metalness: 0.05 }),
+  charRed: new THREE.MeshStandardMaterial({ color: TEAMS.RED.hex, roughness: 0.3, metalness: 0.1 }),
+  charYellow: new THREE.MeshStandardMaterial({ color: TEAMS.YELLOW.hex, roughness: 0.3, metalness: 0.1 }),
+  
+  // キャラの顔（バイザー）と手足のアクセント用マテリアル
+  charVisor: new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.1, metalness: 0.85 }),
+  charAccent: new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.3, metalness: 0.05 }),
 
   ziplinePylonPost: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.18, metalness: 0.05 }),
   ziplinePylonTrim: new THREE.MeshStandardMaterial({ color: 0xf97316, roughness: 0.25, metalness: 0.15 }),
@@ -245,7 +250,8 @@ export const sharedMats = {
     roughness: 0.05,
     metalness: 0.2
   }),
-  itemAttackBeaconRing: new MeshBasicMaterial({
+  // ★ 起動不能バグの修正：`MeshBasicMaterial` -> `THREE.MeshBasicMaterial` に変更
+  itemAttackBeaconRing: new THREE.MeshBasicMaterial({
     color: 0xf43f5e,
     transparent: true,
     opacity: 0.85,
