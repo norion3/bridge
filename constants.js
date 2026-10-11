@@ -1,6 +1,6 @@
 // チーム設定、コース構成規格、およびエレベーター・スカイダイブ・ドロップタワー物理・カメラ定数
 export const TEAMS = {
-  // 自キャラ（青）を白飛びするシアンから鮮烈で力強い「ヴィヴィッド・ロイヤルブルー」へ設定
+  // 自キャラ（青）：白飛びするシアンから鮮烈で力強い「ヴィヴィッド・ロイヤルブルー」
   BLUE: { id: 'blue', name: 'あなた (青)', hex: 0x0066ff, emissive: 0x1d4ed8 },
   RED: { id: 'red', name: '赤Bot', hex: 0xef4444, emissive: 0xb91c1c },
   YELLOW: { id: 'yellow', name: '黄Bot', hex: 0xf59e0b, emissive: 0xb45309 },
@@ -64,8 +64,8 @@ export const STAGE_TYPES = {
   VERTICAL: 'vertical',
   ZIPLINE: 'zipline',
   ELEVATOR: 'elevator',
-  SKYDIVE: 'skydive',       // 頭先行高速ダイビング（ジェットカタパルト射出）
-  TRAPDOOR: 'trapdoor'      // 足先行ドロップタワー（垂直急速フリーフォール）
+  SKYDIVE: 'skydive',       // 前方高速滑空（ジェットカタパルト射出・放物線）
+  TRAPDOOR: 'trapdoor'      // 垂直急速フリーフォール（ドロップタワーデッキ）
 };
 
 // エレベーター仕様定数（オープン展望リフト規格）
@@ -89,34 +89,58 @@ export const ELEVATOR_CONFIG = {
   }
 };
 
-// スカイダイブ仕様定数（ジェットカタパルト・ランウェイ・頭先行高速滑空）
+// =========================================================================
+// 【最高峰刷新】スカイダイブ仕様定数
+// 滞空時間 3.1秒 ＆ 前進52m・落差-42m（時速86kmを維持しながらたっぷり魅せる）
+// =========================================================================
 export const SKYDIVE_CONFIG = {
   PHYSICS: {
-    minHeightDrop: 30.0,            // 垂直落差 (-30m)
-    forwardDistance: 36.0,          // 前進距離 (放物線)
-    totalDuration: 2.2,             // 滞空飛行時間（秒）
-    gravityPower: 1.95,             // 重力加速カーブ（前進初速から滑らかな急降下）
-    horizontalAirControlSpeed: 10.5,// 左右エアコントロール速度
-    maxAirOffsetX: 4.8,             // 左右最大シフト幅
-    maxRollAngle: Math.PI * 0.18    // 左右スワイプ時の最大バンク角（ロール傾き 約32度）
+    minHeightDrop: 42.0,            // 垂直落差を -30m から -42m へ拡張
+    forwardDistance: 52.0,          // 前進距離を 36m から 52m へ大幅拡大（空中直線距離 約67m）
+    totalDuration: 3.1,             // 滞空時間を 2.2秒 から ジップライン並みの 3.1秒 へ伸長
+    gravityPower: 1.85,             // 伸びやかな放物線急降下重力カーブ
+    horizontalAirControlSpeed: 11.5,// 左右エアコントロール感度
+    maxAirOffsetX: 5.2,             // 左右最大シフト幅
+    maxRollAngle: Math.PI * 0.18    // 左右バンク角（ロール傾き 最大 ±32度）
   },
   CATAPULT: {
-    length: 5.6,                    // ランウェイ突き出し長
+    length: 7.2,                    // 滑走路長を 5.6m から 7.2m へ延長（雄大な助走空間）
     width: 3.8,                     // 滑走路幅
     slopeAngle: 0.14,               // 前方下り傾斜
-    exclusionRadius: 5.0            // ランウェイ周辺の床ブロック生成禁止半径
+    exclusionRadius: 5.5            // ランウェイ周辺の床ブロック生成禁止半径
+  },
+  // 手すり遮蔽を100%根絶する3段タイムシフトカメラ
+  CAMERA: {
+    // Phase 1 (0.0s〜0.6s / prog < 0.19): カタパルト手前上空にその場固定（ステージ見送り）
+    farewellProgLimit: 0.19,        // 0.6秒相当 (0.6 / 3.1)
+    farewellOffsetX: 3.8,           // 横 +3.8m
+    farewellOffsetY: 5.5,           // 高さ +5.5m
+    farewellOffsetZ: 6.5,           // 後方 +6.5m（島側手前）
+    lookAheadZ: -24.0,              // 前方注視点
+
+    // Phase 2 (0.6s〜2.5s / 0.19 <= prog < 0.81): サイドワイドチェイス（並走ゾーン）
+    chaseProgLimit: 0.81,           // 2.5秒相当 (2.5 / 3.1)
+    chaseOffsetX: 5.2,              // 横 +5.2m
+    chaseOffsetY: 4.2,              // 高さ +4.2m
+    chaseOffsetZ: 8.2,              // 後方 +8.2m
+    fovStart: 64,                   // 見送り時FOV
+    fovChase: 78,                   // 滑空並走時ワイドFOV（雄大な空と海）
+    fovLand: 66                     // 着地先回りFOV
   }
 };
 
-// ドロップタワー仕様定数（足先行・急速垂直急降下・ラゲッジホールド）
+// =========================================================================
+// 【最高峰刷新】ドロップタワー仕様定数
+// 落下時間 2.4秒 ＆ 落差-58m（瞬殺落下から倍増、時速100km超の超高層スリル）
+// =========================================================================
 export const TRAPDOOR_CONFIG = {
   PHYSICS: {
-    minHeightDrop: 38.0,            // 垂直落差 (-38m)
-    forwardDistance: 10.0,          // 前進距離を抑えた垂直直下落下
-    totalDuration: 1.18,            // 爆速垂直落下時間（約1.2秒）
-    gravityPower: 1.6,              // 初速から一気に引きずり込まれる重力カーブ
+    minHeightDrop: 58.0,            // 垂直落差を -38m から 超高層ビル級の -58m へ超高層化
+    forwardDistance: 12.0,          // 垂直落下を強調した前進距離
+    totalDuration: 2.4,             // 落下時間を 1.18秒 から 2.4秒 へ倍増（落ちるスリルを存分に見せる）
+    gravityPower: 1.6,              // 初速からストンと虚空へ引きずり込まれる重力カーブ (t^1.6)
     horizontalAirControlSpeed: 7.5, // 左右エアスライド速度（直立維持）
-    maxAirOffsetX: 3.4              // 空中微調整の最大左右幅
+    maxAirOffsetX: 3.6              // 空中微調整の最大左右幅
   },
   HATCH: {
     size: 3.6,                      // デッキ開口部サイズ
@@ -134,17 +158,23 @@ export const TRAPDOOR_CONFIG = {
     offsetY: 0.42,                  // 背中への吸着高さ
     offsetZ: -0.26                  // 背中への密着オフセット
   },
-  // サイド・クォーターチェイスカメラ定数（上の島を一瞬で画面上部外へ置き去りにする）
+  // 3段タイムシフトカメラ（ハッチ覗き込み見送り ➜ サイド垂直並走チェイス ➜ 先行着地）
   CAMERA: {
-    offsetX: 5.2,                   // 自キャラの右斜め後方 +5.2m
-    offsetY: 5.8,                   // 高さ +5.8m
-    offsetZ: 7.5,                   // 後方 +7.5m
-    lookOffsetX: 0.0,               // 注視点 X
-    lookOffsetY: -3.2,              // 注視点 Y（深淵と水平線の中間を捉える）
-    lookAheadZ: -20.0,              // 前方奥 -20.0m
-    lagPhase1Duration: 0.14,        // Phase 1: 開放瞬間の上空切り離しディレイ（0.14秒）
+    // Phase 1 (0.0s〜0.5s / prog < 0.21): デッキ上空から開いた穴越しに落ちる瞬間を見送る
+    farewellProgLimit: 0.21,        // 0.5秒相当 (0.5 / 2.4)
+    farewellOffsetY: 6.0,           // 上のデッキ高さ +6.0m
+    farewellOffsetZ: 4.5,           // 後方 +4.5m
+
+    // Phase 2 (0.5s〜1.9s / 0.21 <= prog < 0.79): 自キャラの右斜め横から垂直並走チェイス
+    chaseProgLimit: 0.79,           // 1.9秒相当 (1.9 / 2.4)
+    chaseOffsetX: 5.2,              // 横 +5.2m
+    chaseOffsetY: 4.0,              // 高さ +4.0m
+    chaseOffsetZ: 6.5,              // 後方 +6.5m
+    lookOffsetX: 0.0,
+    lookOffsetY: -3.5,              // 深淵と迫る着地島の中間を捉える
+    lookAheadZ: -16.0,
     fovStart: 62,                   // 開始時FOV
-    fovDrop: 78                     // 追従加速時FOV（広大な大気感）
+    fovDrop: 78                     // 落下加速時ワイドFOV（時速100km超のパノラマ視差）
   }
 };
 

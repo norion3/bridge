@@ -1,4 +1,3 @@
-// Bot AI自律思考ロジック・レーン評価・スカイダイブ＆ドロップタワー進入・空中姿勢同期
 import {
   LANES,
   ELEVATOR_CONFIG,
@@ -119,13 +118,13 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
     let steerX = 0;
 
     if (bot.onSkydive && bot.activeSkydive) {
-      // スカイダイブ中：自然な緩やかロールバンク揺らぎ
+      // スカイダイブ中（3.1秒）：自然な緩やかロールバンク揺らぎ
       const timeSec = performance.now() * 0.0018 + bot.team.hex;
       steerX = Math.sin(timeSec) * 0.35;
     } else if (bot.onTrapdoor && bot.activeTrapdoor) {
-      // ドロップタワー爆速1.2秒急降下中：直立バンジー姿勢を保ったまま中央軸を安定キープ
+      // ドロップタワー超高層急降下中（2.4秒）：直立バンジー姿勢を保ったまま中央軸を安定キープ
       const currentX = bot.trapdoorX || 0;
-      steerX = -Math.sign(currentX) * Math.min(0.4, Math.abs(currentX) * 0.6);
+      steerX = -Math.sign(currentX) * Math.min(0.35, Math.abs(currentX) * 0.5);
     } else if (bot.onCurvedSlide) {
       const targetOffset = bot.botSlideOffsetTarget || 0;
       const diff = targetOffset - bot.curvedSlideOffset;

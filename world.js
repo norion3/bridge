@@ -85,22 +85,17 @@ export function getFloorBlocksForStage(stageIdx) {
   return bucket;
 }
 
-// =========================================================================
-// 【ゲート看板】黒タイヤ台座・無骨鉄パイプを廃止し、リゾートホワイトスチール＆大理石ベースへ刷新
-// ※ 看板本体（緑・赤の数字パネル）は完全維持
-// =========================================================================
+// ゲート看板：白大理石ポップ半球ベース ＆ ホワイトスチール支柱 ＆ オレンジトリム
 export function createModifierGate(scene, stageIdx, posX, posZ, posY, opType, value, label) {
   const isPositive = (opType === 'add' || opType === 'multiply');
   const group = new THREE.Group();
 
-  // 看板パネル本体（太字＋黒シャドウの視認性抜群パネルをそのまま活用）
   const materials = getOrCreateGateMaterials(label, isPositive);
   const panelMesh = new THREE.Mesh(new THREE.BoxGeometry(2.6, 2.2, 0.15), materials);
   panelMesh.position.y = 1.35;
   panelMesh.castShadow = true;
   group.add(panelMesh);
 
-  // 1. 白大理石ポップ半球ベース（黒いゴムタイヤ台座を完全撤廃）
   const baseL = new THREE.Mesh(gateDomeBaseGeo, sharedMats.gateBasePlate);
   baseL.position.set(-1.3, 0.04, 0);
   group.add(baseL);
@@ -108,7 +103,6 @@ export function createModifierGate(scene, stageIdx, posX, posZ, posY, opType, va
   baseR.position.x = 1.3;
   group.add(baseR);
 
-  // 2. 清潔感あふれるホワイトスチール支柱
   const postL = new THREE.Mesh(gatePostSteelGeo, sharedMats.gateWhiteSteel);
   postL.position.set(-1.3, 1.24, 0);
   group.add(postL);
@@ -116,7 +110,6 @@ export function createModifierGate(scene, stageIdx, posX, posZ, posY, opType, va
   postR.position.x = 1.3;
   group.add(postR);
 
-  // 3. アクセントとなるオレンジトリムリング（支柱下部と上部）
   const ringBottomL = new THREE.Mesh(gateTrimRingGeo, sharedMats.gateOrangeTrim);
   ringBottomL.position.set(-1.3, 0.44, 0);
   group.add(ringBottomL);
@@ -131,7 +124,6 @@ export function createModifierGate(scene, stageIdx, posX, posZ, posY, opType, va
   ringTopR.position.set(1.3, 2.38, 0);
   group.add(ringTopR);
 
-  // 4. ホワイトスチール上部連結バー
   const topBar = new THREE.Mesh(gateTopBarGeo, sharedMats.gateWhiteSteel);
   topBar.position.y = 2.45;
   group.add(topBar);
@@ -262,15 +254,12 @@ export function createElevatorStationStructure(scene, startX, startY, startZ, en
   return group;
 }
 
-// =========================================================================
-// 【スカイダイブ】ジェットカタパルト・ランウェイ（真っ白なベニヤ板を完全撤廃）
-// 疾走ライン・太いオレンジ安全パイプレール・ブースター加速ノズルを備えたコースター発射台
-// =========================================================================
+// スカイダイブ：ジェットカタパルト・ランウェイ（スケール拡張 7.2m 対応）
 export function createSkydiveCatapultStructure(scene, posX, posY, posZ) {
   const group = new THREE.Group();
   const rampZ = posZ - SKYDIVE_CONFIG.CATAPULT.length * 0.42;
 
-  // 1. スカイブルー＆シェブロン矢印付き滑走路床面
+  // 1. スカイブルー＆シェブロン矢印付き滑走路床面（7.2m）
   const rampMesh = new THREE.Mesh(catapultRampGeo, sharedMats.catapultDeck);
   rampMesh.position.set(posX, posY + 0.10, rampZ);
   rampMesh.rotation.x = SKYDIVE_CONFIG.CATAPULT.slopeAngle;
@@ -298,8 +287,8 @@ export function createSkydiveCatapultStructure(scene, posX, posY, posZ) {
   railR.position.x = posX + 1.82;
   group.add(railR);
 
-  // 4. サイドのメタリック加速ノズル（コースター感の演出）
-  const nozzlePositions = [-1.4, 0.0, 1.4];
+  // 4. サイドのメタリック加速ノズル
+  const nozzlePositions = [-1.8, -0.6, 0.6, 1.8];
   nozzlePositions.forEach(offsetZ => {
     const nLeft = new THREE.Mesh(catapultBoosterNozzleGeo, sharedMats.catapultBoosterMetal);
     nLeft.position.set(posX - 2.05, posY + 0.25, rampZ + offsetZ);
@@ -314,7 +303,7 @@ export function createSkydiveCatapultStructure(scene, posX, posY, posZ) {
   // 5. 先端のシャープなネオンエッジ
   const tipEdgeGeo = new THREE.BoxGeometry(3.9, 0.14, 0.35);
   const tipEdge = new THREE.Mesh(tipEdgeGeo, sharedMats.catapultNeonRail);
-  tipEdge.position.set(posX, posY - 0.20, posZ - SKYDIVE_CONFIG.CATAPULT.length * 0.92);
+  tipEdge.position.set(posX, posY - 0.24, posZ - SKYDIVE_CONFIG.CATAPULT.length * 0.92);
   group.add(tipEdge);
 
   group.position.set(0, 0, 0);
@@ -326,10 +315,7 @@ export function createSkydiveCatapultStructure(scene, posX, posY, posZ) {
   };
 }
 
-// =========================================================================
-// 【ドロップタワー】スカイドロップ・タワーデッキ（黒い鳥居風2本棒を完全撤廃）
-// 白スチールトラス支柱 ＆ 最上部オレンジ滑車プーリー ＆ 強化ガラスデッキ
-// =========================================================================
+// ドロップタワー：スカイドロップ・タワーデッキ（白スチールトラス支柱 ＆ 滑車プーリー ＆ ガラスデッキ）
 export function createTrapdoorHatchStructure(scene, posX, posY, posZ) {
   const group = new THREE.Group();
 
@@ -339,14 +325,14 @@ export function createTrapdoorHatchStructure(scene, posX, posY, posZ) {
   deck.receiveShadow = true;
   group.add(deck);
 
-  // 2. 外周スチールリム（ホワイトスチール）
+  // 2. 外周スチールリム
   const rimGeo = new THREE.TorusGeometry(2.8, 0.09, 8, 32);
   rimGeo.rotateX(Math.PI / 2);
   const rim = new THREE.Mesh(rimGeo, sharedMats.dropTowerWhiteSteel);
   rim.position.set(posX, posY + 0.16, posZ);
   group.add(rim);
 
-  // 3. 白スチールトラス支柱（ジップライン鉄塔と同系統の洗練された支柱）
+  // 3. 白スチールトラス支柱（7.5m）
   const pylonL = new THREE.Mesh(dropTrussPostGeo, sharedMats.dropTowerWhiteSteel);
   pylonL.position.set(posX - 2.2, posY + 3.75, posZ);
   pylonL.castShadow = true;
@@ -371,7 +357,7 @@ export function createTrapdoorHatchStructure(scene, posX, posY, posZ) {
   topCrossBar.position.set(posX, posY + 7.4, posZ);
   group.add(topCrossBar);
 
-  // 5. 最上部オレンジ滑車プーリー ＆ 懸架スチールケーブル（絶叫タワーのシンボル）
+  // 5. 最上部オレンジ滑車プーリー ＆ 懸架スチールケーブル
   const pulleyL = new THREE.Mesh(dropPulleyGeo, sharedMats.dropPulleyOrange);
   pulleyL.position.set(posX - 1.25, posY + 7.4, posZ);
   group.add(pulleyL);
@@ -623,7 +609,7 @@ export function spawnItem(scene, stageIdx, type = 'speed') {
   } else if (type === 'magnet') {
     crystalMat = sharedMats.itemMagnetCrystal;
     ringMat = sharedMats.itemMagnetBeaconRing;
-    crystalGeoToUse = itemMagnetGeo; // 12面体幾何学ジュエル
+    crystalGeoToUse = itemMagnetGeo;
   } else {
     crystalMat = sharedMats.itemCrystal;
     ringMat = sharedMats.itemBeaconRing;
@@ -1118,6 +1104,9 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
   }
 }
 
+// =========================================================================
+// 【最高峰刷新】コース伸長：落差・飛行距離を大幅拡張し、時速80〜100km超を完全両立
+// =========================================================================
 export function extendCourse(scene) {
   const idx = STAGES.length;
   const prev = STAGES[idx - 1];
@@ -1152,16 +1141,17 @@ export function extendCourse(scene) {
     const rand = Math.random();
     if (prev.y >= 14.0) {
       if (rand < 0.28) {
-        // 看板ステージ1：スカイダイブ（頭先行・前進36m・落差-30m）
+        // 看板ステージ1：スカイダイブ（前進 52m ＆ 垂直落差 -42m ＆ 滞空 3.1秒）
+        // 幾何計算：startZ - endZ = 52.0m を完全保証する島間中心距離
         type = 'skydive';
         nextY = Math.max(5.0, prev.y - SKYDIVE_CONFIG.PHYSICS.minHeightDrop);
-        distZ = SKYDIVE_CONFIG.PHYSICS.forwardDistance;
         r = 11.5;
+        distZ = SKYDIVE_CONFIG.PHYSICS.forwardDistance + prev.r + r - 2.4; // 約 72.6m
       } else if (rand < 0.54) {
-        // 看板ステージ2：ドロップタワー（足先行・垂直直下ドロップ・落差-38m）
+        // 看板ステージ2：ドロップタワー（超高層落差 -58m ＆ 垂直落下 2.4秒 ＆ 時速100km超）
         type = 'trapdoor';
         nextY = Math.max(5.0, prev.y - TRAPDOOR_CONFIG.PHYSICS.minHeightDrop);
-        distZ = 36.0;
+        distZ = 36.0; // 手前島12m + 隙間12m + 次島12m = めり込みゼロの雄大空間
         r = 12.0;
       } else if (rand < 0.77) {
         type = 'zipline';

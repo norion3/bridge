@@ -1,4 +1,4 @@
-// パーティクル・エフェクト・飛翔体・床ブロックプール（視界を塞ぐ空中パーティクルノイズを完全撤廃）
+// パーティクル・エフェクト・飛翔体・床ブロックプール（視界を塞ぐ空中パーティクルノイズを完全撤廃・高初速着地インパクト）
 import {
   sharedMats,
   sharedMaterialsSet,
@@ -45,11 +45,11 @@ export function triggerLandingShockwave(x, y, z, customRadius = 1.5, customColor
 
   sw.active = true;
   sw.life = 0;
-  sw.scale = 1.0;
-  // 急降下着地の力強いインパクトに合わせた鋭い拡散スケール
-  sw.targetRadiusScale = customRadius / 1.5;
+  sw.scale = 0.8;
+  // 時速80〜100km超からの着地に対応した力強い拡大幅
+  sw.targetRadiusScale = Math.max(1.0, customRadius / 1.4);
   sw.mesh.position.set(x, y + 0.08, z);
-  sw.mesh.scale.set(1.0, 1.0, 1.0);
+  sw.mesh.scale.set(0.8, 0.8, 0.8);
   sw.mesh.material.opacity = 0.95;
   sw.mesh.material.color.setHex(customColorHex || 0x0284c7);
   sw.mesh.visible = true;

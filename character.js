@@ -1,4 +1,4 @@
-// 3Dキャラクター外観構築・手足メッシュ・独立スタックプール・トロリー・オープン展望リフト・ラゲッジホールド（急速パッキング）
+// 3Dキャラクター外観構築・手足メッシュ・独立スタックプール・トロリー・オープン展望リフト・アローストリーム＆エアバランス姿勢
 import {
   TEAMS,
   MAX_VISUAL_STACK,
@@ -193,7 +193,6 @@ export function createCharacterMesh(team) {
   stackGroup.position.set(0, 0.65, -0.42);
   root.add(stackGroup);
 
-  // 【床ブロック保護】Bot用にも独立マテリアル配列を割り当て、共有床マテリアルの汚染を完全遮断
   const stackPool = [];
   for (let i = 0; i < MAX_VISUAL_STACK; i++) {
     let itemMat;
@@ -272,7 +271,6 @@ export function refreshCharacterStackVisuals(char) {
   }
 }
 
-// 背負いブロックのゴースト化（床に落ちている共有ブロックを一切変更しない独立制御）
 function applyStackGhostOpacity(char, isGhost) {
   if (char.isPlayer) {
     for (let i = 0; i < MAX_VISUAL_STACK; i++) {
@@ -304,57 +302,66 @@ export function setStackGhostMode(char, isGhost) {
   applyStackGhostOpacity(char, isGhost);
 }
 
-// =========================================================================
-// 【ラゲッジ・ホールド】落下突入時のブロック急速パッキング＆着地復帰
-// =========================================================================
 export function packCharacterLuggage(char, isPacked) {
   if (!char || !char.meshObj || !char.meshObj.stackGroup) return;
   const cfg = TRAPDOOR_CONFIG.LUGGAGE_HOLD;
 
   if (isPacked) {
-    // 落下突入時：長大なブロックタワーを背中にキュッとまとめてリュック化
     char.meshObj.stackGroup.scale.set(cfg.scaleX, cfg.scaleY, cfg.scaleZ);
     char.meshObj.stackGroup.position.set(0, cfg.offsetY, cfg.offsetZ);
     char.meshObj.stackGroup.rotation.x = -0.12;
   } else {
-    // 着地時：小気味よいバウンドとともに元のタワースケール（1.0）へ一瞬で復帰
     char.meshObj.stackGroup.scale.set(1.0, 1.0, 1.0);
     char.meshObj.stackGroup.position.set(0, 0.65, -0.42);
     char.meshObj.stackGroup.rotation.x = 0;
   }
 }
 
-export function applySkydivePose(char, dirX, rollAngle) {
-  // 進行方向（北 = -Z）を向き、頭先行で斜め前下へダイブ（x = 0.68 rad, y = Math.PI）
-  char.meshObj.root.rotation.set(0.68, Math.PI, rollAngle);
+// =========================================================================
+// 【最高峰刷新】スカイダイブ姿勢：高速滑空アローストリーム ＆ ダイナミックバンク
+// =========================================================================
+export function applySkydivePose(char, dirX, rollAngle, timeSec = null) {
+  const tSec = (timeSec !== null) ? timeSec : (performance.now() * 0.001);
 
-  // 両腕を後方へシャープに流し大気抵抗をカット
-  char.meshObj.leftArm.position.set(-0.50, 0.52, -0.28);
-  char.meshObj.rightArm.position.set(0.50, 0.52, -0.28);
-  char.meshObj.leftArm.rotation.set(-1.15, 0, 0.35);
-  char.meshObj.rightArm.rotation.set(-1.15, 0, -0.35);
+  // 1. 上体を前傾（約 -55度 / 0.96rad）させ、大気を切り裂く矢（アロー）の構え
+  // 左右操作時はダイナミックにロール傾き（バンク）
+  char.meshObj.root.rotation.set(0.96, Math.PI, rollAngle);
 
-  char.meshObj.leftLeg.rotation.set(0.42, 0, -0.10);
-  char.meshObj.rightLeg.rotation.set(0.42, 0, 0.10);
+  // 2. 両腕を体側に沿わせて後ろへシャープに伸ばす（空気抵抗ゼロのストリームライン）
+  char.meshObj.leftArm.position.set(-0.40, 0.46, -0.32);
+  char.meshObj.rightArm.position.set(0.40, 0.46, -0.32);
+  char.meshObj.leftArm.rotation.set(-1.42, 0, 0.18);
+  char.meshObj.rightArm.rotation.set(-1.42, 0, -0.18);
 
-  char.meshObj.body.position.y = 0.58;
-  char.meshObj.head.position.y = 1.15;
+  // 3. 両脚は後ろへまっすぐ揃え、猛烈な大気抵抗による足先の微細なバタつき（flutter）
+  const airFlutter = Math.sin(tSec * 28) * 0.14;
+  char.meshObj.leftLeg.rotation.set(0.55 + airFlutter, 0, -0.08);
+  char.meshObj.rightLeg.rotation.set(0.55 - airFlutter, 0, 0.08);
+
+  char.meshObj.body.position.y = 0.54;
+  char.meshObj.head.position.y = 1.10;
 }
 
-export function applyTrapdoorPose(char, dirX, timeSec) {
-  // 進行方向（北 = -Z）を向いた完全直立姿勢（y = Math.PI）
-  char.meshObj.root.rotation.set(0.04, Math.PI, -dirX * 0.10);
+// =========================================================================
+// 【最高峰刷新】ドロップタワー姿勢：完全直立バンジー ＆ エアバランスウィング
+// =========================================================================
+export function applyTrapdoorPose(char, dirX, timeSec = null) {
+  const tSec = (timeSec !== null) ? timeSec : (performance.now() * 0.001);
 
-  // 両腕を鳥の翼のように広げてバランスを取る（大気抵抗ポーズ）
-  char.meshObj.leftArm.position.set(-0.58, 0.74, -0.05);
-  char.meshObj.rightArm.position.set(0.58, 0.74, -0.05);
-  char.meshObj.leftArm.rotation.set(-0.14, 0, -0.72);
-  char.meshObj.rightArm.rotation.set(-0.14, 0, 0.72);
+  // 1. 進行方向（北 = -Z）を向いた完全直立姿勢（微小な横傾きのみ反映）
+  char.meshObj.root.rotation.set(0.02, Math.PI, -dirX * 0.08);
 
-  // 足先は真下の海を向き、猛烈な落下気流による微細なバタつき（flutter）
-  const flutter = Math.sin(timeSec * 32) * 0.12;
-  char.meshObj.leftLeg.rotation.set(0.12 + flutter, 0, -0.04);
-  char.meshObj.rightLeg.rotation.set(0.12 - flutter, 0, 0.04);
+  // 2. エアバランスウィング：両腕を鳥の翼のように左右斜め下〜後ろに広げ、気流に乗る
+  const wingFluct = Math.sin(tSec * 18) * 0.08;
+  char.meshObj.leftArm.position.set(-0.62, 0.72 + wingFluct * 0.2, -0.08);
+  char.meshObj.rightArm.position.set(0.62, 0.72 + wingFluct * 0.2, -0.08);
+  char.meshObj.leftArm.rotation.set(-0.16, 0, -0.78 + wingFluct);
+  char.meshObj.rightArm.rotation.set(-0.16, 0, 0.78 - wingFluct);
+
+  // 3. 両足先は真下の海をまっすぐ指し、猛烈な垂直落下風圧を受ける激しいflutter
+  const dropFlutter = Math.sin(tSec * 36) * 0.16;
+  char.meshObj.leftLeg.rotation.set(0.08 + dropFlutter, 0, -0.03);
+  char.meshObj.rightLeg.rotation.set(0.08 - dropFlutter, 0, 0.03);
 
   char.meshObj.body.position.y = 0.65;
   char.meshObj.head.position.y = 1.25;
@@ -371,7 +378,6 @@ export function resetCharacterPose(char) {
   char.meshObj.body.position.y = 0.65;
   char.meshObj.head.position.y = 1.25;
 
-  // ラゲッジホールドおよびゴーストモードを確実に解除し、完全不透明ソリッド描画を復帰
   packCharacterLuggage(char, false);
   setStackGhostMode(char, false);
   applyStackGhostOpacity(char, false);
@@ -430,20 +436,17 @@ export function setupCharacters(scene, STAGES) {
     elevatorExiting: false,
     elevatorExitTimer: 0,
 
-    // 看板ステージ1：スカイダイブ専用ステート（頭先行・前進放物線）
     onSkydive: false,
     skydiveProgress: 0,
     activeSkydive: null,
     skydiveX: 0,
     skydiveRoll: 0,
 
-    // 看板ステージ2：ドロップタワー専用ステート（足先行・垂直直下ドロップ）
     onTrapdoor: false,
     trapdoorProgress: 0,
     activeTrapdoor: null,
     trapdoorX: 0,
 
-    // 後方互換用
     onFreefall: false,
     freefallProgress: 0,
     activeFreefall: null,

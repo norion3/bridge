@@ -43,11 +43,11 @@ export const elevatorHandrailPostGeo = new THREE.CylinderGeometry(0.035, 0.035, 
 export const elevatorHandrailBarGeo = new THREE.CylinderGeometry(0.035, 0.035, 2.3, 8);
 export const elevatorCableWireGeo = new THREE.CylinderGeometry(0.025, 0.025, 1.0, 8);
 
-// スカイダイブ（ジェットカタパルト・ランウェイ）用ジオメトリ
-export const catapultRampGeo = new THREE.BoxGeometry(3.8, 0.28, 5.6);
-export const catapultTrimGeo = new THREE.CylinderGeometry(0.065, 0.065, 5.6, 8);
+// スカイダイブ（ジェットカタパルト・ランウェイ）用ジオメトリ（スケール拡張 7.2m 対応）
+export const catapultRampGeo = new THREE.BoxGeometry(3.8, 0.28, 7.2);
+export const catapultTrimGeo = new THREE.CylinderGeometry(0.065, 0.065, 7.2, 8);
 catapultTrimGeo.rotateX(Math.PI / 2);
-export const catapultPipeRailGeo = new THREE.CylinderGeometry(0.12, 0.12, 5.6, 12);
+export const catapultPipeRailGeo = new THREE.CylinderGeometry(0.12, 0.12, 7.2, 12);
 catapultPipeRailGeo.rotateX(Math.PI / 2);
 export const catapultBoosterNozzleGeo = new THREE.CylinderGeometry(0.22, 0.16, 0.45, 16);
 catapultBoosterNozzleGeo.rotateX(Math.PI / 2);
@@ -62,7 +62,7 @@ dropPulleyGeo.rotateZ(Math.PI / 2);
 export const dropPulleyCableGeo = new THREE.CylinderGeometry(0.028, 0.028, 7.0, 8); // 懸架ケーブル
 export const hatchDoorGeo = new THREE.BoxGeometry(1.65, 0.14, 3.3);
 
-// ゲート用リゾートジオメトリ（黒タイヤ台座・鉄パイプを廃止）
+// ゲート用リゾートジオメトリ
 export const gateDomeBaseGeo = new THREE.SphereGeometry(0.42, 16, 12, 0, Math.PI * 2, 0, Math.PI / 2); // 白大理石ポップ半球ベース
 export const gatePostSteelGeo = new THREE.CylinderGeometry(0.09, 0.09, 2.4, 12);                        // ホワイトスチール支柱
 export const gateTrimRingGeo = new THREE.TorusGeometry(0.13, 0.035, 8, 16);                             // オレンジトリムリング
@@ -134,7 +134,7 @@ export function createSeaTexture() {
     });
   }
 
-  // 碁盤目幾何学を破棄し、有機的・自然に散らばる白波群を描画
+  // 有機的・自然に散らばる白波群を描画
   const waveSeeds = [
     { x: 74, y: 88, r: 42, w: 2.2, a: 0.14 },
     { x: 236, y: 52, r: 32, w: 1.8, a: 0.11 },
@@ -390,7 +390,7 @@ export const sharedMats = {
   elevatorMid: new THREE.MeshStandardMaterial({ color: 0xfacc15, emissive: 0xeab308, emissiveIntensity: 0.70, roughness: 0.2 }),
   elevatorSlow: new THREE.MeshStandardMaterial({ color: 0xef4444, emissive: 0xb91c1c, emissiveIntensity: 0.70, roughness: 0.2 }),
 
-  // スカイダイブ（ジェットカタパルト・ランウェイ）用新マテリアル
+  // スカイダイブ（ジェットカタパルト・ランウェイ）用マテリアル
   catapultDeck: new THREE.MeshStandardMaterial({
     map: runwayTexture,
     color: 0xffffff,
@@ -415,7 +415,7 @@ export const sharedMats = {
     metalness: 0.85
   }),
 
-  // ドロップタワー・スカイデッキ用新マテリアル
+  // ドロップタワー・スカイデッキ用マテリアル
   dropGlassFloor: new THREE.MeshStandardMaterial({
     color: 0x0284c7,
     emissive: 0x0369a1,
@@ -461,7 +461,7 @@ for (let i = 0; i < MAX_VISUAL_STACK; i++) {
   }));
 }
 
-// 【Bot専用背負いマテリアル配列】（床ブロックの共有マテリアルを一切汚染しない独立インスタンス）
+// Bot専用背負いマテリアル配列（床ブロック共有マテリアルを汚染しない独立インスタンス）
 export const botRedStackMaterials = [];
 export const botYellowStackMaterials = [];
 for (let i = 0; i < MAX_VISUAL_STACK; i++) {
@@ -566,7 +566,7 @@ export const sharedGeometriesSet = new Set([
 export const gateTextureCache = new Map();
 export const gateMaterialsCache = new Map();
 
-// 看板パネル本体の文字テクスチャ（太字＋黒シャドウを完全維持）
+// 看板パネル本体の文字テクスチャ
 export function getOrCreateGateTexture(label, isPositive) {
   const cacheKey = `${label}_${isPositive}`;
   if (gateTextureCache.has(cacheKey)) {
