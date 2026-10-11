@@ -441,6 +441,7 @@ export class SoundEngine {
     } catch (e) {}
   }
 
+  // スカイダイブ飛び出し音（「ドシュウゥゥッ！」鋭いカタパルト射出インパクト）
   playSkydiveLaunch() {
     if (this.muted || !this.ctx) return;
     try {
@@ -448,22 +449,36 @@ export class SoundEngine {
       const osc1 = this.ctx.createOscillator();
       const gain1 = this.ctx.createGain();
       osc1.type = 'sawtooth';
-      osc1.frequency.setValueAtTime(320, now);
-      osc1.frequency.exponentialRampToValueAtTime(1600, now + 0.22);
-      gain1.gain.setValueAtTime(0.38, now);
-      gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.26);
+      osc1.frequency.setValueAtTime(360, now);
+      osc1.frequency.exponentialRampToValueAtTime(2200, now + 0.20);
+      gain1.gain.setValueAtTime(0.42, now);
+      gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.24);
       osc1.connect(gain1);
       gain1.connect(this.masterGain);
       this.autoDisconnect(osc1, gain1);
       osc1.start(now);
-      osc1.stop(now + 0.27);
+      osc1.stop(now + 0.25);
+
+      const osc2 = this.ctx.createOscillator();
+      const gain2 = this.ctx.createGain();
+      osc2.type = 'triangle';
+      osc2.frequency.setValueAtTime(180, now);
+      osc2.frequency.exponentialRampToValueAtTime(45, now + 0.22);
+      gain2.gain.setValueAtTime(0.35, now);
+      gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+      osc2.connect(gain2);
+      gain2.connect(this.masterGain);
+      this.autoDisconnect(osc2, gain2);
+      osc2.start(now);
+      osc2.stop(now + 0.23);
     } catch (e) {}
   }
 
-  playSkydiveGlide(intensity = 0.5) {
+  // スカイダイブ滑空音（「ヒュゥゥーーッ！」澄み切った高域大気摩擦ノイズ）
+  playSkydiveGlide(intensity = 0.5, rollRate = 0) {
     if (this.muted || !this.ctx) return;
     const now = this.ctx.currentTime;
-    if (now - this.lastSkydiveGlideSound < 0.10) return;
+    if (now - this.lastSkydiveGlideSound < 0.09) return;
     this.lastSkydiveGlideSound = now;
     try {
       const noiseBuffer = this.getNoiseBuffer();
@@ -475,14 +490,15 @@ export class SoundEngine {
 
       const filter = this.ctx.createBiquadFilter();
       filter.type = 'bandpass';
-      const centerFreq = 850 + intensity * 1600;
+      // 滑空の進行とバンク角に合わせて有機的にピッチがうねる
+      const centerFreq = 950 + intensity * 1800 + Math.abs(rollRate) * 450;
       filter.frequency.setValueAtTime(centerFreq, now);
-      filter.Q.value = 2.2;
+      filter.Q.value = 2.8;
 
       const gain = this.ctx.createGain();
-      const vol = 0.15 + intensity * 0.25;
+      const vol = 0.18 + intensity * 0.28;
       gain.gain.setValueAtTime(vol, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.095);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.088);
 
       noiseSource.connect(filter);
       filter.connect(gain);
@@ -490,10 +506,11 @@ export class SoundEngine {
 
       this.autoDisconnect(noiseSource, filter, gain);
       noiseSource.start(now);
-      noiseSource.stop(now + 0.10);
+      noiseSource.stop(now + 0.09);
     } catch (e) {}
   }
 
+  // ドロップタワー開放時メカロック解放音（「カシャン！ガコッ！」）
   playTrapdoorOpen() {
     if (this.muted || !this.ctx) return;
     try {
@@ -502,36 +519,51 @@ export class SoundEngine {
       const osc1 = this.ctx.createOscillator();
       const gain1 = this.ctx.createGain();
       osc1.type = 'sawtooth';
-      osc1.frequency.setValueAtTime(260, now);
-      osc1.frequency.exponentialRampToValueAtTime(45, now + 0.14);
-      gain1.gain.setValueAtTime(0.50, now);
-      gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.15);
+      osc1.frequency.setValueAtTime(280, now);
+      osc1.frequency.exponentialRampToValueAtTime(42, now + 0.13);
+      gain1.gain.setValueAtTime(0.55, now);
+      gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.14);
       osc1.connect(gain1);
       gain1.connect(this.masterGain);
       this.autoDisconnect(osc1, gain1);
       osc1.start(now);
-      osc1.stop(now + 0.16);
+      osc1.stop(now + 0.15);
 
-      // 2. 金属ロックピン解放の鋭く明瞭なクリック（スマホでくっきり鳴る1800Hz〜400Hz）
+      // 2. 金属ロックピン解放の鋭く明瞭なクリック（「カシャン！」スマホでくっきり鳴る1900Hz〜400Hz）
       const osc2 = this.ctx.createOscillator();
       const gain2 = this.ctx.createGain();
       osc2.type = 'triangle';
-      osc2.frequency.setValueAtTime(1800, now + 0.01);
-      osc2.frequency.exponentialRampToValueAtTime(420, now + 0.07);
-      gain2.gain.setValueAtTime(0.38, now + 0.01);
+      osc2.frequency.setValueAtTime(1950, now + 0.008);
+      osc2.frequency.exponentialRampToValueAtTime(420, now + 0.075);
+      gain2.gain.setValueAtTime(0.44, now + 0.008);
       gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.09);
       osc2.connect(gain2);
       gain2.connect(this.masterGain);
       this.autoDisconnect(osc2, gain2);
-      osc2.start(now + 0.01);
-      osc2.stop(now + 0.10);
+      osc2.start(now + 0.008);
+      osc2.stop(now + 0.095);
+
+      // 3. ラッチが跳ね上がる「ガコッ！」という副クリック
+      const osc3 = this.ctx.createOscillator();
+      const gain3 = this.ctx.createGain();
+      osc3.type = 'square';
+      osc3.frequency.setValueAtTime(720, now + 0.035);
+      osc3.frequency.exponentialRampToValueAtTime(160, now + 0.08);
+      gain3.gain.setValueAtTime(0.28, now + 0.035);
+      gain3.gain.exponentialRampToValueAtTime(0.001, now + 0.085);
+      osc3.connect(gain3);
+      gain3.connect(this.masterGain);
+      this.autoDisconnect(osc3, gain3);
+      osc3.start(now + 0.035);
+      osc3.stop(now + 0.09);
     } catch (e) {}
   }
 
+  // ドロップタワー急降下音（「ヒュオオオッ！」大気を垂直に貫くドップラー風音）
   playTrapdoorFall(intensity = 0.5) {
     if (this.muted || !this.ctx) return;
     const now = this.ctx.currentTime;
-    if (now - this.lastTrapdoorFallSound < 0.08) return;
+    if (now - this.lastTrapdoorFallSound < 0.075) return;
     this.lastTrapdoorFallSound = now;
     try {
       const noiseBuffer = this.getNoiseBuffer();
@@ -541,27 +573,27 @@ export class SoundEngine {
       noiseSource.buffer = noiseBuffer;
       noiseSource.loop = true;
 
-      // スマホ内蔵スピーカー（400Hz〜5000Hz）で明瞭に響くバンドパス風切り音
+      // スマホ内蔵スピーカー（600Hz〜3200Hz）で鼓膜を震わせるバンドパス突風ノイズ
       const filter = this.ctx.createBiquadFilter();
       filter.type = 'bandpass';
-      // 強度（落下速度）に応じて 650Hz から 2800Hz へ急上昇（ドップラー効果＆大気摩擦）
-      const centerFreq = 650 + intensity * 2100;
+      // 垂直落下速度に合わせて 700Hz から 2900Hz へ一気に駆け上がるドップラー効果
+      const centerFreq = 700 + intensity * 2200;
       filter.frequency.setValueAtTime(centerFreq, now);
-      filter.frequency.linearRampToValueAtTime(centerFreq + 350, now + 0.09);
-      filter.Q.value = 1.6;
+      filter.frequency.linearRampToValueAtTime(centerFreq + 400, now + 0.08);
+      filter.Q.value = 1.8;
 
       const gain = this.ctx.createGain();
-      const vol = 0.24 + intensity * 0.36;
+      const vol = 0.28 + intensity * 0.42;
       gain.gain.setValueAtTime(vol, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.09);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.085);
 
-      // 補助：高域の鋭い突風ノイズ（ハイパスフィルター）
+      // 高域の鋭いエッジ突風（ハイパス）
       const hFilter = this.ctx.createBiquadFilter();
       hFilter.type = 'highpass';
-      hFilter.frequency.setValueAtTime(1600 + intensity * 1400, now);
+      hFilter.frequency.setValueAtTime(1700 + intensity * 1500, now);
       const hGain = this.ctx.createGain();
-      hGain.gain.setValueAtTime(vol * 0.35, now);
-      hGain.gain.exponentialRampToValueAtTime(0.001, now + 0.09);
+      hGain.gain.setValueAtTime(vol * 0.40, now);
+      hGain.gain.exponentialRampToValueAtTime(0.001, now + 0.085);
 
       noiseSource.connect(filter);
       filter.connect(gain);
@@ -573,7 +605,7 @@ export class SoundEngine {
 
       this.autoDisconnect(noiseSource, filter, gain, hFilter, hGain);
       noiseSource.start(now);
-      noiseSource.stop(now + 0.095);
+      noiseSource.stop(now + 0.088);
     } catch (e) {}
   }
 
@@ -584,31 +616,32 @@ export class SoundEngine {
     if (this.muted || !this.ctx) return;
     try {
       const now = this.ctx.currentTime;
+      // 重力を受け止める小気味よい「ドスン！」というスマート着地音
       const osc1 = this.ctx.createOscillator();
       const gain1 = this.ctx.createGain();
       osc1.type = 'triangle';
-      osc1.frequency.setValueAtTime(210, now);
-      osc1.frequency.exponentialRampToValueAtTime(65, now + 0.16);
-      gain1.gain.setValueAtTime(0.44, now);
-      gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.17);
+      osc1.frequency.setValueAtTime(220, now);
+      osc1.frequency.exponentialRampToValueAtTime(55, now + 0.15);
+      gain1.gain.setValueAtTime(0.48, now);
+      gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
       osc1.connect(gain1);
       gain1.connect(this.masterGain);
       this.autoDisconnect(osc1, gain1);
       osc1.start(now);
-      osc1.stop(now + 0.18);
+      osc1.stop(now + 0.17);
 
       const osc2 = this.ctx.createOscillator();
       const gain2 = this.ctx.createGain();
       osc2.type = 'sine';
-      osc2.frequency.setValueAtTime(740, now + 0.02);
-      osc2.frequency.exponentialRampToValueAtTime(1100, now + 0.20);
-      gain2.gain.setValueAtTime(0.24, now + 0.02);
-      gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.20);
+      osc2.frequency.setValueAtTime(680, now + 0.015);
+      osc2.frequency.exponentialRampToValueAtTime(1180, now + 0.18);
+      gain2.gain.setValueAtTime(0.26, now + 0.015);
+      gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
       osc2.connect(gain2);
       gain2.connect(this.masterGain);
       this.autoDisconnect(osc2, gain2);
-      osc2.start(now + 0.02);
-      osc2.stop(now + 0.21);
+      osc2.start(now + 0.015);
+      osc2.stop(now + 0.19);
     } catch (e) {}
   }
 
@@ -674,7 +707,7 @@ export class SoundEngine {
         const filter = this.ctx.createBiquadFilter();
         filter.type = 'lowpass';
         filter.frequency.setValueAtTime(400, now);
-        filter.frequency.linearRampToValueAtTime(3500, now + 0.65);
+        filter.linearRampToValueAtTime && filter.frequency.linearRampToValueAtTime(3500, now + 0.65);
 
         sawOsc.type = 'sawtooth';
         sawOsc.frequency.setValueAtTime(160, now);

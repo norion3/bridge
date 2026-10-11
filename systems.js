@@ -1,4 +1,4 @@
-// 物理移動判定・階段敷設・タックル衝突・ゲート判定・誘導弾・アイテム処理・エレベーター前向き下車・超高速1.2秒急降下
+// 物理移動判定・階段敷設・タックル衝突・ゲート判定・誘導弾・アイテム処理・エレベーター前向き下車・超高速急降下＆ラゲッジホールド連動
 import {
   TEAMS,
   TRAMPOLINE_TIERS,
@@ -27,7 +27,8 @@ import {
   applySkydivePose,
   applyTrapdoorPose,
   resetCharacterPose,
-  setStackGhostMode
+  setStackGhostMode,
+  packCharacterLuggage
 } from './character.js';
 import {
   STAGES,
@@ -254,6 +255,7 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
         char.skydiveX = char.pos.x;
         char.skydiveRoll = 0;
         setStackGhostMode(char, true);
+        packCharacterLuggage(char, true); // 【ラゲッジ・ホールド】突入時急速パッキング
 
         if (char.isPlayer && soundRef) soundRef.playSkydiveLaunch();
         return;
@@ -271,6 +273,7 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
         char.trapdoorX = char.pos.x;
         trapB.isHatchOpen = true;
         setStackGhostMode(char, true);
+        packCharacterLuggage(char, true); // 【ラゲッジ・ホールド】突入時急速パッキング
 
         if (char.isPlayer && soundRef) soundRef.playTrapdoorOpen();
         return;
@@ -640,7 +643,9 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     }
   }
 
+  // =========================================================================
   // ★ 看板ステージ1：スカイダイブ物理（頭先行・前進放物線）
+  // =========================================================================
   if (char.onSkydive && char.activeSkydive) {
     const b = char.activeSkydive;
     const totalFlyTime = SKYDIVE_CONFIG.PHYSICS.totalDuration;
@@ -658,6 +663,8 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
       triggerLandingShockwave(char.pos.x, char.pos.y, char.pos.z, 3.8, 0x0066ff);
       if (char.isPlayer && soundRef) soundRef.playLanding();
 
+      // 着地時：小気味よいバウンドとともに元のタワースケールへ復帰
+      packCharacterLuggage(char, false);
       resetCharacterPose(char);
 
       if (!char.isPlayer) {
@@ -683,13 +690,16 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
       applySkydivePose(char, dirX, char.skydiveRoll);
 
       if (char.isPlayer && soundRef) {
-        soundRef.playSkydiveGlide(t);
+        soundRef.playSkydiveGlide(t, char.skydiveRoll);
       }
     }
     char.meshObj.root.position.copy(char.pos);
     return;
   }
 
+  // =========================================================================
+  // ★ 看板ステージ2：ドロップタワー物理（足先行・垂直直下ドロップ・ラゲッジホールド）
+  // =========================================================================
   if ((char.onTrapdoor && char.activeTrapdoor) || (char.onFreefall && char.activeFreefall)) {
     const b = char.activeTrapdoor || char.activeFreefall;
 
@@ -700,8 +710,7 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
       b.doorRightPivot.rotation.z = -angle;
     }
 
-    // ★ 爆速1.2秒急降下（初速からストンと一気に落下）
-    const totalFlyTime = TRAPDOOR_CONFIG.PHYSICS.totalDuration; // 1.2s
+    const totalFlyTime = TRAPDOOR_CONFIG.PHYSICS.totalDuration; // 約1.18秒
     char.trapdoorProgress = (char.trapdoorProgress || char.freefallProgress || 0) + dt / totalFlyTime;
 
     if (char.trapdoorProgress >= 1.0) {
@@ -718,7 +727,8 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
       triggerLandingShockwave(char.pos.x, char.pos.y, char.pos.z, 3.8, 0x0284c7);
       if (char.isPlayer && soundRef) soundRef.playLanding();
 
-      // 着地時は確実にゴースト解除し完全ソリッド描画を復帰
+      // 着地時：小気味よいバウンドとともに元のタワースケール（1.0）へ一瞬で復帰
+      packCharacterLuggage(char, false);
       resetCharacterPose(char);
 
       if (!char.isPlayer) {
@@ -754,7 +764,7 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     const b = char.activeElevator;
     const laneData = b.elevators.find(e => e.laneIdx === char.elevatorLane) || b.elevators[0];
 
-    // 上の島へ到着後の前向き下車シーケンス（後ろ向きバック歩行を根絶）
+    // 上の島へ到着後の前向き下車シーケンス
     if (char.elevatorExiting) {
       char.elevatorExitTimer -= dt;
       const exitProgress = 1.0 - (char.elevatorExitTimer / ELEVATOR_CONFIG.EASING.exitDelay);
@@ -859,7 +869,6 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
       char.lastPlankIdx = -1;
       resetCharacterPose(char);
 
-      // 足元ショックウェーブのみでスマートに着地演出（点滅タイマー設定を完全削除！）
       triggerLandingShockwave(char.pos.x, char.pos.y, char.pos.z, tier.shockRadius);
 
       for (let i = 0; i < characters.length; i++) {

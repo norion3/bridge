@@ -46,11 +46,11 @@ export function triggerLandingShockwave(x, y, z, customRadius = 1.5, customColor
   sw.active = true;
   sw.life = 0;
   sw.scale = 1.0;
-  // 1.2秒急降下着地の力強いインパクトに合わせた鋭い拡散スケール
+  // 急降下着地の力強いインパクトに合わせた鋭い拡散スケール
   sw.targetRadiusScale = customRadius / 1.5;
   sw.mesh.position.set(x, y + 0.08, z);
   sw.mesh.scale.set(1.0, 1.0, 1.0);
-  sw.mesh.material.opacity = 0.96;
+  sw.mesh.material.opacity = 0.95;
   sw.mesh.material.color.setHex(customColorHex || 0x0284c7);
   sw.mesh.visible = true;
 }

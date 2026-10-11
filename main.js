@@ -1,4 +1,4 @@
-// メインエントリポイント：Three.js初期化・ハイ・クォーター・パノラマカメラ・メインループ
+// メインエントリポイント：Three.js初期化・ハイ・クォーター・パノラマカメラ・動的UVドリフト
 import { SoundEngine } from './audio.js';
 import {
   TEAMS,
@@ -9,7 +9,8 @@ import {
 import {
   _tempVec3A,
   _tempVec3B,
-  disposeHierarchy
+  disposeHierarchy,
+  seaTexture
 } from './materials.js';
 import {
   player,
@@ -292,6 +293,16 @@ export function animate(currentTime) {
   const dt = Math.min((currentTime - lastTime) / 1000, 0.05);
   lastTime = currentTime;
 
+  const timeSec = currentTime * 0.001;
+
+  // =========================================================================
+  // 【生きた海】動的UVドリフト（印刷された床から、穏やかに呼吸するリアルな水面へ）
+  // =========================================================================
+  if (seaTexture) {
+    seaTexture.offset.y += dt * 0.012;
+    seaTexture.offset.x += Math.sin(timeSec * 0.4) * 0.0003;
+  }
+
   if (gameStarted && !isGameOver) {
     const moveDirX = input.active ? input.x : 0;
     const moveDirZ = input.active ? input.y : 0;
@@ -340,14 +351,12 @@ export function animate(currentTime) {
     }
     updateTimerHUD();
 
-    const timeSec = currentTime * 0.001;
     const playerZ = player ? player.pos.z : 0;
 
     floorItems.forEach(item => {
       if (item.active && item.group) {
         if (Math.abs(item.pos.z - playerZ) > 95) return;
         if (item.crystal) {
-          // 12面体幾何学ジュエル（磁石）およびダイヤクリスタルのリズミカルな回転
           item.crystal.rotation.y = timeSec * 3.2;
           item.crystal.rotation.z = Math.sin(timeSec * 2.5) * 0.25;
           item.crystal.position.y = 1.35 + Math.sin(timeSec * 4.5 + item.stageIdx) * 0.32;
@@ -674,7 +683,7 @@ export function animate(currentTime) {
       targetLookAheadZ = player.pos.z - 12.0;
       targetFOV = 64;
     } else if (isSkydive) {
-      // スカイダイブ専用スピードチェイス構図
+      // スカイダイブ専用スピードチェイス構図（ワイドオープン FOV 78）
       const airX = player.skydiveX || player.pos.x;
       targetCamX = airX * 0.45;
       targetCamY = player.pos.y + 4.8;
@@ -682,41 +691,46 @@ export function animate(currentTime) {
       targetLookX = airX * 0.25;
       targetLookY = player.pos.y - 1.2;
       targetLookAheadZ = player.pos.z - 28.0;
-      targetFOV = 76;
+      targetFOV = 78;
     } else if (isTrapdoor) {
-      // ★ 爆速1.2秒急降下にジャストフィットした3段フェーズ・ハイ・クォーター・パノラマカメラ
+      // =========================================================================
+      // 【見せ方革新】サイド・クォーターチェイスカメラ
+      // 上の島に留まるのを廃止し、ハッチを抜けた瞬間にカメラも虚空へ引き込み、
+      // 上の島を一瞬で画面上部外へ置き去りにする圧倒的ダイナミズム
+      // =========================================================================
       const b = player.activeTrapdoor || player.activeFreefall;
       const prog = player.trapdoorProgress || player.freefallProgress || 0;
       const tX = player.trapdoorX || player.freefallX || player.pos.x;
       const camCfg = TRAPDOOR_CONFIG.CAMERA;
 
-      // 1.2秒急降下に合わせたフェーズ配分：
-      // Phase 1 (0.0s〜0.20s / prog < 0.16): 開放直後の上空置き去り
-      // Phase 2 (0.20s〜1.00s / 0.16 <= prog < 0.83): ダイナミックパノラマチェイス
-      // Phase 3 (1.00s〜1.20s / prog >= 0.83): 先行ランディング
-      if (b && prog < 0.16) {
-        const lagRatio = prog / 0.16;
+      if (b && prog < 0.14) {
+        // Phase 1 (0.0s〜0.14s): 開放瞬間の上空切り離しディレイ
+        // カメラも即座にハッチ下面（player.pos.y）へ引き込み、上の島を画面外（上部）へ逃がす
+        const pRatio = prog / 0.14;
         targetCamX = tX + camCfg.offsetX;
-        targetCamY = b.startY + camCfg.offsetY - (lagRatio * 1.5);
-        targetCamZ = b.startZ + camCfg.offsetZ;
-        targetLookX = tX;
+        targetCamY = player.pos.y + camCfg.offsetY - (pRatio * 1.5);
+        targetCamZ = player.pos.z + camCfg.offsetZ;
+        targetLookX = tX + camCfg.lookOffsetX;
         targetLookY = player.pos.y + camCfg.lookOffsetY;
         targetLookAheadZ = player.pos.z + camCfg.lookAheadZ;
         targetFOV = camCfg.fovStart;
-      } else if (b && prog < 0.83) {
-        const chaseRatio = (prog - 0.16) / 0.67;
+      } else if (b && prog < 0.85) {
+        // Phase 2 (0.14s〜1.00s): ダイナミックパノラマチェイス
+        // 直立した全身と、遥か下で待つ着地島・果てしない海原を対角線上に捉える
+        const chaseRatio = (prog - 0.14) / 0.71;
         targetCamX = tX + camCfg.offsetX;
         targetCamY = player.pos.y + camCfg.offsetY;
         targetCamZ = player.pos.z + camCfg.offsetZ;
-        targetLookX = tX;
+        targetLookX = tX + camCfg.lookOffsetX;
         targetLookY = player.pos.y + camCfg.lookOffsetY;
         targetLookAheadZ = player.pos.z + camCfg.lookAheadZ;
         targetFOV = THREE.MathUtils.lerp(camCfg.fovStart, camCfg.fovDrop, chaseRatio);
       } else if (b) {
-        const landRatio = (prog - 0.83) / 0.17;
+        // Phase 3 (1.00s〜1.18s): 先行ランディング
+        const landRatio = (prog - 0.85) / 0.15;
         targetCamX = tX + camCfg.offsetX * (1.0 - landRatio * 0.35);
-        targetCamY = b.endY + camCfg.offsetY * 0.88;
-        targetCamZ = b.endZ + camCfg.offsetZ * 0.88;
+        targetCamY = b.endY + camCfg.offsetY * 0.85;
+        targetCamZ = b.endZ + camCfg.offsetZ * 0.85;
         targetLookX = tX * 0.5;
         targetLookY = b.endY + 0.8;
         targetLookAheadZ = b.endZ - 8.0;
@@ -732,9 +746,9 @@ export function animate(currentTime) {
       }
     }
 
-    const lerpFactorPos = isTrapdoor ? 0.24 : ((isJumping || isSkydive) ? 0.16 : 0.14);
+    const lerpFactorPos = isTrapdoor ? 0.28 : ((isJumping || isSkydive) ? 0.16 : 0.14);
     camera.position.x = THREE.MathUtils.lerp(camera.position.x, targetCamX, lerpFactorPos);
-    camera.position.y = THREE.MathUtils.lerp(camera.position.y, targetCamY, isTrapdoor ? 0.20 : 0.16);
+    camera.position.y = THREE.MathUtils.lerp(camera.position.y, targetCamY, isTrapdoor ? 0.24 : 0.16);
     camera.position.z = THREE.MathUtils.lerp(camera.position.z, targetCamZ, lerpFactorPos);
 
     if (Math.abs(camera.fov - targetFOV) > 0.1) {

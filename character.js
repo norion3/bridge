@@ -1,3 +1,4 @@
+// 3Dキャラクター外観構築・手足メッシュ・独立スタックプール・トロリー・オープン展望リフト・ラゲッジホールド（急速パッキング）
 import {
   TEAMS,
   MAX_VISUAL_STACK,
@@ -10,6 +11,8 @@ import {
   sharedMats,
   blockGeometry,
   playerStackMaterials,
+  botRedStackMaterials,
+  botYellowStackMaterials,
   updatePlayerStackMaterials,
   elevatorPlatformFloorGeo,
   elevatorHandrailPostGeo,
@@ -190,14 +193,20 @@ export function createCharacterMesh(team) {
   stackGroup.position.set(0, 0.65, -0.42);
   root.add(stackGroup);
 
+  // 【床ブロック保護】Bot用にも独立マテリアル配列を割り当て、共有床マテリアルの汚染を完全遮断
   const stackPool = [];
-  let defaultMat;
-  if (team.id === 'red') defaultMat = sharedMats.blockRed;
-  else if (team.id === 'yellow') defaultMat = sharedMats.blockYellow;
-  else defaultMat = playerStackMaterials[0];
-
   for (let i = 0; i < MAX_VISUAL_STACK; i++) {
-    const itemMat = (team.id === 'blue') ? playerStackMaterials[i] : defaultMat;
+    let itemMat;
+    if (team.id === 'blue') {
+      itemMat = playerStackMaterials[i];
+    } else if (team.id === 'red') {
+      itemMat = botRedStackMaterials[i];
+    } else if (team.id === 'yellow') {
+      itemMat = botYellowStackMaterials[i];
+    } else {
+      itemMat = sharedMats.blockNeutral;
+    }
+
     const bMesh = new THREE.Mesh(blockGeometry, itemMat);
     bMesh.castShadow = (i < 2);
     const stackHeight = i * 0.44;
@@ -235,18 +244,18 @@ export function createCharacterMesh(team) {
 }
 
 export function getBrickMaterialForStackIndex(char, index) {
+  const safeIdx = Math.min(index, MAX_VISUAL_STACK - 1);
   if (!char.isPlayer) {
-    if (char.team.id === 'red') return sharedMats.blockRed;
-    if (char.team.id === 'yellow') return sharedMats.blockYellow;
+    if (char.team.id === 'red') return botRedStackMaterials[safeIdx];
+    if (char.team.id === 'yellow') return botYellowStackMaterials[safeIdx];
     return sharedMats.blockNeutral;
   }
-  return playerStackMaterials[Math.min(index, MAX_VISUAL_STACK - 1)];
+  return playerStackMaterials[safeIdx];
 }
 
 export function refreshCharacterStackVisuals(char) {
   if (char.isPlayer) {
     updatePlayerStackMaterials(char.stackCount);
-    // 透過残留バグの完全防止：現在のゴースト状態に合わせて透過フラグを明示的・強制同期
     applyStackGhostOpacity(char, !!char.isGhostStacked);
   }
   const pool = char.meshObj.stackPool;
@@ -263,6 +272,7 @@ export function refreshCharacterStackVisuals(char) {
   }
 }
 
+// 背負いブロックのゴースト化（床に落ちている共有ブロックを一切変更しない独立制御）
 function applyStackGhostOpacity(char, isGhost) {
   if (char.isPlayer) {
     for (let i = 0; i < MAX_VISUAL_STACK; i++) {
@@ -274,13 +284,15 @@ function applyStackGhostOpacity(char, isGhost) {
         mat.needsUpdate = true;
       }
     }
-  } else if (char.meshObj && char.meshObj.stackPool) {
-    for (let i = 0; i < char.meshObj.stackPool.length; i++) {
-      const bMesh = char.meshObj.stackPool[i];
-      if (bMesh && bMesh.material) {
-        bMesh.material.transparent = isGhost;
-        bMesh.material.opacity = isGhost ? 0.25 : 1.0;
-        bMesh.material.depthWrite = !isGhost;
+  } else if (char.team) {
+    const mats = (char.team.id === 'red') ? botRedStackMaterials : (char.team.id === 'yellow' ? botYellowStackMaterials : null);
+    if (mats) {
+      for (let i = 0; i < mats.length; i++) {
+        const mat = mats[i];
+        mat.transparent = isGhost;
+        mat.opacity = isGhost ? 0.25 : 1.0;
+        mat.depthWrite = !isGhost;
+        mat.needsUpdate = true;
       }
     }
   }
@@ -292,15 +304,35 @@ export function setStackGhostMode(char, isGhost) {
   applyStackGhostOpacity(char, isGhost);
 }
 
-export function applySkydivePose(char, dirX, rollAngle) {
-  // 進行方向（北 = -Z）を向き、頭先行で斜め前下へダイブ（x = 0.65 rad, y = Math.PI）
-  char.meshObj.root.rotation.set(0.65, Math.PI, rollAngle);
+// =========================================================================
+// 【ラゲッジ・ホールド】落下突入時のブロック急速パッキング＆着地復帰
+// =========================================================================
+export function packCharacterLuggage(char, isPacked) {
+  if (!char || !char.meshObj || !char.meshObj.stackGroup) return;
+  const cfg = TRAPDOOR_CONFIG.LUGGAGE_HOLD;
 
-  // 両腕を後方へ流し大気抵抗をカット
+  if (isPacked) {
+    // 落下突入時：長大なブロックタワーを背中にキュッとまとめてリュック化
+    char.meshObj.stackGroup.scale.set(cfg.scaleX, cfg.scaleY, cfg.scaleZ);
+    char.meshObj.stackGroup.position.set(0, cfg.offsetY, cfg.offsetZ);
+    char.meshObj.stackGroup.rotation.x = -0.12;
+  } else {
+    // 着地時：小気味よいバウンドとともに元のタワースケール（1.0）へ一瞬で復帰
+    char.meshObj.stackGroup.scale.set(1.0, 1.0, 1.0);
+    char.meshObj.stackGroup.position.set(0, 0.65, -0.42);
+    char.meshObj.stackGroup.rotation.x = 0;
+  }
+}
+
+export function applySkydivePose(char, dirX, rollAngle) {
+  // 進行方向（北 = -Z）を向き、頭先行で斜め前下へダイブ（x = 0.68 rad, y = Math.PI）
+  char.meshObj.root.rotation.set(0.68, Math.PI, rollAngle);
+
+  // 両腕を後方へシャープに流し大気抵抗をカット
   char.meshObj.leftArm.position.set(-0.50, 0.52, -0.28);
   char.meshObj.rightArm.position.set(0.50, 0.52, -0.28);
-  char.meshObj.leftArm.rotation.set(-1.10, 0, 0.35);
-  char.meshObj.rightArm.rotation.set(-1.10, 0, -0.35);
+  char.meshObj.leftArm.rotation.set(-1.15, 0, 0.35);
+  char.meshObj.rightArm.rotation.set(-1.15, 0, -0.35);
 
   char.meshObj.leftLeg.rotation.set(0.42, 0, -0.10);
   char.meshObj.rightLeg.rotation.set(0.42, 0, 0.10);
@@ -313,16 +345,16 @@ export function applyTrapdoorPose(char, dirX, timeSec) {
   // 進行方向（北 = -Z）を向いた完全直立姿勢（y = Math.PI）
   char.meshObj.root.rotation.set(0.04, Math.PI, -dirX * 0.10);
 
-  // 両腕を鳥の翼のように広げてバランスを取る
+  // 両腕を鳥の翼のように広げてバランスを取る（大気抵抗ポーズ）
   char.meshObj.leftArm.position.set(-0.58, 0.74, -0.05);
   char.meshObj.rightArm.position.set(0.58, 0.74, -0.05);
-  char.meshObj.leftArm.rotation.set(-0.14, 0, -0.68);
-  char.meshObj.rightArm.rotation.set(-0.14, 0, 0.68);
+  char.meshObj.leftArm.rotation.set(-0.14, 0, -0.72);
+  char.meshObj.rightArm.rotation.set(-0.14, 0, 0.72);
 
-  // 足先は真下の海を向き、気流による微細なバタつき
-  const flutter = Math.sin(timeSec * 26) * 0.10;
-  char.meshObj.leftLeg.rotation.set(0.10 + flutter, 0, -0.04);
-  char.meshObj.rightLeg.rotation.set(0.10 - flutter, 0, 0.04);
+  // 足先は真下の海を向き、猛烈な落下気流による微細なバタつき（flutter）
+  const flutter = Math.sin(timeSec * 32) * 0.12;
+  char.meshObj.leftLeg.rotation.set(0.12 + flutter, 0, -0.04);
+  char.meshObj.rightLeg.rotation.set(0.12 - flutter, 0, 0.04);
 
   char.meshObj.body.position.y = 0.65;
   char.meshObj.head.position.y = 1.25;
@@ -339,7 +371,8 @@ export function resetCharacterPose(char) {
   char.meshObj.body.position.y = 0.65;
   char.meshObj.head.position.y = 1.25;
 
-  // 着地時は確実にゴーストモードを解除し、完全不透明ソリッド描画を強制復帰
+  // ラゲッジホールドおよびゴーストモードを確実に解除し、完全不透明ソリッド描画を復帰
+  packCharacterLuggage(char, false);
   setStackGhostMode(char, false);
   applyStackGhostOpacity(char, false);
 }
@@ -404,7 +437,7 @@ export function setupCharacters(scene, STAGES) {
     skydiveX: 0,
     skydiveRoll: 0,
 
-    // 看板ステージ2：トラップドア専用ステート（足先行・垂直直下ドロップ）
+    // 看板ステージ2：ドロップタワー専用ステート（足先行・垂直直下ドロップ）
     onTrapdoor: false,
     trapdoorProgress: 0,
     activeTrapdoor: null,

@@ -1,6 +1,6 @@
-// チーム設定、コース構成規格、およびエレベーター・スカイダイブ・トラップドア物理・カメラ定数
+// チーム設定、コース構成規格、およびエレベーター・スカイダイブ・ドロップタワー物理・カメラ定数
 export const TEAMS = {
-  // ★ 自キャラ（青）を白飛びするシアンから鮮烈で力強い「ヴィヴィッド・ロイヤルブルー」へ刷新
+  // 自キャラ（青）を白飛びするシアンから鮮烈で力強い「ヴィヴィッド・ロイヤルブルー」へ設定
   BLUE: { id: 'blue', name: 'あなた (青)', hex: 0x0066ff, emissive: 0x1d4ed8 },
   RED: { id: 'red', name: '赤Bot', hex: 0xef4444, emissive: 0xb91c1c },
   YELLOW: { id: 'yellow', name: '黄Bot', hex: 0xf59e0b, emissive: 0xb45309 },
@@ -64,8 +64,8 @@ export const STAGE_TYPES = {
   VERTICAL: 'vertical',
   ZIPLINE: 'zipline',
   ELEVATOR: 'elevator',
-  SKYDIVE: 'skydive',       // 頭先行高速ダイビング（前進放物線）
-  TRAPDOOR: 'trapdoor'      // 足先行ドロップタワー（爆速垂直急降下）
+  SKYDIVE: 'skydive',       // 頭先行高速ダイビング（ジェットカタパルト射出）
+  TRAPDOOR: 'trapdoor'      // 足先行ドロップタワー（垂直急速フリーフォール）
 };
 
 // エレベーター仕様定数（オープン展望リフト規格）
@@ -89,54 +89,62 @@ export const ELEVATOR_CONFIG = {
   }
 };
 
-// ★ 看板ステージ1：スカイダイブ仕様定数（頭先行・高速滑空・前進放物線）
+// スカイダイブ仕様定数（ジェットカタパルト・ランウェイ・頭先行高速滑空）
 export const SKYDIVE_CONFIG = {
   PHYSICS: {
     minHeightDrop: 30.0,            // 垂直落差 (-30m)
-    forwardDistance: 36.0,          // 前進距離 (伸びやかな放物線)
-    totalDuration: 2.3,             // 滞空飛行時間（秒）
-    gravityPower: 2.0,              // 重力加速カーブ（滑らかな放物線）
-    horizontalAirControlSpeed: 10.0,// 左右エアコントロール速度
+    forwardDistance: 36.0,          // 前進距離 (放物線)
+    totalDuration: 2.2,             // 滞空飛行時間（秒）
+    gravityPower: 1.95,             // 重力加速カーブ（前進初速から滑らかな急降下）
+    horizontalAirControlSpeed: 10.5,// 左右エアコントロール速度
     maxAirOffsetX: 4.8,             // 左右最大シフト幅
     maxRollAngle: Math.PI * 0.18    // 左右スワイプ時の最大バンク角（ロール傾き 約32度）
   },
   CATAPULT: {
-    length: 5.2,                    // ダイブ台突き出し長
-    width: 3.6,                     // スロープ幅
-    slopeAngle: 0.12,               // 前方下り傾斜
-    exclusionRadius: 4.8            // ダイブ台周辺の床ブロック生成禁止半径
+    length: 5.6,                    // ランウェイ突き出し長
+    width: 3.8,                     // 滑走路幅
+    slopeAngle: 0.14,               // 前方下り傾斜
+    exclusionRadius: 5.0            // ランウェイ周辺の床ブロック生成禁止半径
   }
 };
 
-// ★ 看板ステージ2：ドロップタワー・スカイゲート仕様定数（爆速1.2秒・垂直急降下・スリル最大化）
+// ドロップタワー仕様定数（足先行・急速垂直急降下・ラゲッジホールド）
 export const TRAPDOOR_CONFIG = {
   PHYSICS: {
-    minHeightDrop: 38.0,            // 圧倒的な垂直落差 (-38m)
-    forwardDistance: 10.0,          // 前進距離を極限まで抑えた垂直落下
-    totalDuration: 1.2,             // ★ 2.1秒から1.2秒へ爆速化（初速からストンと落ちる絶叫速度）
-    gravityPower: 1.6,              // ★ t^2.8 から t^1.6 へ変更（開始直後から一気に重力加速）
+    minHeightDrop: 38.0,            // 垂直落差 (-38m)
+    forwardDistance: 10.0,          // 前進距離を抑えた垂直直下落下
+    totalDuration: 1.18,            // 爆速垂直落下時間（約1.2秒）
+    gravityPower: 1.6,              // 初速から一気に引きずり込まれる重力カーブ
     horizontalAirControlSpeed: 7.5, // 左右エアスライド速度（直立維持）
     maxAirOffsetX: 3.4              // 空中微調整の最大左右幅
   },
   HATCH: {
-    size: 3.6,                      // ドロップタワー・スカイデッキ直径
+    size: 3.6,                      // デッキ開口部サイズ
     deckRadius: 2.8,                // せり出し強化ガラスデッキ半径
-    pylonHeight: 7.5,               // ツインタワー柱の高さ
+    pylonHeight: 7.5,               // トラス支柱の高さ
     doorOpenAngle: Math.PI * 0.48,  // ガラス扉の下方開放角
-    openDuration: 0.14,             // 扉開放所要時間（瞬時開放）
+    openDuration: 0.12,             // 扉開放所要時間（瞬時開放）
     exclusionRadius: 5.0            // 施設周辺の床ブロック生成禁止半径
   },
-  // ★ ハイ・クォーター・パノラマカメラ定数（爆速1.2秒急降下にジャストフィット）
+  // ラゲッジ・ホールド（落下突入時にブロックタワーを背中にキュッと収めるパッキング比率）
+  LUGGAGE_HOLD: {
+    scaleX: 0.40,                   // 水平幅縮小
+    scaleY: 0.18,                   // 垂直高さ大幅圧縮（天高く伸びるタワーを瞬時にリュック化）
+    scaleZ: 0.40,
+    offsetY: 0.42,                  // 背中への吸着高さ
+    offsetZ: -0.26                  // 背中への密着オフセット
+  },
+  // サイド・クォーターチェイスカメラ定数（上の島を一瞬で画面上部外へ置き去りにする）
   CAMERA: {
-    offsetX: 5.5,                   // 自キャラの右斜め後方 +5.5m（キャラを画面左上に配置）
-    offsetY: 6.5,                   // 高さ +6.5m
-    offsetZ: 8.0,                   // 後方 +8.0m
+    offsetX: 5.2,                   // 自キャラの右斜め後方 +5.2m
+    offsetY: 5.8,                   // 高さ +5.8m
+    offsetZ: 7.5,                   // 後方 +7.5m
     lookOffsetX: 0.0,               // 注視点 X
-    lookOffsetY: -2.5,              // 注視点 Y（水平線と着地島の中間を注視）
-    lookAheadZ: -18.0,              // 前方奥 -18.0m
-    lagPhase1Duration: 0.20,        // Phase 1: 開放直後の上空置き去り遅延時間（1.2秒に合わせ0.20秒）
+    lookOffsetY: -3.2,              // 注視点 Y（深淵と水平線の中間を捉える）
+    lookAheadZ: -20.0,              // 前方奥 -20.0m
+    lagPhase1Duration: 0.14,        // Phase 1: 開放瞬間の上空切り離しディレイ（0.14秒）
     fovStart: 62,                   // 開始時FOV
-    fovDrop: 76                     // 追従加速時FOV（ワイドパノラマ）
+    fovDrop: 78                     // 追従加速時FOV（広大な大気感）
   }
 };
 
@@ -147,6 +155,5 @@ export const FREEFALL_CONFIG = TRAPDOOR_CONFIG;
 export const ITEM_COLORS = {
   SPEED: { hex: 0xfde047, emissive: 0xeab308 },
   ATTACK: { hex: 0xf43f5e, emissive: 0xd946ef },
-  // ★ 磁石アイテム：美しい12面体幾何学ジュエル用ネオンパープル
   MAGNET: { hex: 0xc084fc, emissive: 0x9333ea, beaconHex: 0xd8b4fe }
 };
