@@ -1,4 +1,4 @@
-// 3Dキャラクター外観構築・手足メッシュ・独立スタックプール・トロリー・オープン展望リフト・アローストリーム＆エアバランス姿勢
+// 3Dキャラクター外観構築・手足メッシュ・スタックプール・トロリー・ホバー展望リフト・スカイダイブ＆トラップドア姿勢管理
 import {
   TEAMS,
   MAX_VISUAL_STACK,
@@ -6,7 +6,6 @@ import {
   SKYDIVE_CONFIG,
   TRAPDOOR_CONFIG
 } from './constants.js';
-
 import {
   sharedMats,
   blockGeometry,
@@ -81,6 +80,7 @@ export function createZiplineTrolleyMesh() {
   return group;
 }
 
+// 邪魔なワイヤーを完全撤去したオープンホバー展望リフト
 export function createElevatorCageMesh() {
   const lift = new THREE.Group();
 
@@ -194,18 +194,13 @@ export function createCharacterMesh(team) {
   root.add(stackGroup);
 
   const stackPool = [];
-  for (let i = 0; i < MAX_VISUAL_STACK; i++) {
-    let itemMat;
-    if (team.id === 'blue') {
-      itemMat = playerStackMaterials[i];
-    } else if (team.id === 'red') {
-      itemMat = botRedStackMaterials[i];
-    } else if (team.id === 'yellow') {
-      itemMat = botYellowStackMaterials[i];
-    } else {
-      itemMat = sharedMats.blockNeutral;
-    }
+  let defaultMat;
+  if (team.id === 'red') defaultMat = botRedStackMaterials[0];
+  else if (team.id === 'yellow') defaultMat = botYellowStackMaterials[0];
+  else defaultMat = playerStackMaterials[0];
 
+  for (let i = 0; i < MAX_VISUAL_STACK; i++) {
+    const itemMat = (team.id === 'blue') ? playerStackMaterials[i] : defaultMat;
     const bMesh = new THREE.Mesh(blockGeometry, itemMat);
     bMesh.castShadow = (i < 2);
     const stackHeight = i * 0.44;
@@ -255,7 +250,6 @@ export function getBrickMaterialForStackIndex(char, index) {
 export function refreshCharacterStackVisuals(char) {
   if (char.isPlayer) {
     updatePlayerStackMaterials(char.stackCount);
-    applyStackGhostOpacity(char, !!char.isGhostStacked);
   }
   const pool = char.meshObj.stackPool;
   const visibleLimit = Math.min(char.stackCount, MAX_VISUAL_STACK);
@@ -271,103 +265,86 @@ export function refreshCharacterStackVisuals(char) {
   }
 }
 
-function applyStackGhostOpacity(char, isGhost) {
-  if (char.isPlayer) {
-    for (let i = 0; i < MAX_VISUAL_STACK; i++) {
-      const mat = playerStackMaterials[i];
-      if (mat) {
-        mat.transparent = isGhost;
-        mat.opacity = isGhost ? 0.20 : 1.0;
-        mat.depthWrite = !isGhost;
-        mat.needsUpdate = true;
-      }
-    }
-  } else if (char.team) {
-    const mats = (char.team.id === 'red') ? botRedStackMaterials : (char.team.id === 'yellow' ? botYellowStackMaterials : null);
-    if (mats) {
-      for (let i = 0; i < mats.length; i++) {
-        const mat = mats[i];
-        mat.transparent = isGhost;
-        mat.opacity = isGhost ? 0.25 : 1.0;
-        mat.depthWrite = !isGhost;
-        mat.needsUpdate = true;
-      }
-    }
-  }
-}
-
-export function setStackGhostMode(char, isGhost) {
-  if (!char) return;
-  char.isGhostStacked = isGhost;
-  applyStackGhostOpacity(char, isGhost);
-}
-
-export function packCharacterLuggage(char, isPacked) {
+// 落下中に巨大ブロックタワーを一瞬で消すのではなく、
+// 「掃除機に吸い込まれるようにシュバッ！とリュックに収まる」スケールアニメーション
+export function packCharacterLuggage(char, packProgress) {
   if (!char || !char.meshObj || !char.meshObj.stackGroup) return;
-  const cfg = TRAPDOOR_CONFIG.LUGGAGE_HOLD;
+  
+  // packProgress: 0.0 (通常) 〜 1.0 (完全収納)
+  const t = Math.max(0, Math.min(1, packProgress));
+  
+  // シュバッ！と収まるイージング (Cubic Out)
+  const easeT = 1 - Math.pow(1 - t, 3);
+  
+  // 圧縮時のターゲットスケール・オフセット
+  const targetScaleX = 0.4, targetScaleY = 0.15, targetScaleZ = 0.4;
+  const targetOffsetY = 0.4, targetOffsetZ = -0.25;
+  const targetRotX = -0.15;
+  
+  const curScaleX = 1.0 + (targetScaleX - 1.0) * easeT;
+  const curScaleY = 1.0 + (targetScaleY - 1.0) * easeT;
+  const curScaleZ = 1.0 + (targetScaleZ - 1.0) * easeT;
+  
+  const curOffsetY = 0.65 + (targetOffsetY - 0.65) * easeT;
+  const curOffsetZ = -0.42 + (targetOffsetZ - -0.42) * easeT;
+  const curRotX = 0 + (targetRotX - 0) * easeT;
 
-  if (isPacked) {
-    char.meshObj.stackGroup.scale.set(cfg.scaleX, cfg.scaleY, cfg.scaleZ);
-    char.meshObj.stackGroup.position.set(0, cfg.offsetY, cfg.offsetZ);
-    char.meshObj.stackGroup.rotation.x = -0.12;
-  } else {
-    char.meshObj.stackGroup.scale.set(1.0, 1.0, 1.0);
-    char.meshObj.stackGroup.position.set(0, 0.65, -0.42);
-    char.meshObj.stackGroup.rotation.x = 0;
-  }
+  char.meshObj.stackGroup.scale.set(curScaleX, curScaleY, curScaleZ);
+  char.meshObj.stackGroup.position.set(0, curOffsetY, curOffsetZ);
+  char.meshObj.stackGroup.rotation.x = curRotX;
 }
 
-// =========================================================================
-// 【最高峰刷新】スカイダイブ姿勢：高速滑空アローストリーム ＆ ダイナミックバンク
-// =========================================================================
-export function applySkydivePose(char, dirX, rollAngle, timeSec = null) {
-  const tSec = (timeSec !== null) ? timeSec : (performance.now() * 0.001);
+// （後方互換用：ゴースト化は完全廃止したため、ダミー処理のみ）
+export function setStackGhostMode(char, isGhost) {
+  char.isGhostStacked = false;
+}
 
-  // 1. 上体を前傾（約 -55度 / 0.96rad）させ、大気を切り裂く矢（アロー）の構え
-  // 左右操作時はダイナミックにロール傾き（バンク）
-  char.meshObj.root.rotation.set(0.96, Math.PI, rollAngle);
+// ★ スカイダイブ専用ポーズ（回転軸の干渉を解決し、正しいうつ伏せダイブ姿勢へ修正）
+export function applySkydivePose(char, dirX, rollAngle) {
+  // YXZ順で回転を適用すると直感的な「北向き → 前傾 → ロール」になる
+  char.meshObj.root.rotation.order = 'YXZ';
+  // 進行方向（北 = Math.PI）、前傾（うつ伏せダイブ = X軸負回転 -1.1）、ロール（Z軸回転）
+  char.meshObj.root.rotation.set(-1.1, Math.PI, rollAngle);
 
-  // 2. 両腕を体側に沿わせて後ろへシャープに伸ばす（空気抵抗ゼロのストリームライン）
+  // 両腕を後方（体側）へピタッと流し、大気抵抗を極限までカットするアローストリーム
   char.meshObj.leftArm.position.set(-0.40, 0.46, -0.32);
   char.meshObj.rightArm.position.set(0.40, 0.46, -0.32);
   char.meshObj.leftArm.rotation.set(-1.42, 0, 0.18);
   char.meshObj.rightArm.rotation.set(-1.42, 0, -0.18);
 
-  // 3. 両脚は後ろへまっすぐ揃え、猛烈な大気抵抗による足先の微細なバタつき（flutter）
-  const airFlutter = Math.sin(tSec * 28) * 0.14;
-  char.meshObj.leftLeg.rotation.set(0.55 + airFlutter, 0, -0.08);
-  char.meshObj.rightLeg.rotation.set(0.55 - airFlutter, 0, 0.08);
+  // 足先の空気抵抗バタつき（flutter）
+  const timeSec = performance.now() * 0.001;
+  const flutter = Math.sin(timeSec * 28) * 0.12;
+  char.meshObj.leftLeg.rotation.set(0.12 + flutter, 0, -0.05);
+  char.meshObj.rightLeg.rotation.set(0.12 - flutter, 0, 0.05);
 
   char.meshObj.body.position.y = 0.54;
   char.meshObj.head.position.y = 1.10;
 }
 
-// =========================================================================
-// 【最高峰刷新】ドロップタワー姿勢：完全直立バンジー ＆ エアバランスウィング
-// =========================================================================
-export function applyTrapdoorPose(char, dirX, timeSec = null) {
-  const tSec = (timeSec !== null) ? timeSec : (performance.now() * 0.001);
+// ★ トラップドア専用ポーズ（完全直立バンジー・翼状エアバランス・足先リアルflutter）
+export function applyTrapdoorPose(char, dirX, timeSec) {
+  char.meshObj.root.rotation.order = 'XYZ';
+  char.meshObj.root.rotation.set(0.04, Math.PI, -dirX * 0.10);
 
-  // 1. 進行方向（北 = -Z）を向いた完全直立姿勢（微小な横傾きのみ反映）
-  char.meshObj.root.rotation.set(0.02, Math.PI, -dirX * 0.08);
+  // 両腕を鳥の翼のように左右斜め下〜後ろに広げてバランスをとる
+  char.meshObj.leftArm.position.set(-0.58, 0.74, -0.05);
+  char.meshObj.rightArm.position.set(0.58, 0.74, -0.05);
+  char.meshObj.leftArm.rotation.set(-0.14, 0, -0.68);
+  char.meshObj.rightArm.rotation.set(-0.14, 0, 0.68);
 
-  // 2. エアバランスウィング：両腕を鳥の翼のように左右斜め下〜後ろに広げ、気流に乗る
-  const wingFluct = Math.sin(tSec * 18) * 0.08;
-  char.meshObj.leftArm.position.set(-0.62, 0.72 + wingFluct * 0.2, -0.08);
-  char.meshObj.rightArm.position.set(0.62, 0.72 + wingFluct * 0.2, -0.08);
-  char.meshObj.leftArm.rotation.set(-0.16, 0, -0.78 + wingFluct);
-  char.meshObj.rightArm.rotation.set(-0.16, 0, 0.78 - wingFluct);
-
-  // 3. 両足先は真下の海をまっすぐ指し、猛烈な垂直落下風圧を受ける激しいflutter
-  const dropFlutter = Math.sin(tSec * 36) * 0.16;
-  char.meshObj.leftLeg.rotation.set(0.08 + dropFlutter, 0, -0.03);
-  char.meshObj.rightLeg.rotation.set(0.08 - dropFlutter, 0, 0.03);
+  // 足先は真下の海を向き、落下気流による微細なバタつき（flutter）
+  const flutter = Math.sin(timeSec * 26) * 0.10;
+  char.meshObj.leftLeg.rotation.set(0.10 + flutter, 0, -0.04);
+  char.meshObj.rightLeg.rotation.set(0.10 - flutter, 0, 0.04);
 
   char.meshObj.body.position.y = 0.65;
   char.meshObj.head.position.y = 1.25;
 }
 
+// ★ ニュートラル姿勢への完全リセット（進行方向である北 y = Math.PI に正しく復帰）
 export function resetCharacterPose(char) {
+  char.meshObj.root.rotation.order = 'XYZ'; // デフォルトに戻す
   char.meshObj.root.rotation.set(0, Math.PI, 0);
   char.meshObj.leftArm.position.set(-0.48, 0.68, 0);
   char.meshObj.rightArm.position.set(0.48, 0.68, 0);
@@ -377,10 +354,9 @@ export function resetCharacterPose(char) {
   char.meshObj.rightLeg.rotation.set(0, 0, 0);
   char.meshObj.body.position.y = 0.65;
   char.meshObj.head.position.y = 1.25;
-
-  packCharacterLuggage(char, false);
-  setStackGhostMode(char, false);
-  applyStackGhostOpacity(char, false);
+  
+  // リュック収納の解除
+  packCharacterLuggage(char, 0);
 }
 
 export function addBrickToCharacter(char, team, count = 1, sound = null, updateHUD = null) {
@@ -666,10 +642,7 @@ export function resetCharacters(STAGES) {
 
     c.meshObj.trolleyGroup.visible = false;
     c.meshObj.elevatorGroup.visible = false;
-    c.meshObj.stackGroup.scale.set(1.0, 1.0, 1.0);
-    c.meshObj.stackGroup.rotation.x = 0;
-    c.meshObj.stackGroup.position.set(0, 0.65, -0.42);
-
+    
     resetCharacterPose(c);
   });
 

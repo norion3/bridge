@@ -1,3 +1,4 @@
+// メインエントリポイント：Three.js初期化・ダイナミックロックオンカメラ・メインループ
 import { SoundEngine } from './audio.js';
 import {
   TEAMS,
@@ -87,6 +88,7 @@ export function updateTimerHUD(force = false) {
   const timerEl = document.getElementById('hud-timer');
   if (timerEl) {
     timerEl.innerText = `${min}:${sec}`;
+    timerEl.style.textShadow = '0 2px 8px rgba(0, 0, 0, 0.95), 0 0 4px rgba(0, 0, 0, 0.9)';
   }
 }
 
@@ -356,7 +358,11 @@ export function animate(currentTime) {
         if (item.crystal) {
           item.crystal.rotation.y = timeSec * 3.2;
           item.crystal.rotation.z = Math.sin(timeSec * 2.5) * 0.25;
-          item.crystal.position.y = 1.35 + Math.sin(timeSec * 4.5 + item.stageIdx) * 0.32;
+          if (item.type !== 'magnet') {
+            item.crystal.position.y = 1.35 + Math.sin(timeSec * 4.5 + item.stageIdx) * 0.35;
+          } else {
+            item.crystal.position.y = 1.15 + Math.sin(timeSec * 4.5 + item.stageIdx) * 0.35;
+          }
         }
         if (item.beaconRing) {
           const pulse = 1.0 + Math.sin(timeSec * 5.0) * 0.25;
@@ -680,112 +686,33 @@ export function animate(currentTime) {
       targetLookAheadZ = player.pos.z - 12.0;
       targetFOV = 64;
     } else if (isSkydive) {
-      // =========================================================================
-      // 【最高峰刷新】スカイダイブ専用3段タイムシフトカメラ
-      // Phase 1 (0.0s〜0.6s / prog < 0.19): カタパルト手前上空にその場固定（見送り）
-      // Phase 2 (0.6s〜2.5s / 0.19 <= prog < 0.81): サイドワイドチェイス（並走ゾーン・FOV 78°）
-      // Phase 3 (2.5s〜3.1s / prog >= 0.81): 先行ランディング
-      // =========================================================================
-      const b = player.activeSkydive;
-      const prog = player.skydiveProgress || 0;
+      // ダイナミックロックオン・カメラ（置いてけぼり現象を完全解消）
       const airX = player.skydiveX || player.pos.x;
       const camCfg = SKYDIVE_CONFIG.CAMERA;
-
-      if (b && prog < camCfg.farewellProgLimit) {
-        // Phase 1: カタパルト手前上空から飛び出しを見送る（手すり遮蔽100%消滅・勢いと高低差を客観視）
-        const pRatio = prog / camCfg.farewellProgLimit;
-        targetCamX = camCfg.farewellOffsetX;
-        targetCamY = b.startY + camCfg.farewellOffsetY;
-        targetCamZ = b.startZ + camCfg.farewellOffsetZ - (pRatio * 0.6);
-        targetLookX = airX * 0.4;
-        targetLookY = player.pos.y + 0.4;
-        targetLookAheadZ = player.pos.z + camCfg.lookAheadZ;
-        targetFOV = camCfg.fovStart;
-      } else if (b && prog < camCfg.chaseProgLimit) {
-        // Phase 2: カメラが加速して追いつき、斜め後方上空から並走！パノラマワイドFOV 78°
-        const chaseRatio = (prog - camCfg.farewellProgLimit) / (camCfg.chaseProgLimit - camCfg.farewellProgLimit);
-        targetCamX = airX * 0.45 + camCfg.chaseOffsetX;
-        targetCamY = player.pos.y + camCfg.chaseOffsetY;
-        targetCamZ = player.pos.z + camCfg.chaseOffsetZ;
-        targetLookX = airX * 0.25 - 0.4;
-        targetLookY = player.pos.y - 1.2;
-        targetLookAheadZ = player.pos.z - 24.0;
-        targetFOV = THREE.MathUtils.lerp(camCfg.fovStart, camCfg.fovChase, chaseRatio);
-      } else if (b) {
-        // Phase 3: 先行ランディング（着地デッキを先回りして捉える）
-        const landRatio = (prog - camCfg.chaseProgLimit) / (1.0 - camCfg.chaseProgLimit);
-        targetCamX = airX * 0.3 + camCfg.chaseOffsetX * (1.0 - landRatio * 0.4);
-        targetCamY = b.endY + 3.8;
-        targetCamZ = b.endZ + 9.5;
-        targetLookX = airX * 0.2;
-        targetLookY = b.endY + 0.8;
-        targetLookAheadZ = b.endZ - 10.0;
-        targetFOV = THREE.MathUtils.lerp(camCfg.fovChase, camCfg.fovLand, landRatio);
-      } else {
-        targetCamX = airX * 0.45 + camCfg.chaseOffsetX;
-        targetCamY = player.pos.y + camCfg.chaseOffsetY;
-        targetCamZ = player.pos.z + camCfg.chaseOffsetZ;
-        targetLookX = airX * 0.25;
-        targetLookY = player.pos.y - 1.2;
-        targetLookAheadZ = player.pos.z - 24.0;
-        targetFOV = camCfg.fovChase;
-      }
+      targetCamX = airX * 0.45;
+      targetCamY = player.pos.y + camCfg.offsetY; // 4.5
+      targetCamZ = player.pos.z + camCfg.offsetZ; // 8.5
+      targetLookX = airX * 0.25;
+      targetLookY = player.pos.y - 1.2;
+      targetLookAheadZ = player.pos.z + camCfg.lookAheadZ; // -28.0
+      targetFOV = camCfg.fovDrop; // 78
     } else if (isTrapdoor) {
-      // =========================================================================
-      // 【最高峰刷新】ドロップタワー専用3段タイムシフトカメラ
-      // Phase 1 (0.0s〜0.5s / prog < 0.21): デッキ上空から開いた穴越しに落ちる瞬間を見送る
-      // Phase 2 (0.5s〜1.9s / 0.21 <= prog < 0.79): サイド垂直並走チェイス（深淵パノラマ・FOV 78°）
-      // Phase 3 (1.9s〜2.4s / prog >= 0.79): 先行ランディング
-      // =========================================================================
-      const b = player.activeTrapdoor || player.activeFreefall;
-      const prog = player.trapdoorProgress || player.freefallProgress || 0;
+      // ダイナミックロックオン・クォーターチェイス（上空消滅バグを完全解消）
       const tX = player.trapdoorX || player.freefallX || player.pos.x;
       const camCfg = TRAPDOOR_CONFIG.CAMERA;
-
-      if (b && prog < camCfg.farewellProgLimit) {
-        // Phase 1: 上のデッキ上空から開いたハッチ越しにキャラが落ちていく瞬間を見送る
-        const pRatio = prog / camCfg.farewellProgLimit;
-        targetCamX = tX * 0.4 + 1.2;
-        targetCamY = b.startY + camCfg.farewellOffsetY - (pRatio * 1.2);
-        targetCamZ = b.startZ + camCfg.farewellOffsetZ;
-        targetLookX = tX;
-        targetLookY = player.pos.y - 1.5;
-        targetLookAheadZ = player.pos.z - 10.0;
-        targetFOV = camCfg.fovStart;
-      } else if (b && prog < camCfg.chaseProgLimit) {
-        // Phase 2: カメラも虚空へ飛び出し、自キャラの右斜め横から並走！時速100km超のパノラマ視差
-        const chaseRatio = (prog - camCfg.farewellProgLimit) / (camCfg.chaseProgLimit - camCfg.farewellProgLimit);
-        targetCamX = tX + camCfg.chaseOffsetX;
-        targetCamY = player.pos.y + camCfg.chaseOffsetY;
-        targetCamZ = player.pos.z + camCfg.chaseOffsetZ;
-        targetLookX = tX + camCfg.lookOffsetX;
-        targetLookY = player.pos.y + camCfg.lookOffsetY;
-        targetLookAheadZ = player.pos.z + camCfg.lookAheadZ;
-        targetFOV = THREE.MathUtils.lerp(camCfg.fovStart, camCfg.fovDrop, chaseRatio);
-      } else if (b) {
-        // Phase 3: 先行ランディング（着地フロアを先回りして捉え、両足でドスンと着地）
-        const landRatio = (prog - camCfg.chaseProgLimit) / (1.0 - camCfg.chaseProgLimit);
-        targetCamX = tX + camCfg.chaseOffsetX * (1.0 - landRatio * 0.35);
-        targetCamY = b.endY + camCfg.chaseOffsetY * 0.85;
-        targetCamZ = b.endZ + camCfg.chaseOffsetZ * 0.85;
-        targetLookX = tX * 0.5;
-        targetLookY = b.endY + 0.8;
-        targetLookAheadZ = b.endZ - 8.0;
-        targetFOV = THREE.MathUtils.lerp(camCfg.fovDrop, 64, landRatio);
-      } else {
-        targetCamX = tX + camCfg.chaseOffsetX;
-        targetCamY = player.pos.y + camCfg.chaseOffsetY;
-        targetCamZ = player.pos.z + camCfg.chaseOffsetZ;
-        targetLookX = tX;
-        targetLookY = player.pos.y + camCfg.lookOffsetY;
-        targetLookAheadZ = player.pos.z + camCfg.lookAheadZ;
-        targetFOV = camCfg.fovDrop;
-      }
+      targetCamX = tX + camCfg.offsetX; // 4.5
+      targetCamY = player.pos.y + camCfg.offsetY; // 6.5
+      targetCamZ = player.pos.z + camCfg.offsetZ; // 7.0
+      targetLookX = tX + (camCfg.lookOffsetX || 0);
+      targetLookY = player.pos.y + camCfg.lookOffsetY; // -2.5
+      targetLookAheadZ = player.pos.z + camCfg.lookAheadZ; // -12.0
+      targetFOV = camCfg.fovDrop; // 76
     }
 
-    const lerpFactorPos = isTrapdoor ? 0.22 : (isSkydive ? 0.18 : (isJumping ? 0.16 : 0.14));
+    // カメラのY軸（縦）追従速度を落下の速さに合わせて強化し、キャラが見切れるのを防ぐ
+    const lerpFactorPos = isTrapdoor ? 0.28 : (isSkydive ? 0.25 : (isJumping ? 0.16 : 0.14));
     camera.position.x = THREE.MathUtils.lerp(camera.position.x, targetCamX, lerpFactorPos);
-    camera.position.y = THREE.MathUtils.lerp(camera.position.y, targetCamY, isTrapdoor ? 0.20 : 0.16);
+    camera.position.y = THREE.MathUtils.lerp(camera.position.y, targetCamY, isTrapdoor ? 0.35 : (isSkydive ? 0.30 : 0.16));
     camera.position.z = THREE.MathUtils.lerp(camera.position.z, targetCamZ, lerpFactorPos);
 
     if (Math.abs(camera.fov - targetFOV) > 0.1) {
