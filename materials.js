@@ -364,13 +364,15 @@ export const sharedMats = {
     depthWrite: false
   }),
 
-  // ★ ドロップタワー：無色クリアフロストガラスへ刷新（青色被り＆自己発光を全廃）
+  // ★ ドロップタワー：しっかりとした視認性を持つ水色ガラスへ復元
   dropGlassFloor: new THREE.MeshStandardMaterial({
-    color: 0xffffff,
+    color: 0x0284c7,
+    emissive: 0x0369a1,
+    emissiveIntensity: 0.25,
     roughness: 0.08,
-    metalness: 0.10,
+    metalness: 0.30,
     transparent: true,
-    opacity: 0.18,
+    opacity: 0.55,
     depthWrite: false
   }),
   dropPylonSteel: new THREE.MeshStandardMaterial({
