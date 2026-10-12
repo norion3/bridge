@@ -64,7 +64,7 @@ export const STAGE_TYPES = {
   ZIPLINE: 'zipline',
   ELEVATOR: 'elevator',
   SKYDIVE: 'skydive',       // 頭先行高速ダイビング（前進放物線）
-  TRAPDOOR: 'trapdoor'      // 足先行ドロップタワー（爆速垂直急降下）
+  TRAPDOOR: 'trapdoor'      // 足先行ドロップタワー（垂直自由落下）
 };
 
 // エレベーター仕様定数（オープン展望ホバーリフト規格・ワイヤー撤去）
@@ -94,7 +94,7 @@ export const SKYDIVE_CONFIG = {
     forwardDistance: 52.0,          // 雄大な前進距離 (時速86kmを維持する伸びやかな放物線)
     totalDuration: 3.1,             // 滞空飛行時間（3.1秒：アクションをたっぷり堪能）
     gravityPower: 2.0,              // 重力加速カーブ（滑らかな放物線）
-    hopHeight: 3.5,                 // ★ 飛び出し板の陰に隠れない斜め上ホップ高度 (+3.5m)
+    hopHeight: 3.5,                 // 飛び出し板の陰に隠れない斜め上ホップ高度 (+3.5m)
     horizontalAirControlSpeed: 10.0,// 左右エアコントロール速度
     maxAirOffsetX: 4.8,             // 左右最大シフト幅
     maxRollAngle: Math.PI * 0.18    // 左右スワイプ時の最大バンク角（ロール傾き 約32度）
@@ -115,15 +115,15 @@ export const SKYDIVE_CONFIG = {
   }
 };
 
-// ★ 看板ステージ2：ドロップタワー・スカイゲート仕様定数（完全垂直落下・タイトチェイス）
+// ★ 看板ステージ2：ドロップタワー・スカイゲート仕様定数（落差-70m・3.1秒自由落下・並走ワイドチェイス）
 export const TRAPDOOR_CONFIG = {
   PHYSICS: {
-    minHeightDrop: 58.0,            // 圧倒的な超高層垂直落差 (-58m)
-    forwardDistance: 0.0,           // ★ 前方スライドを全廃し真下へ一直線に垂直落下 (0m)
-    totalDuration: 2.4,             // 落下滞空時間（2.4秒：落ちるスリルを存分に魅せる）
-    gravityPower: 1.6,              // 初速からストンと落ちる重力加速
+    minHeightDrop: 70.0,            // ★ 超高層垂直落差 (-70m)
+    forwardDistance: 0.0,           // ★ 真下へ一直線に垂直落下 (0m)
+    totalDuration: 3.1,             // ★ 落下滞空時間（3.1秒：スカイダイブ同等にたっぷり絶叫）
+    gravityPower: 1.8,              // ★ 初速からストンと引きずり込まれる本物の重力加速
     horizontalAirControlSpeed: 7.5, // 左右エアスライド速度（直立維持）
-    maxAirOffsetX: 3.4              // 空中微調整の最大左右幅
+    maxAirOffsetX: 3.8              // 空中微調整の最大左右幅
   },
   HATCH: {
     size: 3.6,                      // ドロップタワー・スカイデッキ直径
@@ -133,15 +133,16 @@ export const TRAPDOOR_CONFIG = {
     openDuration: 0.14,             // 扉開放所要時間（瞬時開放）
     exclusionRadius: 5.0            // 施設周辺の床ブロック生成禁止半径
   },
-  // ★ タイト・クォーターチェイスカメラ（キャラを見失わず斜め上から密着追従）
+  // ★ 新設計：落ちた瞬間から全身ロックオン並走ワイドチェイスカメラ
   CAMERA: {
-    offsetX: 2.4,                   // キャラを画面中央に収めるタイトな横オフセット (+2.4m)
-    offsetY: 6.0,                   // 上から見守る高度 (+6.0m)
-    offsetZ: 5.5,                   // 離れすぎずロックオン (+5.5m)
-    lookOffsetY: -1.5,              // 注視点 Y (-1.5m)
-    lookAheadZ: -4.0,               // 前方注視点 (-4.0m)
+    offsetX: 4.8,                   // ★ 斜め横から直立全身を捉える (+4.8m)
+    offsetY: 5.0,                   // ★ キャラ全身と高さを合わせる高度 (+5.0m)
+    offsetZ: 9.5,                   // ★ 全身と背景をバランス良く映す後方距離 (+9.5m)
+    lookOffsetY: -1.0,              // 注視点 Y (-1.0m)
+    lookAheadZ: -24.0,              // ★ 前方奥の水平線パノラマを捉える (-24.0m)
+    lerpFactor: 0.45,               // ★ 初速キックでもキャラを見失わない強固な追従速度
     fovStart: 62,                   // 開始時FOV
-    fovDrop: 76                     // 追従加速時FOV（ワイドパノラマ）
+    fovDrop: 78                     // ★ 加速時ワイドFOV（超スピードパノラマ）
   }
 };
 

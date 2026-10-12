@@ -1,4 +1,4 @@
-// メインエントリポイント：Three.js初期化・ダイナミックロックオンカメラ・メインループ
+// メインエントリポイント：Three.js初期化・ダイナミックロックオン並走カメラ・メインループ
 import { SoundEngine } from './audio.js';
 import {
   TEAMS,
@@ -386,7 +386,7 @@ export function animate(currentTime) {
 
       const t = Math.min(1.0, p.progress);
       _tempVec3A.lerpVectors(p.startPos, p.targetPos, t);
-      // ★ 誰でも目で追える高く美しい山なり放物線弾道
+      // 誰でも目で追える高く美しい山なり放物線弾道
       _tempVec3A.y += Math.sin(t * Math.PI) * 7.5;
       p.group.position.copy(_tempVec3A);
 
@@ -437,7 +437,7 @@ export function animate(currentTime) {
               db.progress = 0;
               db.duration = 0.85;
 
-              // ★ 奪ったブロックの色を自分のチームカラー（青）に変化させてリソース獲得を直感化
+              // 奪ったブロックの色を自分のチームカラー（青）に変化させてリソース獲得を直感化
               if (p.shooter && p.shooter.team && p.shooter.team.id === 'blue') {
                 db.mesh.material = sharedMats.blockBlue;
               } else if (p.shooter && p.shooter.team && p.shooter.team.id === 'red') {
@@ -700,7 +700,7 @@ export function animate(currentTime) {
       targetLookAheadZ = player.pos.z - 12.0;
       targetFOV = 64;
     } else if (isSkydive) {
-      // ★ スカイダイブ：板に隠れず跳ね上がったキャラをしっかり視野中心に追従
+      // スカイダイブ：板に隠れず跳ね上がったキャラをしっかり視野中心に追従
       const airX = player.skydiveX || player.pos.x;
       const camCfg = SKYDIVE_CONFIG.CAMERA;
       targetCamX = airX * 0.40;
@@ -711,22 +711,22 @@ export function animate(currentTime) {
       targetLookAheadZ = player.pos.z + camCfg.lookAheadZ; // -28.0m (奥の水平線パノラマ)
       targetFOV = camCfg.fovDrop; // 78
     } else if (isTrapdoor) {
-      // ★ トラップドア：上空置き去りを全廃し、真下に垂直落下するキャラを斜め上からタイト追従
+      // ★ ドロップタワー新設計：デッキ置き去りを全廃し、落ちた瞬間から全身ロックオン並走ワイドチェイス
       const tX = player.trapdoorX || player.freefallX || player.pos.x;
       const camCfg = TRAPDOOR_CONFIG.CAMERA;
-      targetCamX = tX + camCfg.offsetX; // +2.4m
-      targetCamY = player.pos.y + camCfg.offsetY; // +6.0m
-      targetCamZ = player.pos.z + camCfg.offsetZ; // +5.5m
+      targetCamX = tX + camCfg.offsetX; // +4.8m (斜め横から直立全身を捉える)
+      targetCamY = player.pos.y + camCfg.offsetY; // +5.0m (キャラ全身と高さを合わせる)
+      targetCamZ = player.pos.z + camCfg.offsetZ; // +9.5m (全身と背景をバランス良く映す後方距離)
       targetLookX = tX;
-      targetLookY = player.pos.y + camCfg.lookOffsetY; // -1.5m
-      targetLookAheadZ = player.pos.z + camCfg.lookAheadZ; // -4.0m
-      targetFOV = camCfg.fovDrop; // 76
+      targetLookY = player.pos.y + camCfg.lookOffsetY; // -1.0m
+      targetLookAheadZ = player.pos.z + camCfg.lookAheadZ; // -24.0m (奥の水平線パノラマ)
+      targetFOV = camCfg.fovDrop; // 78 (超スピードパノラマFOV)
     }
 
-    // ★ 垂直自由落下・高速滑空時にキャラを見失わない強固な追従LERP
-    const lerpFactorX = (isSkydive || isTrapdoor) ? 0.40 : 0.14;
-    const lerpFactorY = isTrapdoor ? 0.48 : (isSkydive ? 0.40 : (isJumping ? 0.16 : 0.14));
-    const lerpFactorZ = (isSkydive || isTrapdoor) ? 0.44 : 0.14;
+    // 垂直自由落下・高速滑空時にキャラを見失わない強固な追従LERP
+    const lerpFactorX = (isSkydive || isTrapdoor) ? (isTrapdoor ? TRAPDOOR_CONFIG.CAMERA.lerpFactor : 0.40) : 0.14;
+    const lerpFactorY = isTrapdoor ? TRAPDOOR_CONFIG.CAMERA.lerpFactor : (isSkydive ? 0.40 : (isJumping ? 0.16 : 0.14));
+    const lerpFactorZ = (isSkydive || isTrapdoor) ? (isTrapdoor ? TRAPDOOR_CONFIG.CAMERA.lerpFactor : 0.44) : 0.14;
 
     camera.position.x = THREE.MathUtils.lerp(camera.position.x, targetCamX, lerpFactorX);
     camera.position.y = THREE.MathUtils.lerp(camera.position.y, targetCamY, lerpFactorY);

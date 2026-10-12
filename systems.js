@@ -1,4 +1,4 @@
-// 物理移動判定・リュック収納アニメーション連動・シームレス風音連携
+// 物理移動判定・スカイウォーク歩行開放・ハッチ進入同期・リュック収納アニメーション連動・シームレス風音連携
 import {
   TEAMS,
   TRAMPOLINE_TIERS,
@@ -60,11 +60,11 @@ export function setSystemCallbacks(sound, updateHUD, onPlankPlaced = null) {
   onPlankPlacedCallback = onPlankPlaced;
 }
 
-// ★ 修正：散乱ブロックの高さを +4cm 上げ（0.29m）、既存床ブロック（0.25m）とのポリゴン干渉・チラつきを根絶
+// 散乱ブロックの高さを +4cm 上げ（0.29m）、既存床ブロック（0.25m）とのポリゴン干渉・チラつきを根絶
 export function scatterBricks(scene, char, countToDrop) {
   const count = Math.min(char.stackCount, countToDrop);
   const stage = STAGES[char.currentStage] || STAGES[0];
-  const floorY = stage.y + 0.29; // 床ブロック（0.25m）より4cm上にオフセットしてZ-fightingを完全防止
+  const floorY = stage.y + 0.29;
   const maxR = stage.r - 1.0;
   const stageBlocks = getFloorBlocksForStage(char.currentStage);
 
@@ -142,7 +142,6 @@ export function checkGateCollisions(scene, char) {
   }
 }
 
-// ★ 修正：攻撃弾の滞空時間を 1.35秒 へ延長し、視認しやすい山なり放物線弾道へ強化
 export function fireHomingCrystal(char) {
   if (soundRef) soundRef.playAttackShoot();
 
@@ -197,7 +196,7 @@ export function fireHomingCrystal(char) {
   proj.target = selectedTarget;
   proj.isRear = isRearShot;
   proj.progress = 0;
-  proj.duration = 1.35; // 0.82秒から1.35秒へ拡張し、飛んでいく様子をハッキリ視認可能に
+  proj.duration = 1.35;
 
   proj.startPos.copy(char.pos);
   proj.startPos.y += 1.3;
@@ -265,21 +264,39 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
       }
     }
 
-    // トラップドア・ハッチ乗車判定（垂直落下）
+    // ★ ドロップタワー・スカイゲート：スカイウォーク歩行判定 ＆ ハッチ進入トリガー
     const trapB = localBridges.find(b => b.isTrapdoor && b.stageIdx === char.currentStage);
     if (trapB && char.slideCooldown <= 0) {
-      const distToHatch = Math.hypot(nextX, nextZ - trapB.startZ);
-      if (distToHatch < 2.2 && isForwardIntent) {
-        char.onTrapdoor = true;
-        char.trapdoorProgress = 0;
-        char.activeTrapdoor = trapB;
-        char.trapdoorX = char.pos.x;
-        trapB.isHatchOpen = true;
+      const approachStart = trapB.approachStartZ !== undefined ? trapB.approachStartZ : (trapB.startZ + 14.0);
+      const hatchCenterZ = trapB.startZ;
 
-        if (char.isPlayer && soundRef) {
-          soundRef.playTrapdoorOpen();
-          soundRef.startTrapdoorFall(TRAPDOOR_CONFIG.PHYSICS.totalDuration);
+      // 1. スカイウォーク上の歩行可能エリア判定（幅 3.4m、手前島エッジからハッチまで）
+      const inSkywalkX = Math.abs(nextX) <= 1.7;
+      const inSkywalkZ = (nextZ <= approachStart + 0.6) && (nextZ >= hatchCenterZ - 1.8);
+
+      if (inSkywalkX && inSkywalkZ) {
+        // ハッチ中心（hatchCenterZ）に到達したらフリーフォールを発火
+        const distToHatch = Math.hypot(nextX, nextZ - hatchCenterZ);
+        if (distToHatch < 2.0 && isForwardIntent) {
+          char.onTrapdoor = true;
+          char.trapdoorProgress = 0;
+          char.activeTrapdoor = trapB;
+          char.trapdoorX = char.pos.x;
+          trapB.isHatchOpen = true;
+
+          if (char.isPlayer && soundRef) {
+            soundRef.playTrapdoorOpen();
+            soundRef.startTrapdoorFall(TRAPDOOR_CONFIG.PHYSICS.totalDuration);
+          }
+          return;
         }
+
+        // ハッチ到達前：スカイウォーク上を問題なく歩行させる（画像18の見えない壁を完全撤去）
+        char.pos.x = Math.max(-1.5, Math.min(1.5, nextX));
+        char.pos.z = nextZ;
+        char.pos.y = trapB.startY;
+        char.lastPlankIdx = -1;
+        char.onSlide = false;
         return;
       }
     }
@@ -565,16 +582,27 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
   if (!char.isPlayer) {
     const curStage = STAGES[char.currentStage];
     if (curStage) {
-      const dx = nextX;
-      const dz = nextZ - curStage.z;
-      const dist = Math.hypot(dx, dz);
-      const safeR = curStage.r - 0.45;
-      if (dist > safeR && dist > 0.001) {
-        char.pos.x = (dx / dist) * safeR;
-        char.pos.z = curStage.z + (dz / dist) * safeR;
+      // ドロップタワーやスカイダイブのアプローチゾーン（中央付近から前方）へ向かっている場合はクランプ除外
+      const stageBridges = bridgesByStage.get(char.currentStage) || [];
+      const hasForwardAttraction = stageBridges.some(b => b.isTrapdoor || b.isSkydive);
+      const isApproachingCenterExit = hasForwardAttraction && Math.abs(nextX) < 2.0 && (nextZ < curStage.z);
+
+      if (!isApproachingCenterExit) {
+        const dx = nextX;
+        const dz = nextZ - curStage.z;
+        const dist = Math.hypot(dx, dz);
+        const safeR = curStage.r - 0.45;
+        if (dist > safeR && dist > 0.001) {
+          char.pos.x = (dx / dist) * safeR;
+          char.pos.z = curStage.z + (dz / dist) * safeR;
+          char.pos.y = curStage.y;
+          char.lastPlankIdx = -1;
+          char.onSlide = false;
+        }
+      } else {
+        char.pos.x = nextX;
+        char.pos.z = nextZ;
         char.pos.y = curStage.y;
-        char.lastPlankIdx = -1;
-        char.onSlide = false;
       }
     }
   }
@@ -646,7 +674,7 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     }
   }
 
-  // ★ 修正：飛び出し板の下に隠れないよう、斜め上（+hopHeight = +3.5m）へ跳ね上がる放物線アーチを付与
+  // スカイダイブ（頭先行・斜め上ホップ放物線）
   if (char.onSkydive && char.activeSkydive) {
     const b = char.activeSkydive;
     const totalFlyTime = SKYDIVE_CONFIG.PHYSICS.totalDuration;
@@ -677,7 +705,6 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     } else {
       const t = Math.min(0.999, Math.max(0, char.skydiveProgress));
 
-      // ブロック収納イージング（0.4秒かけて自然にパッキング）
       const packProg = Math.min(1.0, char.skydiveProgress / (0.40 / totalFlyTime));
       packCharacterLuggage(char, packProg);
 
@@ -690,7 +717,6 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
 
       const pZ = THREE.MathUtils.lerp(b.startZ, b.endZ, t);
       const fallPower = SKYDIVE_CONFIG.PHYSICS.gravityPower;
-      // 斜め上への山なりホップ高度（+3.5m）を付与し、飛び出し板の上にキャラ全身を高く露出
       const hop = Math.sin(t * Math.PI) * (SKYDIVE_CONFIG.PHYSICS.hopHeight || 3.5);
       const pY = b.startY + (b.endY - b.startY) * Math.pow(t, fallPower) + hop;
       char.pos.set(char.skydiveX, pY, pZ);
@@ -701,7 +727,7 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     return;
   }
 
-  // ★ 修正：前方へのスライド移動（14.4m）を全廃し、真下の海へ一直線に落ちる純粋な垂直落下を実現
+  // ★ ドロップタワー（足先行・完全垂直落下 3.1秒）
   if ((char.onTrapdoor && char.activeTrapdoor) || (char.onFreefall && char.activeFreefall)) {
     const b = char.activeTrapdoor || char.activeFreefall;
 
@@ -726,7 +752,7 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
       char.activeTrapdoor = null;
       char.activeFreefall = null;
 
-      triggerLandingShockwave(char.pos.x, char.pos.y, char.pos.z, 3.4, 0x0284c7);
+      triggerLandingShockwave(char.pos.x, char.pos.y, char.pos.z, 3.8, 0x0284c7);
       if (char.isPlayer && soundRef) {
         soundRef.playLanding();
         soundRef.stopTrapdoorFall();
@@ -742,7 +768,6 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     } else {
       const t = Math.min(0.999, Math.max(0, char.trapdoorProgress));
 
-      // ブロック収納イージング（0.4秒かけて自然にパッキング）
       const packProg = Math.min(1.0, char.trapdoorProgress / (0.40 / totalFlyTime));
       packCharacterLuggage(char, packProg);
 
@@ -750,7 +775,7 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
       const maxAirX = TRAPDOOR_CONFIG.PHYSICS.maxAirOffsetX;
       char.trapdoorX = Math.max(-maxAirX, Math.min(maxAirX, (char.trapdoorX || char.freefallX || 0) + dirX * airSpeed * dt));
 
-      // ★ 前方スライドを廃止し、ハッチ直下のZ座標（b.startZ）に完全固定して真下へ急降下
+      // 完全垂直直下落下：ハッチ直下Z座標（b.startZ）を完全固定
       const pZ = b.startZ;
       const fallPower = TRAPDOOR_CONFIG.PHYSICS.gravityPower;
       const pY = b.startY + (b.endY - b.startY) * Math.pow(t, fallPower);
@@ -767,7 +792,6 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     const b = char.activeElevator;
     const laneData = b.elevators.find(e => e.laneIdx === char.elevatorLane) || b.elevators[0];
 
-    // 上の島へ到着後の前向き下車シーケンス
     if (char.elevatorExiting) {
       char.elevatorExitTimer -= dt;
       const exitProgress = 1.0 - (char.elevatorExitTimer / ELEVATOR_CONFIG.EASING.exitDelay);

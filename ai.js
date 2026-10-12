@@ -1,3 +1,4 @@
+// Bot AI自律思考ロジック・レーン評価・スカイダイブ＆ドロップタワー進入・空中姿勢同期
 import {
   LANES,
   ELEVATOR_CONFIG,
@@ -24,7 +25,6 @@ export function evaluateBestLaneForBot(bot) {
 
   for (let bIdx = 0; bIdx < stageBridges.length; bIdx++) {
     const b = stageBridges[bIdx];
-    // 特殊看板ギミック（階段建設が不要なステージ）はレーン評価から除外
     if (
       b.isJump ||
       b.isSlide ||
@@ -106,7 +106,6 @@ export function avoidGateObstacles(bot, dirX, dirZ) {
 }
 
 export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStepRing) {
-  // ギミック空中搭乗中（スカイダイブ・ドロップタワー・エレベーター・カーブ・ジップライン）の自動ステアリング
   if (
     bot.onSkydive ||
     bot.onTrapdoor ||
@@ -118,11 +117,9 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
     let steerX = 0;
 
     if (bot.onSkydive && bot.activeSkydive) {
-      // スカイダイブ中（3.1秒）：自然な緩やかロールバンク揺らぎ
       const timeSec = performance.now() * 0.0018 + bot.team.hex;
       steerX = Math.sin(timeSec) * 0.35;
     } else if (bot.onTrapdoor && bot.activeTrapdoor) {
-      // ドロップタワー超高層急降下中（2.4秒）：直立バンジー姿勢を保ったまま中央軸を安定キープ
       const currentX = bot.trapdoorX || 0;
       steerX = -Math.sign(currentX) * Math.min(0.35, Math.abs(currentX) * 0.5);
     } else if (bot.onCurvedSlide) {
@@ -189,7 +186,6 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
       nextConn.type === 'elevator' ||
       nextConn.type === 'freefall'
     ) {
-      // 特殊ギミックステージはブロック回収不要で進入可能
       bot.aiState = 'BUILD';
       bot.targetLane = 1;
       bot.aiCapacityGoal = 0;
@@ -316,7 +312,6 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
     if (b) {
       let targetX = LANES[bot.targetLane];
 
-      // スカイダイブカタパルトおよびドロップタワー強化ガラスデッキ中央へ進入
       if (b.isSkydive || b.isTrapdoor || b.isCurvedSlide || b.isZipline || b.isFreefall) {
         targetX = 0;
       } else if (b.isElevator) {
@@ -338,7 +333,8 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
         targetX = LANES[bot.elevatorChoice];
       }
 
-      const targetZ = bot.pos.z < b.startZ ? bot.pos.z - 2 : b.startZ - 0.5;
+      // ドロップタワーの場合はハッチ中心（b.startZ）へ向かって直進
+      const targetZ = b.isTrapdoor ? (b.startZ - 0.2) : (bot.pos.z < b.startZ ? bot.pos.z - 2 : b.startZ - 0.5);
       const dx = targetX - bot.pos.x, dz = targetZ - bot.pos.z;
       const lenSq = dx * dx + dz * dz;
       const len = lenSq > 0.0001 ? Math.sqrt(lenSq) : 1;

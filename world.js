@@ -708,6 +708,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       visualMeshes: [hatch.group],
       startZ: targetDropZ, // ★ 落下開始Zと着地Zを同一にして純粋な垂直落下を実現
       endZ: targetDropZ,
+      approachStartZ: approachStartZ, // ★ 手前島のエッジ座標を保持（Phase 2で歩行判定に接続）
       startY, endY,
       hatchCenter: hatch.hatchCenter,
       doorLeftPivot: hatch.doorLeftPivot,
@@ -1100,9 +1101,10 @@ export function extendCourse(scene) {
     distZ = 30;
     r = 9.5;
   } else if (idx === 3) {
-    type = 'curved_slide';
-    nextY = prev.y - 8.5;
-    distZ = 46;
+    // 序盤のStage 3に直線スライダーを配置してシンプル＆爽快な滑走を早期体験
+    type = 'slide';
+    nextY = Math.max(5.0, prev.y - 8.5);
+    distZ = 42;
     r = 11;
   } else if (idx === 4) {
     type = 'vertical';
@@ -1117,41 +1119,51 @@ export function extendCourse(scene) {
   } else {
     const rand = Math.random();
     if (prev.y >= 14.0) {
-      if (rand < 0.28) {
+      // ★ 下り系5大ギミック：完全20%均等配分（黄金比率）
+      if (rand < 0.20) {
+        // ★ 復活：直線スライダー（3レーンから選んで一気に滑り降りる爽快な箸休め）
+        type = 'slide';
+        nextY = Math.max(5.0, prev.y - 10.0);
+        distZ = 42;
+        r = 11;
+      } else if (rand < 0.40) {
         // 看板ステージ1：スカイダイブ（頭先行・前進52m・落差-42m）
         type = 'skydive';
         nextY = Math.max(5.0, prev.y - SKYDIVE_CONFIG.PHYSICS.minHeightDrop);
         distZ = SKYDIVE_CONFIG.PHYSICS.forwardDistance;
         r = 11.5;
-      } else if (rand < 0.54) {
-        // 看板ステージ2：ドロップタワー（足先行・垂直直下ドロップ・超高層落差-58m）
+      } else if (rand < 0.60) {
+        // 看板ステージ2：ドロップタワー（足先行・垂直直下ドロップ・超高層落差-70m）
         type = 'trapdoor';
         nextY = Math.max(5.0, prev.y - TRAPDOOR_CONFIG.PHYSICS.minHeightDrop);
         distZ = 36.0;
         r = 12.0;
-      } else if (rand < 0.77) {
-        type = 'zipline';
-        nextY = Math.max(7.0, prev.y - 12.0);
-        distZ = 68;
-        r = 10.5;
-      } else {
+      } else if (rand < 0.80) {
+        // カーブスライダー（左右操作でボーナスを拾うテクニカル滑走）
         type = 'curved_slide';
         nextY = Math.max(6.0, prev.y - 8.0);
         distZ = 46;
         r = 11;
+      } else {
+        // ジップライン（空中散歩＆ボーナス回収）
+        type = 'zipline';
+        nextY = Math.max(7.0, prev.y - 12.0);
+        distZ = 68;
+        r = 10.5;
       }
     } else {
-      if (rand < 0.30) {
+      // ★ 上り系4大ギミック：均等配分
+      if (rand < 0.25) {
         type = 'elevator';
         nextY = prev.y + 16.0;
         distZ = 30;
         r = 11;
-      } else if (rand < 0.54) {
+      } else if (rand < 0.50) {
         type = 'vertical';
         nextY = prev.y + 11.0;
         distZ = 24;
         r = 10;
-      } else if (rand < 0.76) {
+      } else if (rand < 0.75) {
         type = 'jump';
         nextY = prev.y + 1.0;
         distZ = 30;
