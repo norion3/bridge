@@ -404,13 +404,10 @@ export function createTrapdoorHatchStructure(scene, posX, posY, hatchZ, approach
   pulleyR.position.set(posX + 1.8, posY + 7.3, hatchZ);
   group.add(pulleyR);
 
-  // 6. 強化ガラスハッチ中央開口部と深淵ボイド
-  const voidMesh = new THREE.Mesh(new THREE.PlaneGeometry(3.0, 3.0), sharedMats.hatchInnerVoid);
-  voidMesh.rotation.x = -Math.PI / 2;
-  voidMesh.position.set(posX, posY - 0.02, hatchZ);
-  group.add(voidMesh);
+  // ★ 修正：開口部を塞いでいた青色ボイドメッシュ（voidMesh）を完全撤廃。
+  // 扉が開いた中央開口部（3m × 3m）は遮るものが何もない完全な抜け穴になり、真下の着地点・海がクリアに見下ろせます。
 
-  // 7. 左右に開放するガラスハッチ扉（ピボット制御）
+  // 6. 左右に開放するガラスハッチ扉（ピボット制御）
   const doorLeftPivot = new THREE.Group();
   doorLeftPivot.position.set(posX - 1.5, posY + 0.10, hatchZ);
   const doorL = new THREE.Mesh(hatchDoorGeo, sharedMats.dropGlassFloor);
@@ -744,9 +741,26 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
 
     const hatch = createTrapdoorHatchStructure(scene, 0, startY, targetDropZ, approachStartZ);
 
+    // ★ 修正：真下の着地点（下層島）のターゲット着地デッキ（白スチールリム＋シアンインジケーター）
+    // 開口部から下を見下ろした時に、着地点が遠くからでもクッキリと識別できます
+    const landingPad = new THREE.Group();
+    const landingRimGeo = new THREE.TorusGeometry(2.4, 0.08, 8, 32);
+    landingRimGeo.rotateX(Math.PI / 2);
+    const landingRim = new THREE.Mesh(landingRimGeo, sharedMats.dropPylonSteel);
+    landingRim.position.set(0, endY + 0.08, targetDropZ);
+    landingPad.add(landingRim);
+
+    const landingRingGeo = new THREE.RingGeometry(1.6, 2.2, 32);
+    landingRingGeo.rotateX(-Math.PI / 2);
+    const landingRing = new THREE.Mesh(landingRingGeo, sharedMats.dropIndicatorNeon);
+    landingRing.position.set(0, endY + 0.09, targetDropZ);
+    landingPad.add(landingRing);
+
+    scene.add(landingPad);
+
     const trapdoorBridge = {
       stageIdx, nextStageIdx, laneIdx: 1, planks: [],
-      visualMeshes: [hatch.group],
+      visualMeshes: [hatch.group, landingPad],
       startZ: targetDropZ, // ★ 落下開始Zと着地Zを同一にして純粋な垂直落下を実現
       endZ: targetDropZ,
       approachStartZ: approachStartZ,
@@ -884,7 +898,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     const normArr = [];
     const idxArr = [];
     const leftRailPts = [];
-    const rightRailPts = [];
+    rightRailPts = [];
 
     const profile = [
       { x: -2.4, y: 0.85 },
