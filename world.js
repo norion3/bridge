@@ -337,12 +337,15 @@ export function createSkydiveCatapultStructure(scene, posX, posY, posZ) {
 export function createTrapdoorHatchStructure(scene, posX, posY, hatchZ, approachStartZ) {
   const group = new THREE.Group();
 
-  // 手前島からハッチ位置（hatchZ）まで伸びる透明ガラスのアプローチスカイウォーク
-  if (approachStartZ > hatchZ + 0.5) {
-    const walkLen = approachStartZ - hatchZ;
+  // ★ 修正：手前島から開口部手前外縁（hatchZ + 1.6m）でピタッと止めるアプローチスカイウォーク
+  // 穴の中心（hatchZ）まで突き出さないため、穴の上に道が被らず、落ちるキャラが100%見え続けます
+  const walkEndZ = hatchZ + 1.6;
+  if (approachStartZ > walkEndZ + 0.5) {
+    const walkLen = approachStartZ - walkEndZ;
+    const walkMidZ = (approachStartZ + walkEndZ) / 2;
     const walkGeo = new THREE.BoxGeometry(3.2, 0.14, walkLen);
     const walkMesh = new THREE.Mesh(walkGeo, sharedMats.dropGlassFloor);
-    walkMesh.position.set(posX, posY + 0.08, (approachStartZ + hatchZ) / 2);
+    walkMesh.position.set(posX, posY + 0.08, walkMidZ);
     walkMesh.receiveShadow = true;
     group.add(walkMesh);
 
@@ -350,7 +353,7 @@ export function createTrapdoorHatchStructure(scene, posX, posY, hatchZ, approach
     const sideRailGeo = new THREE.CylinderGeometry(0.06, 0.06, walkLen, 8);
     sideRailGeo.rotateX(Math.PI / 2);
     const sRailL = new THREE.Mesh(sideRailGeo, sharedMats.catapultNeonRail);
-    sRailL.position.set(posX - 1.6, posY + 0.45, (approachStartZ + hatchZ) / 2);
+    sRailL.position.set(posX - 1.6, posY + 0.45, walkMidZ);
     group.add(sRailL);
     const sRailR = sRailL.clone();
     sRailR.position.x = 1.6;

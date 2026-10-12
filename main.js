@@ -733,30 +733,30 @@ export function animate(currentTime) {
       targetLookAheadZ = player.pos.z - 2.5;
       targetFOV = 64;
     } else if (isTrapdoor) {
-      // ★ フリーフォール：3段階シネマティックカメラ（上空見下ろし延長＆滑らか遷移）
+      // ★ フリーフォール：3段階シネマティックカメラ（開口部直上センタリング補正）
       const b = player.activeTrapdoor || player.activeFreefall;
       const prog = player.trapdoorProgress || player.freefallProgress || 0;
       const tX = player.trapdoorX || player.freefallX || player.pos.x;
       const camCfg = TRAPDOOR_CONFIG.CAMERA;
 
       if (b && prog < 0.45) {
-        // ① 第1段階：じっくり見下ろしゾーン（約1.4秒間：開いた穴へ吸い込まれ体が小さくなる様子を見届ける）
+        // ① 第1段階：じっくり見下ろしゾーン（開口部の真上直上から完全センタリング見下ろし）
         const ratio = prog / 0.45;
-        targetCamX = THREE.MathUtils.lerp(tX + 1.2, tX * 0.2, ratio);
-        targetCamY = b.startY + 12.0 - ratio * 2.0; // 真上高所からじっくり追尾
-        targetCamZ = b.startZ + 1.5 - ratio * 0.5; // ハッチ真上をキープ
+        targetCamX = THREE.MathUtils.lerp(tX + 0.6, tX * 0.1, ratio);
+        targetCamY = b.startY + 12.0 - ratio * 2.0; // 真上高所
+        targetCamZ = b.startZ + 0.9 - ratio * 0.5; // 開口部円心直上へセンタリング補正
         targetLookX = tX;
         targetLookY = player.pos.y; // 落ちていくキャラを真下に見下ろす
         targetLookAheadZ = b.startZ; // ハッチ開口部の中心
         targetFOV = 74;
       } else if (b && prog < 0.75) {
-        // ② 第2段階：滑らかな移行チェイス（約0.9秒間：真上見下ろしから斜め横チェイスへ優雅に回り込み）
+        // ② 第2段階：滑らかな移行チェイス（真上直上見下ろしから斜め横チェイスへ優雅に回り込み）
         const blend = THREE.MathUtils.smoothstep(prog, 0.45, 0.75);
 
         // トップダウン終点座標
-        const fromCamX = tX * 0.2;
+        const fromCamX = tX * 0.1;
         const fromCamY = b.startY + 10.0;
-        const fromCamZ = b.startZ + 1.0;
+        const fromCamZ = b.startZ + 0.4;
         const fromLookX = tX;
         const fromLookY = player.pos.y;
         const fromLookZ = b.startZ;
