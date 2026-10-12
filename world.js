@@ -404,9 +404,6 @@ export function createTrapdoorHatchStructure(scene, posX, posY, hatchZ, approach
   pulleyR.position.set(posX + 1.8, posY + 7.3, hatchZ);
   group.add(pulleyR);
 
-  // ★ 修正：開口部を塞いでいた青色ボイドメッシュ（voidMesh）を完全撤廃。
-  // 扉が開いた中央開口部（3m × 3m）は遮るものが何もない完全な抜け穴になり、真下の着地点・海がクリアに見下ろせます。
-
   // 6. 左右に開放するガラスハッチ扉（ピボット制御）
   const doorLeftPivot = new THREE.Group();
   doorLeftPivot.position.set(posX - 1.5, posY + 0.10, hatchZ);
@@ -898,7 +895,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     const normArr = [];
     const idxArr = [];
     const leftRailPts = [];
-    rightRailPts = [];
+    const rightRailPts = [];
 
     const profile = [
       { x: -2.4, y: 0.85 },
