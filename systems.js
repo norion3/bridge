@@ -87,7 +87,8 @@ export function scatterBricks(scene, char, countToDrop) {
 
     poolItem.mesh.material = sharedMats.blockNeutral;
     poolItem.mesh.position.set(dropX, floorY, dropZ);
-    poolItem.mesh.rotation.y = Math.random() * Math.PI;
+    // ★ 修正：X/Z回転角を確実に0にリセットし、床に斜めに突き刺さる現象を完全根絶
+    poolItem.mesh.rotation.set(0, Math.random() * Math.PI, 0);
     poolItem.mesh.visible = true;
 
     poolItem.active = true;
@@ -291,7 +292,7 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
           return;
         }
 
-        // ハッチ到達前：スカイウォーク上を問題なく歩行させる（画像18の見えない壁を完全撤去）
+        // ハッチ到達前：スカイウォーク上を問題なく歩行させる
         char.pos.x = Math.max(-1.5, Math.min(1.5, nextX));
         char.pos.z = nextZ;
         char.pos.y = trapB.startY;
@@ -582,7 +583,6 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
   if (!char.isPlayer) {
     const curStage = STAGES[char.currentStage];
     if (curStage) {
-      // ドロップタワーやスカイダイブのアプローチゾーン（中央付近から前方）へ向かっている場合はクランプ除外
       const stageBridges = bridgesByStage.get(char.currentStage) || [];
       const hasForwardAttraction = stageBridges.some(b => b.isTrapdoor || b.isSkydive);
       const isApproachingCenterExit = hasForwardAttraction && Math.abs(nextX) < 2.0 && (nextZ < curStage.z);
@@ -727,13 +727,15 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     return;
   }
 
-  // ★ ドロップタワー（足先行・完全垂直落下 3.1秒）
+  // ★ ドロップタワー（足先行・完全垂直落下 3.1秒）：床が直角以上にパカッと開き、0.12秒の無重力タメから一気に急降下
   if ((char.onTrapdoor && char.activeTrapdoor) || (char.onFreefall && char.activeFreefall)) {
     const b = char.activeTrapdoor || char.activeFreefall;
 
     if (b.doorLeftPivot && b.doorRightPivot) {
       b.hatchOpenProgress = Math.min(1.0, (b.hatchOpenProgress || 0) + dt / TRAPDOOR_CONFIG.HATCH.openDuration);
-      const angle = b.hatchOpenProgress * TRAPDOOR_CONFIG.HATCH.doorOpenAngle;
+      // ★ 修正：直角以上（約95度 = Math.PI * 0.53）に豪快にパカッと開放
+      const maxOpenAngle = Math.PI * 0.53;
+      const angle = b.hatchOpenProgress * maxOpenAngle;
       b.doorLeftPivot.rotation.z = angle;
       b.doorRightPivot.rotation.z = -angle;
     }
@@ -777,8 +779,17 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
 
       // 完全垂直直下落下：ハッチ直下Z座標（b.startZ）を完全固定
       const pZ = b.startZ;
-      const fallPower = TRAPDOOR_CONFIG.PHYSICS.gravityPower;
-      const pY = b.startY + (b.endY - b.startY) * Math.pow(t, fallPower);
+
+      // ★ 修正：最初の0.12秒（t <= 0.04）は無重力のタメで一瞬浮き上がり、そこから重力（t^2.2）で一気に虚空へ吸い込まれる急降下カーブ
+      const hoverT = 0.04;
+      let effectiveFallT = 0;
+      if (t < hoverT) {
+        effectiveFallT = (t / hoverT) * 0.005;
+      } else {
+        const fallFrac = (t - hoverT) / (1.0 - hoverT);
+        effectiveFallT = 0.005 + Math.pow(fallFrac, 2.2) * 0.995;
+      }
+      const pY = b.startY + (b.endY - b.startY) * effectiveFallT;
       char.pos.set(char.trapdoorX, pY, pZ);
 
       const timeSec = performance.now() * 0.001;

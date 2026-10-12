@@ -711,16 +711,17 @@ export function animate(currentTime) {
       targetLookAheadZ = player.pos.z + camCfg.lookAheadZ; // -28.0m (奥の水平線パノラマ)
       targetFOV = camCfg.fovDrop; // 78
     } else if (isTrapdoor) {
-      // ★ ドロップタワー新設計：デッキ置き去りを全廃し、落ちた瞬間から全身ロックオン並走ワイドチェイス
+      // ★ フリーフォール新設計：床がパカッと開く様子とキャラの全身がよく見える斜めクォーターアングル
       const tX = player.trapdoorX || player.freefallX || player.pos.x;
       const camCfg = TRAPDOOR_CONFIG.CAMERA;
-      targetCamX = tX + camCfg.offsetX; // +4.8m (斜め横から直立全身を捉える)
-      targetCamY = player.pos.y + camCfg.offsetY; // +5.0m (キャラ全身と高さを合わせる)
-      targetCamZ = player.pos.z + camCfg.offsetZ; // +9.5m (全身と背景をバランス良く映す後方距離)
+      // 背中真後ろではなく、斜め横から直立全身と開いた足元ハッチを捉える構図
+      targetCamX = tX + camCfg.offsetX; // +4.8m (斜め横)
+      targetCamY = player.pos.y + camCfg.offsetY; // +5.0m (直立した全身と高さを合わせる)
+      targetCamZ = player.pos.z + camCfg.offsetZ; // +9.5m (後方適正距離)
       targetLookX = tX;
       targetLookY = player.pos.y + camCfg.lookOffsetY; // -1.0m
-      targetLookAheadZ = player.pos.z + camCfg.lookAheadZ; // -24.0m (奥の水平線パノラマ)
-      targetFOV = camCfg.fovDrop; // 78 (超スピードパノラマFOV)
+      targetLookAheadZ = player.pos.z + camCfg.lookAheadZ; // -24.0m (水平線と着地デッキを見通す)
+      targetFOV = camCfg.fovDrop; // 78 (ワイド画角で背景が上へ急激に吹っ飛ぶ落下感を最大化)
     }
 
     // 垂直自由落下・高速滑空時にキャラを見失わない強固な追従LERP

@@ -230,7 +230,6 @@ export function createElevatorStationStructure(scene, startX, startY, startZ, en
   arrPad.position.set(startX, endY + 0.10, endZ - 1.0);
   group.add(arrPad);
 
-  // 視界を遮るワイヤー類は完全撤去（オープンホバーリフト規格）
   scene.add(group);
   return group;
 }
@@ -708,7 +707,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       visualMeshes: [hatch.group],
       startZ: targetDropZ, // ★ 落下開始Zと着地Zを同一にして純粋な垂直落下を実現
       endZ: targetDropZ,
-      approachStartZ: approachStartZ, // ★ 手前島のエッジ座標を保持（Phase 2で歩行判定に接続）
+      approachStartZ: approachStartZ,
       startY, endY,
       hatchCenter: hatch.hatchCenter,
       doorLeftPivot: hatch.doorLeftPivot,
@@ -1121,7 +1120,6 @@ export function extendCourse(scene) {
     if (prev.y >= 14.0) {
       // ★ 下り系5大ギミック：完全20%均等配分（黄金比率）
       if (rand < 0.20) {
-        // ★ 復活：直線スライダー（3レーンから選んで一気に滑り降りる爽快な箸休め）
         type = 'slide';
         nextY = Math.max(5.0, prev.y - 10.0);
         distZ = 42;
@@ -1241,6 +1239,7 @@ export function buildWorld(scene) {
       b.active = false;
       b.mesh.visible = false;
       b.attracting = false;
+      b.mesh.rotation.set(0, 0, 0); // 角度を確実にリセット
     });
   });
   floorBlocksByStage.clear();
@@ -1296,6 +1295,7 @@ export function buildWorld(scene) {
       mb.poolItem.active = false;
       mb.poolItem.mesh.visible = false;
       mb.poolItem.attracting = false;
+      mb.poolItem.mesh.rotation.set(0, 0, 0); // 角度を確実にリセット
     }
   });
   resetParticlePools();
@@ -1358,6 +1358,7 @@ export function cleanupOldData(scene) {
         mb.poolItem.active = false;
         mb.poolItem.mesh.visible = false;
         mb.poolItem.attracting = false;
+        mb.poolItem.mesh.rotation.set(0, 0, 0); // 角度を確実にリセット
       }
       activeMagnetBlocks.splice(i, 1);
     }
@@ -1401,6 +1402,7 @@ export function cleanupOldData(scene) {
         b.active = false;
         b.mesh.visible = false;
         b.attracting = false;
+        b.mesh.rotation.set(0, 0, 0); // 角度を確実にリセット
       });
       floorBlocksByStage.delete(stageKey);
     }
@@ -1538,7 +1540,8 @@ export function spawnSingleBlock(scene, stageIdx, targetTeam = null) {
 
   poolItem.mesh.material = mat;
   poolItem.mesh.position.set(validPos.x, stageInfo.y + 0.25, validPos.z);
-  poolItem.mesh.rotation.y = Math.random() * Math.PI;
+  // ★ 修正：X/Z回転角を確実に0にリセットし、床に斜めに突き刺さる現象を完全根絶
+  poolItem.mesh.rotation.set(0, Math.random() * Math.PI, 0);
   poolItem.mesh.visible = true;
 
   poolItem.active = true;

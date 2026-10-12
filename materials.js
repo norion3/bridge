@@ -31,7 +31,7 @@ itemBeaconRingGeo.rotateX(-Math.PI / 2);
 export const speedStepRingGeo = new THREE.RingGeometry(0.35, 0.68, 24);
 speedStepRingGeo.rotateX(-Math.PI / 2);
 export const puffCloudGeo = new THREE.SphereGeometry(0.24, 8, 8);
-export const attackTrailSphereGeo = new THREE.SphereGeometry(0.52, 10, 10); // 攻撃弾トレイル球体を拡大
+export const attackTrailSphereGeo = new THREE.SphereGeometry(0.52, 10, 10);
 export const attackRingGeo = new THREE.TorusGeometry(0.85, 0.10, 8, 24);
 
 export const baseShockwaveGeo = new THREE.RingGeometry(0.3, 0.65, 32);
@@ -86,7 +86,6 @@ export function createSeaTexture() {
   ctx.fillStyle = radialGrad;
   ctx.fillRect(0, 0, 512, 512);
 
-  // ベジェ曲線による有機的な南国のやわらかい白波ライン（クレッセント・波頭）
   ctx.strokeStyle = 'rgba(255, 255, 255, 0.13)';
   ctx.lineWidth = 1.8;
   ctx.lineCap = 'round';
@@ -181,12 +180,17 @@ export const sharedMats = {
   }),
 
   neutralPlank: new THREE.MeshStandardMaterial({ color: 0xd1d5db, roughness: 0.7 }),
+  
+  // ★ 直線・S字カーブスライダー共通：透き通るクリスタルアクアブルー透明マテリアル
   slideSurface: new THREE.MeshStandardMaterial({
-    color: 0x0284c7,
-    roughness: 0.12,
-    metalness: 0.25,
-    emissive: 0x0369a1,
+    color: 0x38bdf8,
+    roughness: 0.08,
+    metalness: 0.15,
+    emissive: 0x0284c7,
     emissiveIntensity: 0.22,
+    transparent: true,
+    opacity: 0.52,
+    depthWrite: false,
     side: THREE.DoubleSide
   }),
   slideRail: new THREE.MeshStandardMaterial({
@@ -259,7 +263,7 @@ export const sharedMats = {
   itemAttackCrystal: new THREE.MeshStandardMaterial({
     color: ITEM_COLORS.ATTACK.hex,
     emissive: ITEM_COLORS.ATTACK.emissive,
-    emissiveIntensity: 1.1, // 攻撃クリスタルの発光強度をブースト
+    emissiveIntensity: 1.1,
     roughness: 0.05,
     metalness: 0.2
   }),

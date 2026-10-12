@@ -128,7 +128,7 @@ export function createElevatorCageMesh() {
   return lift;
 }
 
-// ★ 合意済みの単色ポップ造形（バイザー・手足アクセントなどの余計な装飾なし）を厳格維持
+// 合意済みの単色ポップ造形（バイザー・手足アクセントなどの余計な装飾なし）を厳格維持
 export function createCharacterMesh(team) {
   const root = new THREE.Group();
   let mat;
@@ -266,8 +266,7 @@ export function refreshCharacterStackVisuals(char) {
   }
 }
 
-// 落下中に巨大ブロックタワーを一瞬で消すのではなく、
-// 「掃除機に吸い込まれるようにシュバッ！とリュックに収まる」スケールアニメーション
+// ★ 修正：スカイダイブ時に頭や体の一部が突き抜けないよう、背中側（-Z方向）に安全にオフセット配置
 export function packCharacterLuggage(char, packProgress) {
   if (!char || !char.meshObj || !char.meshObj.stackGroup) return;
   
@@ -277,10 +276,10 @@ export function packCharacterLuggage(char, packProgress) {
   // シュバッ！と収まるイージング (Cubic Out)
   const easeT = 1 - Math.pow(1 - t, 3);
   
-  // 圧縮時のターゲットスケール・オフセット
-  const targetScaleX = 0.4, targetScaleY = 0.15, targetScaleZ = 0.4;
-  const targetOffsetY = 0.4, targetOffsetZ = -0.25;
-  const targetRotX = -0.15;
+  // 圧縮時のターゲットスケール・オフセット（頭部 Y=1.1 や胴体と干渉しないよう背中側 -0.48m に維持）
+  const targetScaleX = 0.45, targetScaleY = 0.20, targetScaleZ = 0.45;
+  const targetOffsetY = 0.65, targetOffsetZ = -0.48;
+  const targetRotX = -0.05;
   
   const curScaleX = 1.0 + (targetScaleX - 1.0) * easeT;
   const curScaleY = 1.0 + (targetScaleY - 1.0) * easeT;
@@ -295,24 +294,22 @@ export function packCharacterLuggage(char, packProgress) {
   char.meshObj.stackGroup.rotation.x = curRotX;
 }
 
-// （後方互換用：ゴースト化は完全廃止したため、ダミー処理のみ）
+// （後方互換用：ダミー処理）
 export function setStackGhostMode(char, isGhost) {
   char.isGhostStacked = false;
 }
 
-// ★ スカイダイブ専用ポーズ（回転軸の干渉・仰向けバグを完全解消し、正しいうつ伏せダイブ姿勢へ修正）
+// スカイダイブ専用ポーズ（北向き Y=Math.PI、うつ伏せダイブ姿勢）
 export function applySkydivePose(char, dirX, rollAngle) {
-  // YXZ順で適用：北向き（Y = Math.PI）に立った状態で、正のX軸回転（1.1 rad）により頭先行うつ伏せ前傾
   char.meshObj.root.rotation.order = 'YXZ';
   char.meshObj.root.rotation.set(1.1, Math.PI, rollAngle);
 
-  // 両腕を後方（体側）へピタッと流し、大気抵抗を極限までカットするアローストリーム
+  // 両腕を後方（体側）へ流し大気抵抗をカット
   char.meshObj.leftArm.position.set(-0.40, 0.46, -0.32);
   char.meshObj.rightArm.position.set(0.40, 0.46, -0.32);
   char.meshObj.leftArm.rotation.set(-1.42, 0, 0.18);
   char.meshObj.rightArm.rotation.set(-1.42, 0, -0.18);
 
-  // 足先の空気抵抗バタつき（flutter）
   const timeSec = performance.now() * 0.001;
   const flutter = Math.sin(timeSec * 28) * 0.12;
   char.meshObj.leftLeg.rotation.set(0.12 + flutter, 0, -0.05);
@@ -322,7 +319,7 @@ export function applySkydivePose(char, dirX, rollAngle) {
   char.meshObj.head.position.y = 1.10;
 }
 
-// ★ トラップドア専用ポーズ（完全直立バンジー・翼状エアバランス・足先リアルflutter）
+// トラップドア専用ポーズ（完全直立バンジー・翼状エアバランス・足先リアルflutter）
 export function applyTrapdoorPose(char, dirX, timeSec) {
   char.meshObj.root.rotation.order = 'XYZ';
   char.meshObj.root.rotation.set(0.04, Math.PI, -dirX * 0.10);
@@ -333,7 +330,7 @@ export function applyTrapdoorPose(char, dirX, timeSec) {
   char.meshObj.leftArm.rotation.set(-0.14, 0, -0.68);
   char.meshObj.rightArm.rotation.set(-0.14, 0, 0.68);
 
-  // 足先は真下の海を向き、落下気流による微細なバタつき（flutter）
+  // 足先は真下の海を向き、落下気流による微細なバタつき
   const flutter = Math.sin(timeSec * 26) * 0.10;
   char.meshObj.leftLeg.rotation.set(0.10 + flutter, 0, -0.04);
   char.meshObj.rightLeg.rotation.set(0.10 - flutter, 0, 0.04);
@@ -342,9 +339,9 @@ export function applyTrapdoorPose(char, dirX, timeSec) {
   char.meshObj.head.position.y = 1.25;
 }
 
-// ★ ニュートラル姿勢への完全リセット（進行方向である北 y = Math.PI に正しく復帰）
+// ニュートラル姿勢への完全リセット
 export function resetCharacterPose(char) {
-  char.meshObj.root.rotation.order = 'XYZ'; // デフォルトに戻す
+  char.meshObj.root.rotation.order = 'XYZ';
   char.meshObj.root.rotation.set(0, Math.PI, 0);
   char.meshObj.leftArm.position.set(-0.48, 0.68, 0);
   char.meshObj.rightArm.position.set(0.48, 0.68, 0);
@@ -355,7 +352,6 @@ export function resetCharacterPose(char) {
   char.meshObj.body.position.y = 0.65;
   char.meshObj.head.position.y = 1.25;
   
-  // リュック収納の解除
   packCharacterLuggage(char, 0);
 }
 
