@@ -128,6 +128,7 @@ export function createElevatorCageMesh() {
   return lift;
 }
 
+// ★ 合意済みの単色ポップ造形（バイザー・手足アクセントなどの余計な装飾なし）を厳格維持
 export function createCharacterMesh(team) {
   const root = new THREE.Group();
   let mat;
@@ -299,12 +300,11 @@ export function setStackGhostMode(char, isGhost) {
   char.isGhostStacked = false;
 }
 
-// ★ スカイダイブ専用ポーズ（回転軸の干渉を解決し、正しいうつ伏せダイブ姿勢へ修正）
+// ★ スカイダイブ専用ポーズ（回転軸の干渉・仰向けバグを完全解消し、正しいうつ伏せダイブ姿勢へ修正）
 export function applySkydivePose(char, dirX, rollAngle) {
-  // YXZ順で回転を適用すると直感的な「北向き → 前傾 → ロール」になる
+  // YXZ順で適用：北向き（Y = Math.PI）に立った状態で、正のX軸回転（1.1 rad）により頭先行うつ伏せ前傾
   char.meshObj.root.rotation.order = 'YXZ';
-  // 進行方向（北 = Math.PI）、前傾（うつ伏せダイブ = X軸負回転 -1.1）、ロール（Z軸回転）
-  char.meshObj.root.rotation.set(-1.1, Math.PI, rollAngle);
+  char.meshObj.root.rotation.set(1.1, Math.PI, rollAngle);
 
   // 両腕を後方（体側）へピタッと流し、大気抵抗を極限までカットするアローストリーム
   char.meshObj.leftArm.position.set(-0.40, 0.46, -0.32);

@@ -87,22 +87,22 @@ export const ELEVATOR_CONFIG = {
   }
 };
 
-// ★ 看板ステージ1：スカイダイブ仕様定数（頭先行・高速滑空・前進放物線）
+// ★ 看板ステージ1：スカイダイブ仕様定数（頭先行・高速滑空・前進52m/落差-42m/3.1秒）
 export const SKYDIVE_CONFIG = {
   PHYSICS: {
-    minHeightDrop: 30.0,            // 垂直落差 (-30m)
-    forwardDistance: 36.0,          // 前進距離 (伸びやかな放物線)
-    totalDuration: 2.3,             // 滞空飛行時間（秒）
+    minHeightDrop: 42.0,            // 雄大な垂直落差 (-42m)
+    forwardDistance: 52.0,          // 雄大な前進距離 (時速86kmを維持する伸びやかな放物線)
+    totalDuration: 3.1,             // 滞空飛行時間（3.1秒：アクションをたっぷり堪能）
     gravityPower: 2.0,              // 重力加速カーブ（滑らかな放物線）
     horizontalAirControlSpeed: 10.0,// 左右エアコントロール速度
     maxAirOffsetX: 4.8,             // 左右最大シフト幅
     maxRollAngle: Math.PI * 0.18    // 左右スワイプ時の最大バンク角（ロール傾き 約32度）
   },
   CATAPULT: {
-    length: 5.2,                    // ダイブ台突き出し長
+    length: 7.2,                    // コースター発射台規格長（7.2mへ復元）
     width: 3.6,                     // スロープ幅
     slopeAngle: 0.12,               // 前方下り傾斜
-    exclusionRadius: 4.8            // ダイブ台周辺の床ブロック生成禁止半径
+    exclusionRadius: 5.5            // ダイブ台周辺の床ブロック生成禁止半径
   },
   // ★ ダイナミック・ロックオンカメラ
   CAMERA: {
@@ -114,13 +114,13 @@ export const SKYDIVE_CONFIG = {
   }
 };
 
-// ★ 看板ステージ2：ドロップタワー・スカイゲート仕様定数（爆速1.2秒・垂直急降下・スリル最大化）
+// ★ 看板ステージ2：ドロップタワー・スカイゲート仕様定数（超高層落差-58m・2.4秒自由落下）
 export const TRAPDOOR_CONFIG = {
   PHYSICS: {
-    minHeightDrop: 38.0,            // 圧倒的な垂直落差 (-38m)
-    forwardDistance: 10.0,          // 前進距離を極限まで抑えた垂直落下
-    totalDuration: 1.2,             // ★ 爆速化（初速からストンと落ちる絶叫速度）
-    gravityPower: 1.6,              // ★ t^1.6 （開始直後から一気に重力加速）
+    minHeightDrop: 58.0,            // 圧倒的な超高層垂直落差 (-58m)
+    forwardDistance: 12.0,          // 前進距離を抑えた垂直落下
+    totalDuration: 2.4,             // 落下滞空時間（2.4秒：落ちるスリルを存分に魅せる）
+    gravityPower: 1.6,              // 初速からストンと落ちる重力加速
     horizontalAirControlSpeed: 7.5, // 左右エアスライド速度（直立維持）
     maxAirOffsetX: 3.4              // 空中微調整の最大左右幅
   },
@@ -139,7 +139,7 @@ export const TRAPDOOR_CONFIG = {
     offsetZ: 7.0,                   // 離れすぎずロックオン
     lookOffsetY: -2.5,              // 水平線と着地島の中間を注視
     lookAheadZ: -12.0,              // 前方奥
-    lagPhase1Duration: 0.20,        // 開放直後の上空置き去り遅延時間（1.2秒に合わせ0.20秒）
+    lagPhase1Duration: 0.20,        // 開放直後の上空置き去り遅延時間
     fovStart: 62,                   // 開始時FOV
     fovDrop: 76                     // 追従加速時FOV（ワイドパノラマ）
   }

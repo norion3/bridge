@@ -28,6 +28,7 @@ import {
   dropDeckGeo,
   dropPylonGeo,
   dropIndicatorGeo,
+  dropPulleyGeo,
   gatePedestalGeo,
   hatchDoorGeo,
   COLOR_NEUTRAL_PLANK,
@@ -87,8 +88,8 @@ export function createModifierGate(scene, stageIdx, posX, posZ, posY, opType, va
   panelMesh.castShadow = true;
   group.add(panelMesh);
 
-  // 門の柱
-  const postGeo = new THREE.CylinderGeometry(0.1, 0.1, 2.4, 8);
+  // 門の柱：ホワイトスチール支柱
+  const postGeo = new THREE.CylinderGeometry(0.09, 0.09, 2.4, 12);
   const p1 = new THREE.Mesh(postGeo, sharedMats.gateFrame);
   p1.position.set(-1.3, 1.2, 0);
   group.add(p1);
@@ -96,15 +97,25 @@ export function createModifierGate(scene, stageIdx, posX, posZ, posY, opType, va
   p2.position.x = 1.3;
   group.add(p2);
 
-  // 門が宙に浮かないための安定感ある円錐台ベース（台座）
+  // 支柱上下のオレンジアクセントリング
+  const ringGeo = new THREE.TorusGeometry(0.12, 0.025, 8, 16);
+  ringGeo.rotateX(Math.PI / 2);
+  const rL1 = new THREE.Mesh(ringGeo, sharedMats.ziplinePylonTrim);
+  rL1.position.set(-1.3, 0.35, 0);
+  group.add(rL1);
+  const rR1 = rL1.clone();
+  rR1.position.x = 1.3;
+  group.add(rR1);
+
+  // 黒タイヤを完全撤廃：浮島の白大理石フロアから自然に立ち上がるクリーンベース
   const pedL = new THREE.Mesh(gatePedestalGeo, sharedMats.gatePedestal);
-  pedL.position.set(-1.3, 0.175, 0);
+  pedL.position.set(-1.3, 0.08, 0);
   group.add(pedL);
   const pedR = pedL.clone();
   pedR.position.x = 1.3;
   group.add(pedR);
 
-  const topBarGeo = new THREE.CylinderGeometry(0.08, 0.08, 2.7, 8);
+  const topBarGeo = new THREE.CylinderGeometry(0.08, 0.08, 2.7, 12);
   topBarGeo.rotateZ(Math.PI / 2);
   const topBar = new THREE.Mesh(topBarGeo, sharedMats.gateFrame);
   topBar.position.y = 2.4;
@@ -220,33 +231,57 @@ export function createElevatorStationStructure(scene, startX, startY, startZ, en
   arrPad.position.set(startX, endY + 0.10, endZ - 1.0);
   group.add(arrPad);
 
-  // ★ ワイヤー（ケーブル）関連を完全に撤去し視界をクリアにした「ホバー・リフト」化
+  // 視界を遮るワイヤー類は完全撤去（オープンホバーリフト規格）
   scene.add(group);
   return group;
 }
 
+// ★ スカイダイブ発射台：7.2m コースター滑走路規格（水色床面・シェブロン矢印・太いオレンジ安全パイプレール）
 export function createSkydiveCatapultStructure(scene, posX, posY, posZ) {
   const group = new THREE.Group();
+  const rampLen = SKYDIVE_CONFIG.CATAPULT.length; // 7.2m
+  const slopeAng = SKYDIVE_CONFIG.CATAPULT.slopeAngle;
 
+  // 1. スカイブルー滑走路床面
   const rampMesh = new THREE.Mesh(catapultRampGeo, sharedMats.catapultDeck);
-  rampMesh.position.set(posX, posY + 0.08, posZ - SKYDIVE_CONFIG.CATAPULT.length * 0.42);
-  rampMesh.rotation.x = SKYDIVE_CONFIG.CATAPULT.slopeAngle;
+  rampMesh.position.set(posX, posY + 0.08, posZ - rampLen * 0.45);
+  rampMesh.rotation.x = slopeAng;
   rampMesh.receiveShadow = true;
   rampMesh.castShadow = true;
   group.add(rampMesh);
 
+  // 2. 太いオレンジ安全パイプレール
   const railL = new THREE.Mesh(catapultTrimGeo, sharedMats.catapultNeonRail);
-  railL.position.set(posX - 1.82, posY + 0.28, posZ - SKYDIVE_CONFIG.CATAPULT.length * 0.42);
-  railL.rotation.x = SKYDIVE_CONFIG.CATAPULT.slopeAngle;
+  railL.position.set(posX - 1.82, posY + 0.32, posZ - rampLen * 0.45);
+  railL.rotation.x = slopeAng;
   group.add(railL);
 
   const railR = railL.clone();
   railR.position.x = posX + 1.82;
   group.add(railR);
 
-  const tipEdgeGeo = new THREE.BoxGeometry(3.8, 0.12, 0.35);
+  // 3. 滑走面上のシェブロン矢印ガイドライン（加速誘導サイン）
+  const numChevrons = 4;
+  const chevronGeo = new THREE.BoxGeometry(1.1, 0.04, 0.16);
+  for (let ci = 0; ci < numChevrons; ci++) {
+    const cz = posZ - 1.4 - ci * 1.35;
+    const cy = posY + 0.22 + (posZ - cz) * Math.sin(slopeAng);
+
+    const chevL = new THREE.Mesh(chevronGeo, sharedMats.catapultNeonRail);
+    chevL.position.set(posX - 0.45, cy, cz);
+    chevL.rotation.set(slopeAng, 0.42, 0);
+    group.add(chevL);
+
+    const chevR = new THREE.Mesh(chevronGeo, sharedMats.catapultNeonRail);
+    chevR.position.set(posX + 0.45, cy, cz);
+    chevR.rotation.set(slopeAng, -0.42, 0);
+    group.add(chevR);
+  }
+
+  // 4. 先端エッジトリム
+  const tipEdgeGeo = new THREE.BoxGeometry(3.8, 0.16, 0.35);
   const tipEdge = new THREE.Mesh(tipEdgeGeo, sharedMats.catapultNeonRail);
-  tipEdge.position.set(posX, posY - 0.22, posZ - SKYDIVE_CONFIG.CATAPULT.length * 0.92);
+  tipEdge.position.set(posX, posY - 0.28, posZ - rampLen * 0.92);
   group.add(tipEdge);
 
   group.position.set(0, 0, 0);
@@ -258,10 +293,11 @@ export function createSkydiveCatapultStructure(scene, posX, posY, posZ) {
   };
 }
 
+// ★ ドロップタワー・スカイゲート施設：白スチールトラス支柱＆最上部オレンジ滑車プーリー
 export function createTrapdoorHatchStructure(scene, posX, posY, posZ) {
   const group = new THREE.Group();
 
-  // 1. せり出し円形強化ガラスデッキ（下が透けて見える独立アトラクション施設）
+  // 1. せり出し円形強化ガラスデッキ
   const deck = new THREE.Mesh(dropDeckGeo, sharedMats.dropGlassFloor);
   deck.position.set(posX, posY + 0.08, posZ);
   deck.receiveShadow = true;
@@ -274,7 +310,7 @@ export function createTrapdoorHatchStructure(scene, posX, posY, posZ) {
   rim.position.set(posX, posY + 0.16, posZ);
   group.add(rim);
 
-  // 3. 左右にそびえ立つツインタワー柱 ＆ シアンブルーネオンインジケーター
+  // 3. 左右にそびえ立つ白スチールトラス支柱 ＆ シアンブルーネオンインジケーター
   const pylonL = new THREE.Mesh(dropPylonGeo, sharedMats.dropPylonSteel);
   pylonL.position.set(posX - 2.2, posY + 3.75, posZ);
   pylonL.castShadow = true;
@@ -293,19 +329,28 @@ export function createTrapdoorHatchStructure(scene, posX, posY, posZ) {
   indR.position.set(posX + 2.2, posY + 3.75, posZ + 0.18);
   group.add(indR);
 
-  // 4. ツインタワー上部クロスバー
-  const topCrossBarGeo = new THREE.BoxGeometry(4.8, 0.35, 0.35);
+  // 4. タワー上部クロスバー
+  const topCrossBarGeo = new THREE.BoxGeometry(4.8, 0.32, 0.32);
   const topCrossBar = new THREE.Mesh(topCrossBarGeo, sharedMats.dropPylonSteel);
   topCrossBar.position.set(posX, posY + 7.3, posZ);
   group.add(topCrossBar);
 
-  // 5. 強化ガラスハッチ中央開口部と深淵ボイド
+  // 5. 最上部オレンジ滑車プーリー（絶叫タワー構造）
+  const pulleyL = new THREE.Mesh(dropPulleyGeo, sharedMats.dropPulleySteel);
+  pulleyL.position.set(posX - 1.8, posY + 7.3, posZ);
+  group.add(pulleyL);
+
+  const pulleyR = new THREE.Mesh(dropPulleyGeo, sharedMats.dropPulleySteel);
+  pulleyR.position.set(posX + 1.8, posY + 7.3, posZ);
+  group.add(pulleyR);
+
+  // 6. 強化ガラスハッチ中央開口部と深淵ボイド
   const voidMesh = new THREE.Mesh(new THREE.PlaneGeometry(3.0, 3.0), sharedMats.hatchInnerVoid);
   voidMesh.rotation.x = -Math.PI / 2;
   voidMesh.position.set(posX, posY - 0.02, posZ);
   group.add(voidMesh);
 
-  // 6. 左右に開放するガラスハッチ扉（ピボット制御）
+  // 7. 左右に開放するガラスハッチ扉（ピボット制御）
   const doorLeftPivot = new THREE.Group();
   doorLeftPivot.position.set(posX - 1.5, posY + 0.10, posZ);
   const doorL = new THREE.Mesh(hatchDoorGeo, sharedMats.dropGlassFloor);
@@ -534,7 +579,7 @@ export function spawnItem(scene, stageIdx, type = 'speed') {
   } else if (type === 'magnet') {
     crystalMat = sharedMats.itemMagnetCrystal;
     ringMat = sharedMats.itemMagnetBeaconRing;
-    crystalGeoToUse = itemMagnetGeo; // 洗練された12面体幾何学ジュエル
+    crystalGeoToUse = itemMagnetGeo;
   } else {
     crystalMat = sharedMats.itemCrystal;
     ringMat = sharedMats.itemBeaconRing;
@@ -1066,14 +1111,13 @@ export function extendCourse(scene) {
     const rand = Math.random();
     if (prev.y >= 14.0) {
       if (rand < 0.28) {
-        // 看板ステージ1：スカイダイブ（頭先行・前進36m・落差-30m）
+        // 看板ステージ1：スカイダイブ（頭先行・前進52m・落差-42m）
         type = 'skydive';
         nextY = Math.max(5.0, prev.y - SKYDIVE_CONFIG.PHYSICS.minHeightDrop);
         distZ = SKYDIVE_CONFIG.PHYSICS.forwardDistance;
         r = 11.5;
       } else if (rand < 0.54) {
-        // 看板ステージ2：ドロップタワー（足先行・垂直直下ドロップ・落差-38m）
-        // 中心間距離を36mに広げ、島同士のめり込みと壁を根本撤去
+        // 看板ステージ2：ドロップタワー（足先行・垂直直下ドロップ・超高層落差-58m）
         type = 'trapdoor';
         nextY = Math.max(5.0, prev.y - TRAPDOOR_CONFIG.PHYSICS.minHeightDrop);
         distZ = 36.0;

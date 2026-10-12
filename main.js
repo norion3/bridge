@@ -686,37 +686,40 @@ export function animate(currentTime) {
       targetLookAheadZ = player.pos.z - 12.0;
       targetFOV = 64;
     } else if (isSkydive) {
-      // ダイナミックロックオン・カメラ（置いてけぼり現象を完全解消）
+      // ★ スカイダイブ：画面中央ロックオン（置き去り・画面端への見切れを100%根絶）
       const airX = player.skydiveX || player.pos.x;
       const camCfg = SKYDIVE_CONFIG.CAMERA;
-      targetCamX = airX * 0.45;
-      targetCamY = player.pos.y + camCfg.offsetY; // 4.5
-      targetCamZ = player.pos.z + camCfg.offsetZ; // 8.5
-      targetLookX = airX * 0.25;
-      targetLookY = player.pos.y - 1.2;
-      targetLookAheadZ = player.pos.z + camCfg.lookAheadZ; // -28.0
-      targetFOV = camCfg.fovDrop; // 78
+      targetCamX = airX * 0.40;
+      targetCamY = player.pos.y + camCfg.offsetY; // +4.5m (キャラ全身を視野中心に捉える高さ)
+      targetCamZ = player.pos.z + camCfg.offsetZ; // +8.5m (適正チェイス距離)
+      targetLookX = airX * 0.20;
+      targetLookY = player.pos.y - 1.0;
+      targetLookAheadZ = player.pos.z + camCfg.lookAheadZ; // -28.0m (奥の水平線パノラマ)
+      targetFOV = camCfg.fovDrop; // 78 (ワイドパノラマでスピード感を最大化)
     } else if (isTrapdoor) {
-      // ダイナミックロックオン・クォーターチェイス（上空消滅バグを完全解消）
+      // ★ トラップドア：画面上空置き去りを完全廃止し、自キャラ斜め上をタイトにキープ
       const tX = player.trapdoorX || player.freefallX || player.pos.x;
       const camCfg = TRAPDOOR_CONFIG.CAMERA;
-      targetCamX = tX + camCfg.offsetX; // 4.5
-      targetCamY = player.pos.y + camCfg.offsetY; // 6.5
-      targetCamZ = player.pos.z + camCfg.offsetZ; // 7.0
-      targetLookX = tX + (camCfg.lookOffsetX || 0);
-      targetLookY = player.pos.y + camCfg.lookOffsetY; // -2.5
-      targetLookAheadZ = player.pos.z + camCfg.lookAheadZ; // -12.0
+      targetCamX = tX * 0.35 + 2.4; // 離れすぎず斜め横に配置
+      targetCamY = player.pos.y + camCfg.offsetY; // +6.5m
+      targetCamZ = player.pos.z + camCfg.offsetZ; // +7.0m
+      targetLookX = tX * 0.2;
+      targetLookY = player.pos.y + camCfg.lookOffsetY; // -2.5m
+      targetLookAheadZ = player.pos.z + camCfg.lookAheadZ; // -12.0m
       targetFOV = camCfg.fovDrop; // 76
     }
 
-    // カメラのY軸（縦）追従速度を落下の速さに合わせて強化し、キャラが見切れるのを防ぐ
-    const lerpFactorPos = isTrapdoor ? 0.28 : (isSkydive ? 0.25 : (isJumping ? 0.16 : 0.14));
-    camera.position.x = THREE.MathUtils.lerp(camera.position.x, targetCamX, lerpFactorPos);
-    camera.position.y = THREE.MathUtils.lerp(camera.position.y, targetCamY, isTrapdoor ? 0.35 : (isSkydive ? 0.30 : 0.16));
-    camera.position.z = THREE.MathUtils.lerp(camera.position.z, targetCamZ, lerpFactorPos);
+    // ★ スカイダイブ／トラップドア時の追従速度（LERP）を強化し、初速での見切れ・遅れを完全に解消
+    const lerpFactorX = (isSkydive || isTrapdoor) ? 0.38 : 0.14;
+    const lerpFactorY = isTrapdoor ? 0.42 : (isSkydive ? 0.38 : (isJumping ? 0.16 : 0.14));
+    const lerpFactorZ = (isSkydive || isTrapdoor) ? 0.42 : 0.14;
+
+    camera.position.x = THREE.MathUtils.lerp(camera.position.x, targetCamX, lerpFactorX);
+    camera.position.y = THREE.MathUtils.lerp(camera.position.y, targetCamY, lerpFactorY);
+    camera.position.z = THREE.MathUtils.lerp(camera.position.z, targetCamZ, lerpFactorZ);
 
     if (Math.abs(camera.fov - targetFOV) > 0.1) {
-      camera.fov = THREE.MathUtils.lerp(camera.fov, targetFOV, 0.08);
+      camera.fov = THREE.MathUtils.lerp(camera.fov, targetFOV, 0.12);
       camera.updateProjectionMatrix();
     }
 

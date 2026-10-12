@@ -1,4 +1,4 @@
-// 物理移動判定・リュック収納アニメーション連動・シームレスループ音響連携
+// 物理移動判定・リュック収納アニメーション連動・シームレス風音連携
 import {
   TEAMS,
   TRAMPOLINE_TIERS,
@@ -257,7 +257,8 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
 
         if (char.isPlayer && soundRef) {
           soundRef.playSkydiveLaunch();
-          soundRef.startSkydiveGlide(); // ★ ループ音源再生開始
+          // 滑空時間（3.1秒）に応じた滑らかな風音カーブを一度だけ予約再生
+          soundRef.startSkydiveGlide(SKYDIVE_CONFIG.PHYSICS.totalDuration);
         }
         return;
       }
@@ -276,7 +277,8 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
 
         if (char.isPlayer && soundRef) {
           soundRef.playTrapdoorOpen();
-          soundRef.startTrapdoorFall(); // ★ ループ音源再生開始
+          // 垂直落下時間（2.4秒）に応じたドップラー突風カーブを一度だけ予約再生
+          soundRef.startTrapdoorFall(TRAPDOOR_CONFIG.PHYSICS.totalDuration);
         }
         return;
       }
@@ -663,7 +665,7 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
       triggerLandingShockwave(char.pos.x, char.pos.y, char.pos.z, 3.8, 0x0066ff);
       if (char.isPlayer && soundRef) {
         soundRef.playLanding();
-        soundRef.stopSkydiveGlide(); // ★ ループ音源を停止
+        soundRef.stopSkydiveGlide(); // ★ 着地時に音源停止
       }
 
       resetCharacterPose(char);
@@ -693,10 +695,7 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
       char.pos.set(char.skydiveX, pY, pZ);
 
       applySkydivePose(char, dirX, char.skydiveRoll);
-
-      if (char.isPlayer && soundRef) {
-        soundRef.modulateSkydiveGlide(t); // ★ 落下速度に応じてピッチを上げる
-      }
+      // （※毎フレームの音程更新はジッパーノイズになるため全廃し、start時に全自動スケジューリング済み）
     }
     char.meshObj.root.position.copy(char.pos);
     return;
@@ -730,7 +729,7 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
       triggerLandingShockwave(char.pos.x, char.pos.y, char.pos.z, 3.4, 0x0284c7);
       if (char.isPlayer && soundRef) {
         soundRef.playLanding();
-        soundRef.stopTrapdoorFall(); // ★ ループ音源を停止
+        soundRef.stopTrapdoorFall(); // ★ 着地時に音源停止
       }
 
       resetCharacterPose(char);
@@ -758,10 +757,7 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
 
       const timeSec = performance.now() * 0.001;
       applyTrapdoorPose(char, dirX, timeSec);
-
-      if (char.isPlayer && soundRef) {
-        soundRef.modulateTrapdoorFall(t); // ★ 落下速度に応じてピッチを上げる
-      }
+      // （※毎フレームの音程更新はジッパーノイズになるため全廃し、start時に全自動スケジューリング済み）
     }
     char.meshObj.root.position.copy(char.pos);
     return;
@@ -1169,7 +1165,7 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
       char.meshObj.leftLeg.rotation.x = swing;
       char.meshObj.rightLeg.rotation.x = -swing;
       char.meshObj.leftArm.rotation.x = -swing;
-      char.meshObj.rightArm.rotation.x = swing;
+      char.meshObj.rightArm.rotation.x = -swing;
 
       const bounce = Math.abs(Math.sin(char.walkCycle * 2)) * 0.12;
       char.meshObj.body.position.y = 0.65 + bounce;

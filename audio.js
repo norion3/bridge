@@ -1,4 +1,4 @@
-// Web Audio API音響エンジン（シームレス・ループモジュレーション対応・スマホ内蔵スピーカー対応フルレンジ風音合成）
+// Web Audio API音響エンジン（シームレス・オートスケジューリング風音合成・ジッパーノイズ完全根絶）
 export class SoundEngine {
   constructor() {
     this.ctx = null;
@@ -12,13 +12,13 @@ export class SoundEngine {
     this.lastZipSound = 0;
     this.lastElevatorSound = 0;
 
-    // スカイダイブ（前飛び）用ループ音源参照
+    // スカイダイブ（前飛び）用音源参照
     this.skydiveGlideSource = null;
     this.skydiveGlideFilter = null;
     this.skydiveGlideGain = null;
     this.skydiveIsPlaying = false;
 
-    // トラップドア（直下）用ループ音源参照
+    // トラップドア（直下）用音源参照
     this.trapdoorFallSource = null;
     this.trapdoorFallFilter = null;
     this.trapdoorFallGain = null;
@@ -52,7 +52,7 @@ export class SoundEngine {
 
   getNoiseBuffer() {
     if (!this.noiseBuffer && this.ctx) {
-      const bufferSize = this.ctx.sampleRate * 2.0; // 2秒分のシームレスノイズ
+      const bufferSize = this.ctx.sampleRate * 4.0; // 4秒分の連続ノイズ
       const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
       const data = buffer.getChannelData(0);
       for (let i = 0; i < bufferSize; i++) {
@@ -455,7 +455,7 @@ export class SoundEngine {
     } catch (e) {}
   }
 
-  // --- ★ スカイダイブ（前飛び）用：シームレスループ音響 ---
+  // --- ★ スカイダイブ（前飛び）用：完全シームレス自動スケジューリング風音 ---
 
   playSkydiveLaunch() {
     if (this.muted || !this.ctx) return;
@@ -463,7 +463,7 @@ export class SoundEngine {
       const now = this.ctx.currentTime;
       const osc1 = this.ctx.createOscillator();
       const gain1 = this.ctx.createGain();
-      osc1.type = 'triangle'; // 金属音（Sawtooth）を廃止
+      osc1.type = 'triangle';
       osc1.frequency.setValueAtTime(320, now);
       osc1.frequency.exponentialRampToValueAtTime(1600, now + 0.22);
       gain1.gain.setValueAtTime(0.38, now);
@@ -476,8 +476,10 @@ export class SoundEngine {
     } catch (e) {}
   }
 
-  startSkydiveGlide() {
-    if (this.muted || !this.ctx || this.skydiveIsPlaying) return;
+  // ★ 毎フレーム更新を全廃し、ジッパーノイズ（チッチッチ音）を100%根絶
+  startSkydiveGlide(totalDuration = 3.1) {
+    if (this.muted || !this.ctx) return;
+    this.stopSkydiveGlide(); // 既存音源をクリーン停止
     try {
       const noiseBuffer = this.getNoiseBuffer();
       if (!noiseBuffer) return;
@@ -490,32 +492,31 @@ export class SoundEngine {
 
       this.skydiveGlideFilter = this.ctx.createBiquadFilter();
       this.skydiveGlideFilter.type = 'bandpass';
-      this.skydiveGlideFilter.frequency.setValueAtTime(850, now);
-      this.skydiveGlideFilter.Q.value = 1.2; // ピーピー音を抑えて「シャーッ」という風音に
+      this.skydiveGlideFilter.Q.setValueAtTime(1.2, now);
+
+      // Web Audioエンジンに滑らかな連続周波数カーブ（ヒュゥゥーッ）を事前予約
+      this.skydiveGlideFilter.frequency.setValueAtTime(700, now);
+      this.skydiveGlideFilter.frequency.exponentialRampToValueAtTime(1800, now + totalDuration * 0.45);
+      this.skydiveGlideFilter.frequency.exponentialRampToValueAtTime(2400, now + totalDuration * 0.85);
+      this.skydiveGlideFilter.frequency.exponentialRampToValueAtTime(1100, now + totalDuration);
 
       this.skydiveGlideGain = this.ctx.createGain();
       this.skydiveGlideGain.gain.setValueAtTime(0.01, now);
-      this.skydiveGlideGain.gain.linearRampToValueAtTime(0.20, now + 0.15); // スムーズなフェードイン
+      this.skydiveGlideGain.gain.linearRampToValueAtTime(0.24, now + 0.20);
+      this.skydiveGlideGain.gain.setValueAtTime(0.24, now + totalDuration * 0.82);
+      this.skydiveGlideGain.gain.linearRampToValueAtTime(0.001, now + totalDuration);
 
       this.skydiveGlideSource.connect(this.skydiveGlideFilter);
       this.skydiveGlideFilter.connect(this.skydiveGlideGain);
       this.skydiveGlideGain.connect(this.masterGain);
 
       this.skydiveGlideSource.start(now);
+      this.skydiveGlideSource.stop(now + totalDuration + 0.1);
     } catch (e) {}
   }
 
-  modulateSkydiveGlide(intensity) {
-    // 毎フレーム呼ばれ、落下速度（intensity: 0.0〜1.0）に応じてピッチを上げる
-    if (!this.skydiveIsPlaying || !this.ctx || !this.skydiveGlideFilter || !this.skydiveGlideGain) return;
-    try {
-      const now = this.ctx.currentTime;
-      const centerFreq = 850 + intensity * 1800; // 速度に応じて「ヒューーッ」と高くなる
-      this.skydiveGlideFilter.frequency.setTargetAtTime(centerFreq, now, 0.05);
-      const vol = 0.20 + intensity * 0.30;
-      this.skydiveGlideGain.gain.setTargetAtTime(vol, now, 0.05);
-    } catch (e) {}
-  }
+  // （後方互換用：毎フレーム更新はジッパーノイズ発生源となるため安全なno-opへ移行）
+  modulateSkydiveGlide(intensity) {}
 
   stopSkydiveGlide() {
     if (!this.skydiveIsPlaying || !this.ctx) return;
@@ -524,10 +525,10 @@ export class SoundEngine {
       if (this.skydiveGlideGain) {
         this.skydiveGlideGain.gain.cancelScheduledValues(now);
         this.skydiveGlideGain.gain.setValueAtTime(this.skydiveGlideGain.gain.value, now);
-        this.skydiveGlideGain.gain.exponentialRampToValueAtTime(0.001, now + 0.1); // スムーズなフェードアウト
+        this.skydiveGlideGain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
       }
       if (this.skydiveGlideSource) {
-        this.skydiveGlideSource.stop(now + 0.15);
+        this.skydiveGlideSource.stop(now + 0.10);
       }
       
       const src = this.skydiveGlideSource;
@@ -535,10 +536,10 @@ export class SoundEngine {
       const gn = this.skydiveGlideGain;
       
       setTimeout(() => {
-        if (src) { src.disconnect(); }
-        if (flt) { flt.disconnect(); }
-        if (gn) { gn.disconnect(); }
-      }, 200);
+        if (src) { try { src.disconnect(); } catch (e) {} }
+        if (flt) { try { flt.disconnect(); } catch (e) {} }
+        if (gn) { try { gn.disconnect(); } catch (e) {} }
+      }, 150);
       
       this.skydiveGlideSource = null;
       this.skydiveGlideFilter = null;
@@ -547,7 +548,7 @@ export class SoundEngine {
     } catch (e) {}
   }
 
-  // --- ★ トラップドア（直下）用：シームレスループ音響 ---
+  // --- ★ トラップドア（直下）用：完全シームレス自動スケジューリング風音 ---
 
   playTrapdoorOpen() {
     if (this.muted || !this.ctx) return;
@@ -581,8 +582,10 @@ export class SoundEngine {
     } catch (e) {}
   }
 
-  startTrapdoorFall() {
-    if (this.muted || !this.ctx || this.trapdoorIsPlaying) return;
+  // ★ 毎フレーム更新を全廃し、大気を切り裂くドップラー突風（ヒュオオオッ）を滑らかに一括予約
+  startTrapdoorFall(totalDuration = 2.4) {
+    if (this.muted || !this.ctx) return;
+    this.stopTrapdoorFall();
     try {
       const noiseBuffer = this.getNoiseBuffer();
       if (!noiseBuffer) return;
@@ -595,31 +598,31 @@ export class SoundEngine {
 
       this.trapdoorFallFilter = this.ctx.createBiquadFilter();
       this.trapdoorFallFilter.type = 'bandpass';
+      this.trapdoorFallFilter.Q.setValueAtTime(1.0, now);
+
+      // 初速の静寂から垂直急降下に伴いピッチが駆け上がるドップラー効果
       this.trapdoorFallFilter.frequency.setValueAtTime(650, now);
-      this.trapdoorFallFilter.Q.value = 1.0; // 広い帯域の「ゴォォォォッ」という音
+      this.trapdoorFallFilter.frequency.exponentialRampToValueAtTime(1900, now + totalDuration * 0.55);
+      this.trapdoorFallFilter.frequency.exponentialRampToValueAtTime(2900, now + totalDuration * 0.90);
+      this.trapdoorFallFilter.frequency.exponentialRampToValueAtTime(1400, now + totalDuration);
 
       this.trapdoorFallGain = this.ctx.createGain();
       this.trapdoorFallGain.gain.setValueAtTime(0.01, now);
-      this.trapdoorFallGain.gain.linearRampToValueAtTime(0.25, now + 0.15);
+      this.trapdoorFallGain.gain.linearRampToValueAtTime(0.28, now + 0.18);
+      this.trapdoorFallGain.gain.setValueAtTime(0.28, now + totalDuration * 0.85);
+      this.trapdoorFallGain.gain.linearRampToValueAtTime(0.001, now + totalDuration);
 
       this.trapdoorFallSource.connect(this.trapdoorFallFilter);
       this.trapdoorFallFilter.connect(this.trapdoorFallGain);
       this.trapdoorFallGain.connect(this.masterGain);
 
       this.trapdoorFallSource.start(now);
+      this.trapdoorFallSource.stop(now + totalDuration + 0.1);
     } catch (e) {}
   }
 
-  modulateTrapdoorFall(intensity) {
-    if (!this.trapdoorIsPlaying || !this.ctx || !this.trapdoorFallFilter || !this.trapdoorFallGain) return;
-    try {
-      const now = this.ctx.currentTime;
-      const centerFreq = 650 + intensity * 2400; // 落下速度に応じてピッチが駆け上がる
-      this.trapdoorFallFilter.frequency.setTargetAtTime(centerFreq, now, 0.05);
-      const vol = 0.25 + intensity * 0.40;
-      this.trapdoorFallGain.gain.setTargetAtTime(vol, now, 0.05);
-    } catch (e) {}
-  }
+  // （後方互換用：安全なno-op）
+  modulateTrapdoorFall(intensity) {}
 
   stopTrapdoorFall() {
     if (!this.trapdoorIsPlaying || !this.ctx) return;
@@ -628,10 +631,10 @@ export class SoundEngine {
       if (this.trapdoorFallGain) {
         this.trapdoorFallGain.gain.cancelScheduledValues(now);
         this.trapdoorFallGain.gain.setValueAtTime(this.trapdoorFallGain.gain.value, now);
-        this.trapdoorFallGain.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+        this.trapdoorFallGain.gain.exponentialRampToValueAtTime(0.001, now + 0.08);
       }
       if (this.trapdoorFallSource) {
-        this.trapdoorFallSource.stop(now + 0.15);
+        this.trapdoorFallSource.stop(now + 0.10);
       }
       
       const src = this.trapdoorFallSource;
@@ -639,10 +642,10 @@ export class SoundEngine {
       const gn = this.trapdoorFallGain;
       
       setTimeout(() => {
-        if (src) { src.disconnect(); }
-        if (flt) { flt.disconnect(); }
-        if (gn) { gn.disconnect(); }
-      }, 200);
+        if (src) { try { src.disconnect(); } catch (e) {} }
+        if (flt) { try { flt.disconnect(); } catch (e) {} }
+        if (gn) { try { gn.disconnect(); } catch (e) {} }
+      }, 150);
       
       this.trapdoorFallSource = null;
       this.trapdoorFallFilter = null;
@@ -653,20 +656,9 @@ export class SoundEngine {
 
   // 既存コードとの後方互換用エイリアス
   playDiveLaunch() { this.playSkydiveLaunch(); }
-  
-  // ★ systems.js等から旧式のまま呼ばれてチッチッチ音を出さないようにするダミー処理
-  playFreefallWind(intensity = 0.5) { 
-    // ※ startTrapdoorFall / modulateTrapdoorFall を直接呼ぶ正しい実装へ移行するため、
-    // ここで毎回 start するとチッチッチと鳴ってしまう。
-    // したがって、このエイリアスは安全のために空にしておく。
-  }
-  // 同じく playTrapdoorFall(t) 等が呼ばれた場合もガードしておく
-  playTrapdoorFall(t) {
-    this.modulateTrapdoorFall(t);
-  }
-  playSkydiveGlide(t) {
-    this.modulateSkydiveGlide(t);
-  }
+  playFreefallWind(intensity = 0.5) {}
+  playTrapdoorFall(t) {}
+  playSkydiveGlide(t) {}
 
   playLanding() {
     if (this.muted || !this.ctx) return;
