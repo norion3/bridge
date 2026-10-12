@@ -631,6 +631,19 @@ export function animate(currentTime) {
     const isSkydive = player.onSkydive;
     const isTrapdoor = (player.onTrapdoor || player.onFreefall);
 
+    // ★ 落ちる直前のスカイウォーク歩行時判定（手前島エッジからハッチ前まで）
+    const isApproachingTrapdoor = (() => {
+      if (isTrapdoor) return null;
+      const localTrapB = bridges.find(b => b.isTrapdoor && b.stageIdx === player.currentStage);
+      if (localTrapB) {
+        const approachStart = localTrapB.approachStartZ !== undefined ? localTrapB.approachStartZ : (localTrapB.startZ + 14.0);
+        if (player.pos.z <= approachStart + 0.8 && player.pos.z >= localTrapB.startZ - 1.8 && Math.abs(player.pos.x) < 2.5) {
+          return localTrapB;
+        }
+      }
+      return null;
+    })();
+
     const stackLift = Math.min((player.stackCount || 0) * 0.08, 3.2);
 
     let targetCamX = player.pos.x * 0.2;
@@ -710,24 +723,67 @@ export function animate(currentTime) {
       targetLookY = player.pos.y - 0.8;
       targetLookAheadZ = player.pos.z + camCfg.lookAheadZ; // -28.0m (奥の水平線パノラマ)
       targetFOV = camCfg.fovDrop; // 78
+    } else if (isApproachingTrapdoor) {
+      // ★ 落ちる直前（スカイウォーク歩行中）：ステージ上ではなく「脇（サイドビュー）」から捉えて高低差とガラス通路を際立たせる
+      targetCamX = player.pos.x + 7.5;
+      targetCamY = player.pos.y + 4.2;
+      targetCamZ = player.pos.z + 3.0;
+      targetLookX = player.pos.x - 0.8;
+      targetLookY = player.pos.y + 1.0;
+      targetLookAheadZ = player.pos.z - 2.5;
+      targetFOV = 64;
     } else if (isTrapdoor) {
-      // ★ フリーフォール新設計：床がパカッと開く様子とキャラの全身がよく見える斜めクォーターアングル
+      // ★ フリーフォール：3段階シネマティックカメラ
+      const b = player.activeTrapdoor || player.activeFreefall;
+      const prog = player.trapdoorProgress || player.freefallProgress || 0;
       const tX = player.trapdoorX || player.freefallX || player.pos.x;
       const camCfg = TRAPDOOR_CONFIG.CAMERA;
-      // 背中真後ろではなく、斜め横から直立全身と開いた足元ハッチを捉える構図
-      targetCamX = tX + camCfg.offsetX; // +4.8m (斜め横)
-      targetCamY = player.pos.y + camCfg.offsetY; // +5.0m (直立した全身と高さを合わせる)
-      targetCamZ = player.pos.z + camCfg.offsetZ; // +9.5m (後方適正距離)
-      targetLookX = tX;
-      targetLookY = player.pos.y + camCfg.lookOffsetY; // -1.0m
-      targetLookAheadZ = player.pos.z + camCfg.lookAheadZ; // -24.0m (水平線と着地デッキを見通す)
-      targetFOV = camCfg.fovDrop; // 78 (ワイド画角で背景が上へ急激に吹っ飛ぶ落下感を最大化)
+
+      if (b && prog < 0.18) {
+        // ① 落ちる瞬間（ハッチ突入・開放直後）：真上からのトップダウン見下ろしで、開いた穴へ吸い込まれる様子を直感
+        const ratio = prog / 0.18;
+        targetCamX = THREE.MathUtils.lerp(tX + 1.2, tX * 0.2, ratio);
+        targetCamY = b.startY + 12.0 - ratio * 1.5; // 真上高所から見下ろす
+        targetCamZ = b.startZ + 1.5; // ハッチの真上〜ごくわずかに後方
+        targetLookX = tX;
+        targetLookY = player.pos.y; // 落ちていくキャラを真下に見下ろす
+        targetLookAheadZ = b.startZ; // ハッチ開口部の中心
+        targetFOV = 74;
+      } else if (b && prog < 0.82) {
+        // ② 落下中（急降下並走チェイス）：穴を抜けた後、斜め横から急降下追従し、背景が猛スピードで上へ吹っ飛ぶ疾走感を演出
+        targetCamX = tX + camCfg.offsetX; // +4.8m (斜め横)
+        targetCamY = player.pos.y + camCfg.offsetY; // +5.0m
+        targetCamZ = player.pos.z + camCfg.offsetZ; // +9.5m
+        targetLookX = tX;
+        targetLookY = player.pos.y + camCfg.lookOffsetY; // -1.0m
+        targetLookAheadZ = player.pos.z + camCfg.lookAheadZ; // -24.0m
+        targetFOV = camCfg.fovDrop; // 78
+      } else if (b) {
+        // ③ 先行ランディング：着地デッキを視野下部に先回りして捉え、両足でドスンと着地
+        const landRatio = (prog - 0.82) / 0.18;
+        targetCamX = tX + camCfg.offsetX * (1.0 - landRatio * 0.35);
+        targetCamY = b.endY + camCfg.offsetY * 0.85;
+        targetCamZ = b.endZ + camCfg.offsetZ * 0.85;
+        targetLookX = tX * 0.4;
+        targetLookY = b.endY + 0.8;
+        targetLookAheadZ = b.endZ - 6.0;
+        targetFOV = THREE.MathUtils.lerp(camCfg.fovDrop, 64, landRatio);
+      } else {
+        targetCamX = tX + camCfg.offsetX;
+        targetCamY = player.pos.y + camCfg.offsetY;
+        targetCamZ = player.pos.z + camCfg.offsetZ;
+        targetLookX = tX;
+        targetLookY = player.pos.y + camCfg.lookOffsetY;
+        targetLookAheadZ = player.pos.z + camCfg.lookAheadZ;
+        targetFOV = camCfg.fovDrop;
+      }
     }
 
     // 垂直自由落下・高速滑空時にキャラを見失わない強固な追従LERP
-    const lerpFactorX = (isSkydive || isTrapdoor) ? (isTrapdoor ? TRAPDOOR_CONFIG.CAMERA.lerpFactor : 0.40) : 0.14;
-    const lerpFactorY = isTrapdoor ? TRAPDOOR_CONFIG.CAMERA.lerpFactor : (isSkydive ? 0.40 : (isJumping ? 0.16 : 0.14));
-    const lerpFactorZ = (isSkydive || isTrapdoor) ? (isTrapdoor ? TRAPDOOR_CONFIG.CAMERA.lerpFactor : 0.44) : 0.14;
+    const prog = player.trapdoorProgress || player.freefallProgress || 0;
+    const lerpFactorX = isTrapdoor ? (prog < 0.18 ? 0.32 : TRAPDOOR_CONFIG.CAMERA.lerpFactor) : (isApproachingTrapdoor ? 0.20 : (isSkydive ? 0.40 : 0.14));
+    const lerpFactorY = isTrapdoor ? (prog < 0.18 ? 0.32 : TRAPDOOR_CONFIG.CAMERA.lerpFactor) : (isApproachingTrapdoor ? 0.20 : (isSkydive ? 0.40 : (isJumping ? 0.16 : 0.14)));
+    const lerpFactorZ = isTrapdoor ? (prog < 0.18 ? 0.32 : TRAPDOOR_CONFIG.CAMERA.lerpFactor) : (isApproachingTrapdoor ? 0.20 : (isSkydive ? 0.44 : 0.14));
 
     camera.position.x = THREE.MathUtils.lerp(camera.position.x, targetCamX, lerpFactorX);
     camera.position.y = THREE.MathUtils.lerp(camera.position.y, targetCamY, lerpFactorY);

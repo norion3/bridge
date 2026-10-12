@@ -266,7 +266,7 @@ export function refreshCharacterStackVisuals(char) {
   }
 }
 
-// ★ 修正：スカイダイブ時に頭や体の一部が突き抜けないよう、背中側（-Z方向）に安全にオフセット配置
+// ★ スカイダイブ時に頭や体の一部が突き抜けないよう、背中側（-Z方向）に安全にオフセット配置
 export function packCharacterLuggage(char, packProgress) {
   if (!char || !char.meshObj || !char.meshObj.stackGroup) return;
   
@@ -319,24 +319,30 @@ export function applySkydivePose(char, dirX, rollAngle) {
   char.meshObj.head.position.y = 1.10;
 }
 
-// トラップドア専用ポーズ（完全直立バンジー・翼状エアバランス・足先リアルflutter）
+// ★ トラップドア専用ポーズ：コミカルな必死の空中ジタバタあがきアニメーション
 export function applyTrapdoorPose(char, dirX, timeSec) {
   char.meshObj.root.rotation.order = 'XYZ';
-  char.meshObj.root.rotation.set(0.04, Math.PI, -dirX * 0.10);
+  
+  // 落ちながら必死にあがいて体が細かく揺れる
+  const bodyShake = Math.sin(timeSec * 32) * 0.08;
+  char.meshObj.root.rotation.set(0.08 + bodyShake, Math.PI, -dirX * 0.15 + Math.cos(timeSec * 28) * 0.06);
 
-  // 両腕を鳥の翼のように左右斜め下〜後ろに広げてバランスをとる
-  char.meshObj.leftArm.position.set(-0.58, 0.74, -0.05);
-  char.meshObj.rightArm.position.set(0.58, 0.74, -0.05);
-  char.meshObj.leftArm.rotation.set(-0.14, 0, -0.68);
-  char.meshObj.rightArm.rotation.set(-0.14, 0, 0.68);
+  // 両腕を必死にジタバタ・バタバタと空を掻くように大きく動かす
+  const armFlapL = Math.sin(timeSec * 30) * 0.65;
+  const armFlapR = Math.cos(timeSec * 30) * 0.65;
+  char.meshObj.leftArm.position.set(-0.54, 0.78 + Math.sin(timeSec * 28) * 0.08, 0.05);
+  char.meshObj.rightArm.position.set(0.54, 0.78 + Math.cos(timeSec * 28) * 0.08, 0.05);
+  char.meshObj.leftArm.rotation.set(armFlapL, 0.2, -0.55 + armFlapR * 0.4);
+  char.meshObj.rightArm.rotation.set(-armFlapR, -0.2, 0.55 - armFlapL * 0.4);
 
-  // 足先は真下の海を向き、落下気流による微細なバタつき
-  const flutter = Math.sin(timeSec * 26) * 0.10;
-  char.meshObj.leftLeg.rotation.set(0.10 + flutter, 0, -0.04);
-  char.meshObj.rightLeg.rotation.set(0.10 - flutter, 0, 0.04);
+  // 両足を空中で激しくバタバタ・ジタバタキック
+  const legKickL = Math.sin(timeSec * 34) * 0.75;
+  const legKickR = Math.sin(timeSec * 34 + Math.PI) * 0.75;
+  char.meshObj.leftLeg.rotation.set(legKickL, 0, -0.12);
+  char.meshObj.rightLeg.rotation.set(legKickR, 0, 0.12);
 
-  char.meshObj.body.position.y = 0.65;
-  char.meshObj.head.position.y = 1.25;
+  char.meshObj.body.position.y = 0.65 + Math.sin(timeSec * 32) * 0.03;
+  char.meshObj.head.position.y = 1.25 + Math.sin(timeSec * 32) * 0.04;
 }
 
 // ニュートラル姿勢への完全リセット

@@ -47,8 +47,15 @@ export const catapultRampGeo = new THREE.BoxGeometry(3.6, 0.28, 7.2);
 export const catapultTrimGeo = new THREE.CylinderGeometry(0.08, 0.08, 7.2, 12);
 catapultTrimGeo.rotateX(Math.PI / 2);
 
-// ドロップタワー・スカイゲート用ジオメトリ（白トラス鉄塔＆滑車規格）
-export const dropDeckGeo = new THREE.CylinderGeometry(2.8, 2.8, 0.18, 32);         
+// ドロップタワー・スカイゲート用ジオメトリ（中央3.2m完全開口ドーナツ型デッキ＆白トラス鉄塔規格）
+const dropDeckShape = new THREE.Shape();
+dropDeckShape.absarc(0, 0, 2.8, 0, Math.PI * 2, false);
+const dropDeckHole = new THREE.Path();
+dropDeckHole.absarc(0, 0, 1.6, 0, Math.PI * 2, true);
+dropDeckShape.holes.push(dropDeckHole);
+export const dropDeckGeo = new THREE.ExtrudeGeometry(dropDeckShape, { depth: 0.18, bevelEnabled: false, curveSegments: 32 });
+dropDeckGeo.rotateX(Math.PI / 2);
+
 export const dropPylonGeo = new THREE.BoxGeometry(0.32, 7.5, 0.32);                
 export const dropIndicatorGeo = new THREE.BoxGeometry(0.12, 6.2, 0.12);
 export const dropPulleyGeo = new THREE.CylinderGeometry(0.28, 0.28, 0.16, 16);

@@ -727,13 +727,12 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     return;
   }
 
-  // ★ ドロップタワー（足先行・完全垂直落下 3.1秒）：床が直角以上にパカッと開き、0.12秒の無重力タメから一気に急降下
+  // ★ ドロップタワー（足先行・完全垂直落下 3.1秒）：扉開放 ➜ コミカルな空中ジタバタ ➜ ストンと急降下
   if ((char.onTrapdoor && char.activeTrapdoor) || (char.onFreefall && char.activeFreefall)) {
     const b = char.activeTrapdoor || char.activeFreefall;
 
     if (b.doorLeftPivot && b.doorRightPivot) {
       b.hatchOpenProgress = Math.min(1.0, (b.hatchOpenProgress || 0) + dt / TRAPDOOR_CONFIG.HATCH.openDuration);
-      // ★ 修正：直角以上（約95度 = Math.PI * 0.53）に豪快にパカッと開放
       const maxOpenAngle = Math.PI * 0.53;
       const angle = b.hatchOpenProgress * maxOpenAngle;
       b.doorLeftPivot.rotation.z = angle;
@@ -780,14 +779,14 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
       // 完全垂直直下落下：ハッチ直下Z座標（b.startZ）を完全固定
       const pZ = b.startZ;
 
-      // ★ 修正：最初の0.12秒（t <= 0.04）は無重力のタメで一瞬浮き上がり、そこから重力（t^2.2）で一気に虚空へ吸い込まれる急降下カーブ
-      const hoverT = 0.04;
+      // ★ 改善：フワフワした浮遊感を完全に排除。最初の0.06秒（t <= 0.02）だけハッチ開放のタメ（ビクッとする瞬間）、直後から重力加速でストンと急降下（t^1.8）
+      const hoverT = 0.02;
       let effectiveFallT = 0;
       if (t < hoverT) {
-        effectiveFallT = (t / hoverT) * 0.005;
+        effectiveFallT = (t / hoverT) * 0.008;
       } else {
         const fallFrac = (t - hoverT) / (1.0 - hoverT);
-        effectiveFallT = 0.005 + Math.pow(fallFrac, 2.2) * 0.995;
+        effectiveFallT = 0.008 + Math.pow(fallFrac, 1.8) * 0.992;
       }
       const pY = b.startY + (b.endY - b.startY) * effectiveFallT;
       char.pos.set(char.trapdoorX, pY, pZ);

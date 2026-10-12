@@ -790,7 +790,22 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       elevators: []
     };
 
-    ELEVATOR_CONFIG.LANES.forEach(cfg => {
+    // ★ 修正：毎回同じ「緑・黄・赤」固定を廃止し、生成ごとに3レーンの速度属性をランダムシャッフル
+    const shuffledLanes = ELEVATOR_CONFIG.LANES.map((cfg, idx) => ({ ...cfg, laneIdx: idx }));
+    for (let i = shuffledLanes.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const tempTier = shuffledLanes[i].speedTier;
+      const tempDur = shuffledLanes[i].duration;
+      const tempLabel = shuffledLanes[i].label;
+      shuffledLanes[i].speedTier = shuffledLanes[j].speedTier;
+      shuffledLanes[i].duration = shuffledLanes[j].duration;
+      shuffledLanes[i].label = shuffledLanes[j].label;
+      shuffledLanes[j].speedTier = tempTier;
+      shuffledLanes[j].duration = tempDur;
+      shuffledLanes[j].label = tempLabel;
+    }
+
+    shuffledLanes.forEach(cfg => {
       const laneX = LANES[cfg.laneIdx];
       const stationMesh = createElevatorStationStructure(scene, laneX, startY, startZ, endY, endZ, cfg);
       elevatorBridge.visualMeshes.push(stationMesh);
@@ -1055,19 +1070,26 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       scene.add(slopeMesh);
       bridge.visualMeshes.push(slopeMesh);
 
+      // ★ 修正：レーンごとに両側にパイプを作ると中間に重複して密集するため、
+      // 最左端（レーン0の左）と最右端（レーン2の右）のみに外枠レールを配置し、余計な仕切りを全廃
       const railGeo = new THREE.CylinderGeometry(0.15, 0.15, slopeLength, 8);
       railGeo.rotateX(Math.PI / 2);
-      const leftRail = new THREE.Mesh(railGeo, sharedMats.slideRail);
-      leftRail.position.set(LANES[laneIdx] - 1.85, midY + 0.3, midZ);
-      leftRail.rotation.x = angleX;
-      scene.add(leftRail);
-      bridge.visualMeshes.push(leftRail);
 
-      const rightRail = new THREE.Mesh(railGeo, sharedMats.slideRail);
-      rightRail.position.set(LANES[laneIdx] + 1.85, midY + 0.3, midZ);
-      rightRail.rotation.x = angleX;
-      scene.add(rightRail);
-      bridge.visualMeshes.push(rightRail);
+      if (laneIdx === 0) {
+        const leftRail = new THREE.Mesh(railGeo, sharedMats.slideRail);
+        leftRail.position.set(LANES[laneIdx] - 1.85, midY + 0.3, midZ);
+        leftRail.rotation.x = angleX;
+        scene.add(leftRail);
+        bridge.visualMeshes.push(leftRail);
+      }
+
+      if (laneIdx === 2) {
+        const rightRail = new THREE.Mesh(railGeo, sharedMats.slideRail);
+        rightRail.position.set(LANES[laneIdx] + 1.85, midY + 0.3, midZ);
+        rightRail.rotation.x = angleX;
+        scene.add(rightRail);
+        bridge.visualMeshes.push(rightRail);
+      }
 
       for (let i = 0; i < numPlanks; i++) {
         const progress = (i + 0.5) / numPlanks;
