@@ -68,6 +68,48 @@ export function incMagnetDockStep() { return magnetDockStepCounter++; }
 
 const dummyPlankObj = new THREE.Object3D();
 
+// ★ シャッフルバッグ方式（偏り・同一ギミック連続の物理的完全根絶）
+const DESCENT_GIMMICKS = ['slide', 'skydive', 'trapdoor', 'curved_slide', 'zipline'];
+const ASCENT_GIMMICKS = ['elevator', 'vertical', 'jump', 'bridge'];
+let descentBag = [];
+let ascentBag = [];
+let lastGimmickType = null;
+
+function getNextDescentGimmick() {
+  if (descentBag.length === 0) {
+    descentBag = [...DESCENT_GIMMICKS];
+    for (let i = descentBag.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [descentBag[i], descentBag[j]] = [descentBag[j], descentBag[i]];
+    }
+    // 直前に選ばれたギミックと同じものが先頭（末尾pop対象）にある場合は入れ替えて連続を防止
+    if (descentBag[descentBag.length - 1] === lastGimmickType && descentBag.length > 1) {
+      const swapIdx = Math.floor(Math.random() * (descentBag.length - 1));
+      [descentBag[descentBag.length - 1], descentBag[swapIdx]] = [descentBag[swapIdx], descentBag[descentBag.length - 1]];
+    }
+  }
+  const picked = descentBag.pop();
+  lastGimmickType = picked;
+  return picked;
+}
+
+function getNextAscentGimmick() {
+  if (ascentBag.length === 0) {
+    ascentBag = [...ASCENT_GIMMICKS];
+    for (let i = ascentBag.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [ascentBag[i], ascentBag[j]] = [ascentBag[j], ascentBag[i]];
+    }
+    if (ascentBag[ascentBag.length - 1] === lastGimmickType && ascentBag.length > 1) {
+      const swapIdx = Math.floor(Math.random() * (ascentBag.length - 1));
+      [ascentBag[ascentBag.length - 1], ascentBag[swapIdx]] = [ascentBag[swapIdx], ascentBag[ascentBag.length - 1]];
+    }
+  }
+  const picked = ascentBag.pop();
+  lastGimmickType = picked;
+  return picked;
+}
+
 export function getFloorBlocksForStage(stageIdx) {
   let bucket = floorBlocksByStage.get(stageIdx);
   if (!bucket) {
@@ -311,7 +353,7 @@ export function createTrapdoorHatchStructure(scene, posX, posY, hatchZ, approach
     sRailL.position.set(posX - 1.6, posY + 0.45, (approachStartZ + hatchZ) / 2);
     group.add(sRailL);
     const sRailR = sRailL.clone();
-    sRailR.position.x = posX + 1.6;
+    sRailR.position.x = 1.6;
     group.add(sRailR);
   }
 
@@ -379,8 +421,8 @@ export function createTrapdoorHatchStructure(scene, posX, posY, hatchZ, approach
   const doorRightPivot = new THREE.Group();
   doorRightPivot.position.set(posX + 1.5, posY + 0.10, hatchZ);
   const doorR = new THREE.Mesh(hatchDoorGeo, sharedMats.dropGlassFloor);
+  doorRightPivot.add(doorR);
   doorR.position.set(-0.75, 0, 0);
-  doorRightPivot.add(doorRightPivot);
   group.add(doorRightPivot);
 
   group.position.set(0, 0, 0);
@@ -1116,58 +1158,45 @@ export function extendCourse(scene) {
     distZ = 68;
     r = 10.5;
   } else {
-    const rand = Math.random();
+    // ★ シャッフルバッグ方式により、全ギミックが均等周期で選出され重複・偏りを完全根絶
     if (prev.y >= 14.0) {
-      // ★ 下り系5大ギミック：完全20%均等配分（黄金比率）
-      if (rand < 0.20) {
-        type = 'slide';
+      type = getNextDescentGimmick();
+      if (type === 'slide') {
         nextY = Math.max(5.0, prev.y - 10.0);
         distZ = 42;
         r = 11;
-      } else if (rand < 0.40) {
-        // 看板ステージ1：スカイダイブ（頭先行・前進52m・落差-42m）
-        type = 'skydive';
+      } else if (type === 'skydive') {
         nextY = Math.max(5.0, prev.y - SKYDIVE_CONFIG.PHYSICS.minHeightDrop);
         distZ = SKYDIVE_CONFIG.PHYSICS.forwardDistance;
         r = 11.5;
-      } else if (rand < 0.60) {
-        // 看板ステージ2：ドロップタワー（足先行・垂直直下ドロップ・超高層落差-70m）
-        type = 'trapdoor';
+      } else if (type === 'trapdoor') {
         nextY = Math.max(5.0, prev.y - TRAPDOOR_CONFIG.PHYSICS.minHeightDrop);
         distZ = 36.0;
         r = 12.0;
-      } else if (rand < 0.80) {
-        // カーブスライダー（左右操作でボーナスを拾うテクニカル滑走）
-        type = 'curved_slide';
+      } else if (type === 'curved_slide') {
         nextY = Math.max(6.0, prev.y - 8.0);
         distZ = 46;
         r = 11;
-      } else {
-        // ジップライン（空中散歩＆ボーナス回収）
-        type = 'zipline';
+      } else { // 'zipline'
         nextY = Math.max(7.0, prev.y - 12.0);
         distZ = 68;
         r = 10.5;
       }
     } else {
-      // ★ 上り系4大ギミック：均等配分
-      if (rand < 0.25) {
-        type = 'elevator';
+      type = getNextAscentGimmick();
+      if (type === 'elevator') {
         nextY = prev.y + 16.0;
         distZ = 30;
         r = 11;
-      } else if (rand < 0.50) {
-        type = 'vertical';
+      } else if (type === 'vertical') {
         nextY = prev.y + 11.0;
         distZ = 24;
         r = 10;
-      } else if (rand < 0.75) {
-        type = 'jump';
+      } else if (type === 'jump') {
         nextY = prev.y + 1.0;
         distZ = 30;
         r = 9.5;
-      } else {
-        type = 'bridge';
+      } else { // 'bridge'
         nextY = prev.y + 7.0;
         distZ = 34;
         r = 10;
@@ -1234,6 +1263,10 @@ export function extendCourse(scene) {
 }
 
 export function buildWorld(scene) {
+  descentBag.length = 0;
+  ascentBag.length = 0;
+  lastGimmickType = null;
+
   floorBlocksByStage.forEach(bucket => {
     bucket.forEach(b => {
       b.active = false;
