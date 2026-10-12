@@ -7,6 +7,7 @@ import {
   TRAPDOOR_CONFIG
 } from './constants.js';
 import {
+  sharedMats,
   _tempVec3A,
   _tempVec3B,
   disposeHierarchy,
@@ -20,6 +21,7 @@ import {
   setCharacterCallbacks,
   addBrickToCharacter
 } from './character.js';
+
 import {
   STAGES,
   CONNECTIONS,
@@ -384,7 +386,8 @@ export function animate(currentTime) {
 
       const t = Math.min(1.0, p.progress);
       _tempVec3A.lerpVectors(p.startPos, p.targetPos, t);
-      _tempVec3A.y += Math.sin(t * Math.PI) * 5.2;
+      // ★ 誰でも目で追える高く美しい山なり放物線弾道
+      _tempVec3A.y += Math.sin(t * Math.PI) * 7.5;
       p.group.position.copy(_tempVec3A);
 
       if (p.crystal) {
@@ -408,7 +411,7 @@ export function animate(currentTime) {
             item.mesh.position.copy(p.history[histIdx]);
             item.mesh.visible = true;
             const lifeFade = 1.0 - (j / p.trailSpheres.length);
-            item.material.opacity = (1.0 - t * 0.2) * lifeFade * 0.92;
+            item.material.opacity = (1.0 - t * 0.2) * lifeFade * 0.95;
           }
         }
       }
@@ -432,7 +435,18 @@ export function animate(currentTime) {
               db.index = spawned;
               db.delay = spawned * 0.09;
               db.progress = 0;
-              db.duration = 0.75;
+              db.duration = 0.85;
+
+              // ★ 奪ったブロックの色を自分のチームカラー（青）に変化させてリソース獲得を直感化
+              if (p.shooter && p.shooter.team && p.shooter.team.id === 'blue') {
+                db.mesh.material = sharedMats.blockBlue;
+              } else if (p.shooter && p.shooter.team && p.shooter.team.id === 'red') {
+                db.mesh.material = sharedMats.blockRed;
+              } else if (p.shooter && p.shooter.team && p.shooter.team.id === 'yellow') {
+                db.mesh.material = sharedMats.blockYellow;
+              } else {
+                db.mesh.material = sharedMats.blockNeutral;
+              }
 
               const sOffset = _tempVec3B.set(
                 (Math.random() - 0.5) * 1.5,
@@ -441,7 +455,7 @@ export function animate(currentTime) {
               );
               db.startPos.copy(p.target.pos).add(sOffset);
               db.mesh.position.copy(db.startPos);
-              db.mesh.scale.set(1.15, 1.15, 1.15);
+              db.mesh.scale.set(1.2, 1.2, 1.2);
               db.mesh.visible = true;
               spawned++;
             }
@@ -475,10 +489,10 @@ export function animate(currentTime) {
 
       const easeT = prog * prog * (3 - 2 * prog);
       _tempVec3B.lerpVectors(d.startPos, _tempVec3A, easeT);
-      _tempVec3B.y += Math.sin(prog * Math.PI) * 3.6;
+      _tempVec3B.y += Math.sin(prog * Math.PI) * 4.2;
       d.mesh.position.copy(_tempVec3B);
 
-      const flightScale = 1.0 + Math.sin(prog * Math.PI) * 0.25;
+      const flightScale = 1.0 + Math.sin(prog * Math.PI) * 0.35;
       d.mesh.scale.set(flightScale, flightScale, flightScale);
       d.mesh.rotation.y += dt * 14;
       d.mesh.rotation.x += dt * 10;
@@ -487,7 +501,7 @@ export function animate(currentTime) {
         addBrickToCharacter(d.targetChar, d.targetChar.team, 1);
         if (d.targetChar.isPlayer) {
           sound.playDrainCollect(d.index || 0);
-          triggerLandingShockwave(_tempVec3A.x, _tempVec3A.y, _tempVec3A.z, 0.9, 0xf472b6);
+          triggerLandingShockwave(_tempVec3A.x, _tempVec3A.y, _tempVec3A.z, 1.0, 0x0284c7);
         }
         d.active = false;
         d.mesh.visible = false;
@@ -686,33 +700,33 @@ export function animate(currentTime) {
       targetLookAheadZ = player.pos.z - 12.0;
       targetFOV = 64;
     } else if (isSkydive) {
-      // ★ スカイダイブ：画面中央ロックオン（置き去り・画面端への見切れを100%根絶）
+      // ★ スカイダイブ：板に隠れず跳ね上がったキャラをしっかり視野中心に追従
       const airX = player.skydiveX || player.pos.x;
       const camCfg = SKYDIVE_CONFIG.CAMERA;
       targetCamX = airX * 0.40;
-      targetCamY = player.pos.y + camCfg.offsetY; // +4.5m (キャラ全身を視野中心に捉える高さ)
-      targetCamZ = player.pos.z + camCfg.offsetZ; // +8.5m (適正チェイス距離)
+      targetCamY = player.pos.y + camCfg.offsetY; // +4.5m
+      targetCamZ = player.pos.z + camCfg.offsetZ; // +8.5m
       targetLookX = airX * 0.20;
-      targetLookY = player.pos.y - 1.0;
+      targetLookY = player.pos.y - 0.8;
       targetLookAheadZ = player.pos.z + camCfg.lookAheadZ; // -28.0m (奥の水平線パノラマ)
-      targetFOV = camCfg.fovDrop; // 78 (ワイドパノラマでスピード感を最大化)
+      targetFOV = camCfg.fovDrop; // 78
     } else if (isTrapdoor) {
-      // ★ トラップドア：画面上空置き去りを完全廃止し、自キャラ斜め上をタイトにキープ
+      // ★ トラップドア：上空置き去りを全廃し、真下に垂直落下するキャラを斜め上からタイト追従
       const tX = player.trapdoorX || player.freefallX || player.pos.x;
       const camCfg = TRAPDOOR_CONFIG.CAMERA;
-      targetCamX = tX * 0.35 + 2.4; // 離れすぎず斜め横に配置
-      targetCamY = player.pos.y + camCfg.offsetY; // +6.5m
-      targetCamZ = player.pos.z + camCfg.offsetZ; // +7.0m
-      targetLookX = tX * 0.2;
-      targetLookY = player.pos.y + camCfg.lookOffsetY; // -2.5m
-      targetLookAheadZ = player.pos.z + camCfg.lookAheadZ; // -12.0m
+      targetCamX = tX + camCfg.offsetX; // +2.4m
+      targetCamY = player.pos.y + camCfg.offsetY; // +6.0m
+      targetCamZ = player.pos.z + camCfg.offsetZ; // +5.5m
+      targetLookX = tX;
+      targetLookY = player.pos.y + camCfg.lookOffsetY; // -1.5m
+      targetLookAheadZ = player.pos.z + camCfg.lookAheadZ; // -4.0m
       targetFOV = camCfg.fovDrop; // 76
     }
 
-    // ★ スカイダイブ／トラップドア時の追従速度（LERP）を強化し、初速での見切れ・遅れを完全に解消
-    const lerpFactorX = (isSkydive || isTrapdoor) ? 0.38 : 0.14;
-    const lerpFactorY = isTrapdoor ? 0.42 : (isSkydive ? 0.38 : (isJumping ? 0.16 : 0.14));
-    const lerpFactorZ = (isSkydive || isTrapdoor) ? 0.42 : 0.14;
+    // ★ 垂直自由落下・高速滑空時にキャラを見失わない強固な追従LERP
+    const lerpFactorX = (isSkydive || isTrapdoor) ? 0.40 : 0.14;
+    const lerpFactorY = isTrapdoor ? 0.48 : (isSkydive ? 0.40 : (isJumping ? 0.16 : 0.14));
+    const lerpFactorZ = (isSkydive || isTrapdoor) ? 0.44 : 0.14;
 
     camera.position.x = THREE.MathUtils.lerp(camera.position.x, targetCamX, lerpFactorX);
     camera.position.y = THREE.MathUtils.lerp(camera.position.y, targetCamY, lerpFactorY);

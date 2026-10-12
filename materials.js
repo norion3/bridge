@@ -31,8 +31,8 @@ itemBeaconRingGeo.rotateX(-Math.PI / 2);
 export const speedStepRingGeo = new THREE.RingGeometry(0.35, 0.68, 24);
 speedStepRingGeo.rotateX(-Math.PI / 2);
 export const puffCloudGeo = new THREE.SphereGeometry(0.24, 8, 8);
-export const attackTrailSphereGeo = new THREE.SphereGeometry(0.32, 8, 8);
-export const attackRingGeo = new THREE.TorusGeometry(0.72, 0.08, 8, 24);
+export const attackTrailSphereGeo = new THREE.SphereGeometry(0.52, 10, 10); // 攻撃弾トレイル球体を拡大
+export const attackRingGeo = new THREE.TorusGeometry(0.85, 0.10, 8, 24);
 
 export const baseShockwaveGeo = new THREE.RingGeometry(0.3, 0.65, 32);
 baseShockwaveGeo.rotateX(-Math.PI / 2);
@@ -42,7 +42,7 @@ export const elevatorPlatformFloorGeo = new THREE.BoxGeometry(2.4, 0.16, 2.0);
 export const elevatorHandrailPostGeo = new THREE.CylinderGeometry(0.035, 0.035, 0.95, 8);
 export const elevatorHandrailBarGeo = new THREE.CylinderGeometry(0.035, 0.035, 2.3, 8);
 
-// スカイダイブ（頭先行）用ジオメトリ（7.2m コースター発射台規格へ復元）
+// スカイダイブ（頭先行）用ジオメトリ（7.2m コースター発射台規格）
 export const catapultRampGeo = new THREE.BoxGeometry(3.6, 0.28, 7.2);
 export const catapultTrimGeo = new THREE.CylinderGeometry(0.08, 0.08, 7.2, 12);
 catapultTrimGeo.rotateX(Math.PI / 2);
@@ -54,10 +54,10 @@ export const dropIndicatorGeo = new THREE.BoxGeometry(0.12, 6.2, 0.12);
 export const dropPulleyGeo = new THREE.CylinderGeometry(0.28, 0.28, 0.16, 16);
 dropPulleyGeo.rotateZ(Math.PI / 2);
 
-// ゲート用クリーンベース（黒タイヤ台座を撤廃した白/オレンジ丸みベース）
+// ゲート用クリーンベース（白大理石丸みベース）
 export const gatePedestalGeo = new THREE.CylinderGeometry(0.22, 0.28, 0.16, 16);  
 
-// トラップドア（足先行）ハッチ用ジオメトリ（後方互換用）
+// トラップドア（足先行）ハッチ用ジオメトリ
 export const hatchFrameGeo = new THREE.BoxGeometry(3.6, 0.22, 3.6);
 export const hatchDoorGeo = new THREE.BoxGeometry(1.65, 0.14, 3.3);
 export const windStreakGeo = new THREE.CylinderGeometry(0.025, 0.025, 2.8, 6);
@@ -69,7 +69,7 @@ export const _tempVec3C = new THREE.Vector3();
 export const _tempVec3D = new THREE.Vector3();
 export const _tempAvoidResult = { x: 0, z: 0 };
 
-// 南国アニメ調のやわらかな三日月型（クレッセント）有機的白波ライン（正八角形ポリゴン枠線を完全撤廃）
+// 南国アニメ調のやわらかな三日月型（クレッセント）有機的白波ライン
 export function createSeaTexture() {
   const cvs = document.createElement('canvas');
   cvs.width = 512;
@@ -100,12 +100,10 @@ export function createSeaTexture() {
 
   waveSeeds.forEach(([wx, wy, wlen]) => {
     ctx.beginPath();
-    // 主波（ゆるやかな弧）
     ctx.moveTo(wx - wlen * 0.5, wy);
     ctx.quadraticCurveTo(wx, wy - wlen * 0.28, wx + wlen * 0.5, wy + wlen * 0.05);
     ctx.stroke();
 
-    // 寄り添う副波（微小な白波のゆらぎ）
     ctx.beginPath();
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.07)';
     ctx.moveTo(wx - wlen * 0.3, wy + 9);
@@ -197,7 +195,7 @@ export const sharedMats = {
     metalness: 0.40 
   }),
 
-  // ゲート：黒タイヤ・鉄パイプを廃止し、ホワイトスチール支柱＋クリーンベースへ刷新
+  // ゲート：ホワイトスチール支柱＋クリーンベース
   gateFrame: new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.18, metalness: 0.1 }),
   gatePedestal: new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.25, metalness: 0.05 }),
 
@@ -210,7 +208,7 @@ export const sharedMats = {
   blockYellow: new THREE.MeshStandardMaterial({ color: TEAMS.YELLOW.hex, emissive: TEAMS.YELLOW.emissive, emissiveIntensity: 0.2, roughness: 0.35 }),
   blockNeutral: new THREE.MeshStandardMaterial({ color: TEAMS.NEUTRAL.hex, emissive: TEAMS.NEUTRAL.emissive, emissiveIntensity: 0.2, roughness: 0.35 }),
 
-  // キャラクター：合意済みの単色ポップ造形マテリアルを厳格維持
+  // キャラクター：単色ポップ造形マテリアル
   charBlue: new THREE.MeshStandardMaterial({
     color: TEAMS.BLUE.hex,
     emissive: TEAMS.BLUE.emissive,
@@ -261,11 +259,10 @@ export const sharedMats = {
   itemAttackCrystal: new THREE.MeshStandardMaterial({
     color: ITEM_COLORS.ATTACK.hex,
     emissive: ITEM_COLORS.ATTACK.emissive,
-    emissiveIntensity: 0.85,
+    emissiveIntensity: 1.1, // 攻撃クリスタルの発光強度をブースト
     roughness: 0.05,
     metalness: 0.2
   }),
-  // ★ 修正：THREE.MeshBasicMaterial を正しく参照
   itemAttackBeaconRing: new THREE.MeshBasicMaterial({
     color: 0xf43f5e,
     transparent: true,
@@ -283,7 +280,7 @@ export const sharedMats = {
   attackTrailMat: new THREE.MeshBasicMaterial({
     color: 0xf43f5e,
     transparent: true,
-    opacity: 0.92,
+    opacity: 0.95,
     depthWrite: false
   }),
   attackBlastRing: new THREE.MeshBasicMaterial({
@@ -365,7 +362,7 @@ export const sharedMats = {
     depthWrite: false
   }),
 
-  // ドロップタワー：黒い棒を廃止し、ホワイトスチールトラス鉄塔＆オレンジ滑車マテリアルへ刷新
+  // ドロップタワー：ホワイトスチールトラス鉄塔＆オレンジ滑車マテリアル
   dropGlassFloor: new THREE.MeshStandardMaterial({
     color: 0x0284c7,
     emissive: 0x0369a1,
@@ -426,7 +423,6 @@ for (let i = 0; i < MAX_VISUAL_STACK; i++) {
   }));
 }
 
-// ★ 修正：character.js が参照する Bot 用スタックマテリアル配列を定義・エクスポート
 export const botRedStackMaterials = [];
 export const botYellowStackMaterials = [];
 for (let i = 0; i < MAX_VISUAL_STACK; i++) {

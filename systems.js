@@ -60,10 +60,11 @@ export function setSystemCallbacks(sound, updateHUD, onPlankPlaced = null) {
   onPlankPlacedCallback = onPlankPlaced;
 }
 
+// ★ 修正：散乱ブロックの高さを +4cm 上げ（0.29m）、既存床ブロック（0.25m）とのポリゴン干渉・チラつきを根絶
 export function scatterBricks(scene, char, countToDrop) {
   const count = Math.min(char.stackCount, countToDrop);
   const stage = STAGES[char.currentStage] || STAGES[0];
-  const floorY = stage.y + 0.25;
+  const floorY = stage.y + 0.29; // 床ブロック（0.25m）より4cm上にオフセットしてZ-fightingを完全防止
   const maxR = stage.r - 1.0;
   const stageBlocks = getFloorBlocksForStage(char.currentStage);
 
@@ -141,6 +142,7 @@ export function checkGateCollisions(scene, char) {
   }
 }
 
+// ★ 修正：攻撃弾の滞空時間を 1.35秒 へ延長し、視認しやすい山なり放物線弾道へ強化
 export function fireHomingCrystal(char) {
   if (soundRef) soundRef.playAttackShoot();
 
@@ -195,7 +197,7 @@ export function fireHomingCrystal(char) {
   proj.target = selectedTarget;
   proj.isRear = isRearShot;
   proj.progress = 0;
-  proj.duration = 0.82;
+  proj.duration = 1.35; // 0.82秒から1.35秒へ拡張し、飛んでいく様子をハッキリ視認可能に
 
   proj.startPos.copy(char.pos);
   proj.startPos.y += 1.3;
@@ -214,11 +216,11 @@ export function fireHomingCrystal(char) {
     item.mesh.position.copy(proj.startPos);
     item.mesh.visible = true;
     const lifeFade = 1.0 - (j / proj.trailSpheres.length);
-    item.material.opacity = lifeFade * 0.92;
+    item.material.opacity = lifeFade * 0.95;
   }
 
   if (char.isPlayer) {
-    setAttackCamTimer(0.95);
+    setAttackCamTimer(1.4);
   }
 }
 
@@ -257,14 +259,13 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
 
         if (char.isPlayer && soundRef) {
           soundRef.playSkydiveLaunch();
-          // 滑空時間（3.1秒）に応じた滑らかな風音カーブを一度だけ予約再生
           soundRef.startSkydiveGlide(SKYDIVE_CONFIG.PHYSICS.totalDuration);
         }
         return;
       }
     }
 
-    // トラップドア・ハッチ乗車判定
+    // トラップドア・ハッチ乗車判定（垂直落下）
     const trapB = localBridges.find(b => b.isTrapdoor && b.stageIdx === char.currentStage);
     if (trapB && char.slideCooldown <= 0) {
       const distToHatch = Math.hypot(nextX, nextZ - trapB.startZ);
@@ -277,7 +278,6 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
 
         if (char.isPlayer && soundRef) {
           soundRef.playTrapdoorOpen();
-          // 垂直落下時間（2.4秒）に応じたドップラー突風カーブを一度だけ予約再生
           soundRef.startTrapdoorFall(TRAPDOOR_CONFIG.PHYSICS.totalDuration);
         }
         return;
@@ -581,7 +581,6 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
 }
 
 export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffCloud, spawnSpeedStepRing) {
-  // タックル被弾時のみのインビジブル点滅（トランポリン着地時の誤作動を排除）
   if (char.invulnerableTimer > 0) {
     char.invulnerableTimer -= dt;
     char.meshObj.root.visible = (Math.floor(Date.now() / 90) % 2 === 0);
@@ -647,7 +646,7 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     }
   }
 
-  // ★ スカイダイブ物理：初速放物線アーチ＆シュバッ！と収納されるアニメーション
+  // ★ 修正：飛び出し板の下に隠れないよう、斜め上（+hopHeight = +3.5m）へ跳ね上がる放物線アーチを付与
   if (char.onSkydive && char.activeSkydive) {
     const b = char.activeSkydive;
     const totalFlyTime = SKYDIVE_CONFIG.PHYSICS.totalDuration;
@@ -665,7 +664,7 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
       triggerLandingShockwave(char.pos.x, char.pos.y, char.pos.z, 3.8, 0x0066ff);
       if (char.isPlayer && soundRef) {
         soundRef.playLanding();
-        soundRef.stopSkydiveGlide(); // ★ 着地時に音源停止
+        soundRef.stopSkydiveGlide();
       }
 
       resetCharacterPose(char);
@@ -678,8 +677,8 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     } else {
       const t = Math.min(0.999, Math.max(0, char.skydiveProgress));
 
-      // 最初の0.15秒間でブロックをシュバッ！とリュックに収納するアニメーション
-      const packProg = Math.min(1.0, char.skydiveProgress / (0.15 / totalFlyTime));
+      // ブロック収納イージング（0.4秒かけて自然にパッキング）
+      const packProg = Math.min(1.0, char.skydiveProgress / (0.40 / totalFlyTime));
       packCharacterLuggage(char, packProg);
 
       const airSpeed = SKYDIVE_CONFIG.PHYSICS.horizontalAirControlSpeed;
@@ -691,17 +690,18 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
 
       const pZ = THREE.MathUtils.lerp(b.startZ, b.endZ, t);
       const fallPower = SKYDIVE_CONFIG.PHYSICS.gravityPower;
-      const pY = b.startY + (b.endY - b.startY) * Math.pow(t, fallPower);
+      // 斜め上への山なりホップ高度（+3.5m）を付与し、飛び出し板の上にキャラ全身を高く露出
+      const hop = Math.sin(t * Math.PI) * (SKYDIVE_CONFIG.PHYSICS.hopHeight || 3.5);
+      const pY = b.startY + (b.endY - b.startY) * Math.pow(t, fallPower) + hop;
       char.pos.set(char.skydiveX, pY, pZ);
 
       applySkydivePose(char, dirX, char.skydiveRoll);
-      // （※毎フレームの音程更新はジッパーノイズになるため全廃し、start時に全自動スケジューリング済み）
     }
     char.meshObj.root.position.copy(char.pos);
     return;
   }
 
-  // ★ トラップドア物理：垂直急降下＆シュバッ！と収納されるアニメーション
+  // ★ 修正：前方へのスライド移動（14.4m）を全廃し、真下の海へ一直線に落ちる純粋な垂直落下を実現
   if ((char.onTrapdoor && char.activeTrapdoor) || (char.onFreefall && char.activeFreefall)) {
     const b = char.activeTrapdoor || char.activeFreefall;
 
@@ -729,7 +729,7 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
       triggerLandingShockwave(char.pos.x, char.pos.y, char.pos.z, 3.4, 0x0284c7);
       if (char.isPlayer && soundRef) {
         soundRef.playLanding();
-        soundRef.stopTrapdoorFall(); // ★ 着地時に音源停止
+        soundRef.stopTrapdoorFall();
       }
 
       resetCharacterPose(char);
@@ -742,22 +742,22 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     } else {
       const t = Math.min(0.999, Math.max(0, char.trapdoorProgress));
 
-      // 最初の0.15秒間でブロックをシュバッ！とリュックに収納するアニメーション
-      const packProg = Math.min(1.0, char.trapdoorProgress / (0.15 / totalFlyTime));
+      // ブロック収納イージング（0.4秒かけて自然にパッキング）
+      const packProg = Math.min(1.0, char.trapdoorProgress / (0.40 / totalFlyTime));
       packCharacterLuggage(char, packProg);
 
       const airSpeed = TRAPDOOR_CONFIG.PHYSICS.horizontalAirControlSpeed;
       const maxAirX = TRAPDOOR_CONFIG.PHYSICS.maxAirOffsetX;
       char.trapdoorX = Math.max(-maxAirX, Math.min(maxAirX, (char.trapdoorX || char.freefallX || 0) + dirX * airSpeed * dt));
 
-      const pZ = THREE.MathUtils.lerp(b.startZ, b.endZ, t);
+      // ★ 前方スライドを廃止し、ハッチ直下のZ座標（b.startZ）に完全固定して真下へ急降下
+      const pZ = b.startZ;
       const fallPower = TRAPDOOR_CONFIG.PHYSICS.gravityPower;
       const pY = b.startY + (b.endY - b.startY) * Math.pow(t, fallPower);
       char.pos.set(char.trapdoorX, pY, pZ);
 
       const timeSec = performance.now() * 0.001;
       applyTrapdoorPose(char, dirX, timeSec);
-      // （※毎フレームの音程更新はジッパーノイズになるため全廃し、start時に全自動スケジューリング済み）
     }
     char.meshObj.root.position.copy(char.pos);
     return;
@@ -767,7 +767,7 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     const b = char.activeElevator;
     const laneData = b.elevators.find(e => e.laneIdx === char.elevatorLane) || b.elevators[0];
 
-    // 上の島へ到着後の前向き下車シーケンス（後ろ向きバック歩行を根絶）
+    // 上の島へ到着後の前向き下車シーケンス
     if (char.elevatorExiting) {
       char.elevatorExitTimer -= dt;
       const exitProgress = 1.0 - (char.elevatorExitTimer / ELEVATOR_CONFIG.EASING.exitDelay);
@@ -775,7 +775,6 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
       char.pos.z = b.endZ - 1.0 - exitProgress * 1.8;
       char.pos.y = STAGES[b.nextStageIdx].y;
 
-      // 進行方向（北 = Math.PI）を向いて堂々と歩行
       char.meshObj.root.rotation.set(0, Math.PI, 0);
 
       const armSwing = Math.sin(exitProgress * 14) * 0.55;
@@ -837,7 +836,6 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
 
       char.pos.set(LANES[char.elevatorLane], pY + 0.10, pZ);
 
-      // 搭乗中も進行方向（北 = Math.PI）を向いて手すりを把持
       char.meshObj.root.rotation.set(0, Math.PI, 0);
       char.meshObj.leftLeg.rotation.set(0, 0, 0);
       char.meshObj.rightLeg.rotation.set(0, 0, 0);
@@ -872,7 +870,6 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
       char.lastPlankIdx = -1;
       resetCharacterPose(char);
 
-      // 足元ショックウェーブのみでスマートに着地演出（点滅タイマー設定を完全削除！）
       triggerLandingShockwave(char.pos.x, char.pos.y, char.pos.z, tier.shockRadius);
 
       for (let i = 0; i < characters.length; i++) {
@@ -1165,7 +1162,7 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
       char.meshObj.leftLeg.rotation.x = swing;
       char.meshObj.rightLeg.rotation.x = -swing;
       char.meshObj.leftArm.rotation.x = -swing;
-      char.meshObj.rightArm.rotation.x = -swing;
+      char.meshObj.rightArm.rotation.x = swing;
 
       const bounce = Math.abs(Math.sin(char.walkCycle * 2)) * 0.12;
       char.meshObj.body.position.y = 0.65 + bounce;

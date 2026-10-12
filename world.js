@@ -67,7 +67,6 @@ export function decrementAttackCamTimer(dt) { attackCamTimer = Math.max(0, attac
 export function incMagnetDockStep() { return magnetDockStepCounter++; }
 
 const dummyPlankObj = new THREE.Object3D();
-const dummyWireObj = new THREE.Object3D();
 
 export function getFloorBlocksForStage(stageIdx) {
   let bucket = floorBlocksByStage.get(stageIdx);
@@ -107,7 +106,7 @@ export function createModifierGate(scene, stageIdx, posX, posZ, posY, opType, va
   rR1.position.x = 1.3;
   group.add(rR1);
 
-  // 黒タイヤを完全撤廃：浮島の白大理石フロアから自然に立ち上がるクリーンベース
+  // 白大理石フロア直結クリーンベース
   const pedL = new THREE.Mesh(gatePedestalGeo, sharedMats.gatePedestal);
   pedL.position.set(-1.3, 0.08, 0);
   group.add(pedL);
@@ -293,13 +292,33 @@ export function createSkydiveCatapultStructure(scene, posX, posY, posZ) {
   };
 }
 
-// ★ ドロップタワー・スカイゲート施設：白スチールトラス支柱＆最上部オレンジ滑車プーリー
-export function createTrapdoorHatchStructure(scene, posX, posY, posZ) {
+// ★ ドロップタワー・スカイゲート施設：白スチールトラス支柱＆最上部オレンジ滑車プーリー（完全垂直落下仕様）
+export function createTrapdoorHatchStructure(scene, posX, posY, hatchZ, approachStartZ) {
   const group = new THREE.Group();
+
+  // 手前島からハッチ位置（hatchZ）まで伸びる透明ガラスのアプローチスカイウォーク
+  if (approachStartZ > hatchZ + 0.5) {
+    const walkLen = approachStartZ - hatchZ;
+    const walkGeo = new THREE.BoxGeometry(3.2, 0.14, walkLen);
+    const walkMesh = new THREE.Mesh(walkGeo, sharedMats.dropGlassFloor);
+    walkMesh.position.set(posX, posY + 0.08, (approachStartZ + hatchZ) / 2);
+    walkMesh.receiveShadow = true;
+    group.add(walkMesh);
+
+    // スカイウォークのサイドパイプレール
+    const sideRailGeo = new THREE.CylinderGeometry(0.06, 0.06, walkLen, 8);
+    sideRailGeo.rotateX(Math.PI / 2);
+    const sRailL = new THREE.Mesh(sideRailGeo, sharedMats.catapultNeonRail);
+    sRailL.position.set(posX - 1.6, posY + 0.45, (approachStartZ + hatchZ) / 2);
+    group.add(sRailL);
+    const sRailR = sRailL.clone();
+    sRailR.position.x = posX + 1.6;
+    group.add(sRailR);
+  }
 
   // 1. せり出し円形強化ガラスデッキ
   const deck = new THREE.Mesh(dropDeckGeo, sharedMats.dropGlassFloor);
-  deck.position.set(posX, posY + 0.08, posZ);
+  deck.position.set(posX, posY + 0.08, hatchZ);
   deck.receiveShadow = true;
   group.add(deck);
 
@@ -307,62 +326,62 @@ export function createTrapdoorHatchStructure(scene, posX, posY, posZ) {
   const rimGeo = new THREE.TorusGeometry(2.8, 0.08, 8, 32);
   rimGeo.rotateX(Math.PI / 2);
   const rim = new THREE.Mesh(rimGeo, sharedMats.dropPylonSteel);
-  rim.position.set(posX, posY + 0.16, posZ);
+  rim.position.set(posX, posY + 0.16, hatchZ);
   group.add(rim);
 
   // 3. 左右にそびえ立つ白スチールトラス支柱 ＆ シアンブルーネオンインジケーター
   const pylonL = new THREE.Mesh(dropPylonGeo, sharedMats.dropPylonSteel);
-  pylonL.position.set(posX - 2.2, posY + 3.75, posZ);
+  pylonL.position.set(posX - 2.2, posY + 3.75, hatchZ);
   pylonL.castShadow = true;
   group.add(pylonL);
 
   const indL = new THREE.Mesh(dropIndicatorGeo, sharedMats.dropIndicatorNeon);
-  indL.position.set(posX - 2.2, posY + 3.75, posZ + 0.18);
+  indL.position.set(posX - 2.2, posY + 3.75, hatchZ + 0.18);
   group.add(indL);
 
   const pylonR = new THREE.Mesh(dropPylonGeo, sharedMats.dropPylonSteel);
-  pylonR.position.set(posX + 2.2, posY + 3.75, posZ);
+  pylonR.position.set(posX + 2.2, posY + 3.75, hatchZ);
   pylonR.castShadow = true;
   group.add(pylonR);
 
   const indR = new THREE.Mesh(dropIndicatorGeo, sharedMats.dropIndicatorNeon);
-  indR.position.set(posX + 2.2, posY + 3.75, posZ + 0.18);
+  indR.position.set(posX + 2.2, posY + 3.75, hatchZ + 0.18);
   group.add(indR);
 
   // 4. タワー上部クロスバー
   const topCrossBarGeo = new THREE.BoxGeometry(4.8, 0.32, 0.32);
   const topCrossBar = new THREE.Mesh(topCrossBarGeo, sharedMats.dropPylonSteel);
-  topCrossBar.position.set(posX, posY + 7.3, posZ);
+  topCrossBar.position.set(posX, posY + 7.3, hatchZ);
   group.add(topCrossBar);
 
   // 5. 最上部オレンジ滑車プーリー（絶叫タワー構造）
   const pulleyL = new THREE.Mesh(dropPulleyGeo, sharedMats.dropPulleySteel);
-  pulleyL.position.set(posX - 1.8, posY + 7.3, posZ);
+  pulleyL.position.set(posX - 1.8, posY + 7.3, hatchZ);
   group.add(pulleyL);
 
   const pulleyR = new THREE.Mesh(dropPulleyGeo, sharedMats.dropPulleySteel);
-  pulleyR.position.set(posX + 1.8, posY + 7.3, posZ);
+  pulleyR.position.set(posX + 1.8, posY + 7.3, hatchZ);
   group.add(pulleyR);
 
   // 6. 強化ガラスハッチ中央開口部と深淵ボイド
   const voidMesh = new THREE.Mesh(new THREE.PlaneGeometry(3.0, 3.0), sharedMats.hatchInnerVoid);
   voidMesh.rotation.x = -Math.PI / 2;
-  voidMesh.position.set(posX, posY - 0.02, posZ);
+  voidMesh.position.set(posX, posY - 0.02, hatchZ);
   group.add(voidMesh);
 
   // 7. 左右に開放するガラスハッチ扉（ピボット制御）
   const doorLeftPivot = new THREE.Group();
-  doorLeftPivot.position.set(posX - 1.5, posY + 0.10, posZ);
+  doorLeftPivot.position.set(posX - 1.5, posY + 0.10, hatchZ);
   const doorL = new THREE.Mesh(hatchDoorGeo, sharedMats.dropGlassFloor);
   doorL.position.set(0.75, 0, 0);
   doorLeftPivot.add(doorL);
   group.add(doorLeftPivot);
 
   const doorRightPivot = new THREE.Group();
-  doorRightPivot.position.set(posX + 1.5, posY + 0.10, posZ);
+  doorRightPivot.position.set(posX + 1.5, posY + 0.10, hatchZ);
   const doorR = new THREE.Mesh(hatchDoorGeo, sharedMats.dropGlassFloor);
   doorR.position.set(-0.75, 0, 0);
-  doorRightPivot.add(doorR);
+  doorRightPivot.add(doorRightPivot);
   group.add(doorRightPivot);
 
   group.position.set(0, 0, 0);
@@ -372,7 +391,7 @@ export function createTrapdoorHatchStructure(scene, posX, posY, posZ) {
     group,
     doorLeftPivot,
     doorRightPivot,
-    hatchCenter: new THREE.Vector3(posX, posY, posZ)
+    hatchCenter: new THREE.Vector3(posX, posY, hatchZ)
   };
 }
 
@@ -500,6 +519,7 @@ export function createOceanIsletMesh(scale = 1.0, type = 'tropical') {
   return group;
 }
 
+// ★ 浮島メッシュ：海底へ垂れ下がるアンカーワイヤーを完全撤去（すっきりした南国スカイアイランド）
 export function createIslandMesh(r, y, z) {
   const group = new THREE.Group();
   const plat = new THREE.Mesh(islandGeo, sharedMats.island);
@@ -513,22 +533,6 @@ export function createIslandMesh(r, y, z) {
   const border = new THREE.Mesh(torusGeo, sharedMats.islandBorder);
   border.position.set(0, y, z);
   group.add(border);
-
-  const wireHeight = Math.max(12, y - (-45));
-  const wireGeo = new THREE.CylinderGeometry(0.08, 0.08, wireHeight, 6);
-  const wireInstanced = new THREE.InstancedMesh(wireGeo, sharedMats.anchorWire, 3);
-  const wireOffsets = [
-    [0, 0],
-    [r * 0.65, 0],
-    [-r * 0.65, 0]
-  ];
-  wireOffsets.forEach(([ox, oz], i) => {
-    dummyWireObj.position.set(ox, y - wireHeight / 2 - 0.5, z + oz);
-    dummyWireObj.updateMatrix();
-    wireInstanced.setMatrixAt(i, dummyWireObj.matrix);
-  });
-  wireInstanced.instanceMatrix.needsUpdate = true;
-  group.add(wireInstanced);
 
   return group;
 }
@@ -691,17 +695,20 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     return;
   }
 
-  // ドロップタワー（足先行・シースルー強化ガラスデッキ・垂直急降下）
+  // ★ ドロップタワー（足先行・真下の着地デッキへ完全垂直落下）
   if (type === 'trapdoor' || type === 'freefall') {
-    const startZ = prevIslandZ - prevR + 1.2;
-    const endZ = nextIslandZ + nextR - 1.2;
+    const approachStartZ = prevIslandZ - prevR + 1.2;
+    // ハッチの位置を着地デッキの真上（endZ）に配置し、水平スライドを0にして真下へ一直線に落とす
+    const targetDropZ = nextIslandZ + nextR - 1.2;
 
-    const hatch = createTrapdoorHatchStructure(scene, 0, startY, startZ);
+    const hatch = createTrapdoorHatchStructure(scene, 0, startY, targetDropZ, approachStartZ);
 
     const trapdoorBridge = {
       stageIdx, nextStageIdx, laneIdx: 1, planks: [],
       visualMeshes: [hatch.group],
-      startZ, endZ, startY, endY,
+      startZ: targetDropZ, // ★ 落下開始Zと着地Zを同一にして純粋な垂直落下を実現
+      endZ: targetDropZ,
+      startY, endY,
       hatchCenter: hatch.hatchCenter,
       doorLeftPivot: hatch.doorLeftPivot,
       doorRightPivot: hatch.doorRightPivot,

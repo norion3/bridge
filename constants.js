@@ -94,6 +94,7 @@ export const SKYDIVE_CONFIG = {
     forwardDistance: 52.0,          // 雄大な前進距離 (時速86kmを維持する伸びやかな放物線)
     totalDuration: 3.1,             // 滞空飛行時間（3.1秒：アクションをたっぷり堪能）
     gravityPower: 2.0,              // 重力加速カーブ（滑らかな放物線）
+    hopHeight: 3.5,                 // ★ 飛び出し板の陰に隠れない斜め上ホップ高度 (+3.5m)
     horizontalAirControlSpeed: 10.0,// 左右エアコントロール速度
     maxAirOffsetX: 4.8,             // 左右最大シフト幅
     maxRollAngle: Math.PI * 0.18    // 左右スワイプ時の最大バンク角（ロール傾き 約32度）
@@ -114,11 +115,11 @@ export const SKYDIVE_CONFIG = {
   }
 };
 
-// ★ 看板ステージ2：ドロップタワー・スカイゲート仕様定数（超高層落差-58m・2.4秒自由落下）
+// ★ 看板ステージ2：ドロップタワー・スカイゲート仕様定数（完全垂直落下・タイトチェイス）
 export const TRAPDOOR_CONFIG = {
   PHYSICS: {
     minHeightDrop: 58.0,            // 圧倒的な超高層垂直落差 (-58m)
-    forwardDistance: 12.0,          // 前進距離を抑えた垂直落下
+    forwardDistance: 0.0,           // ★ 前方スライドを全廃し真下へ一直線に垂直落下 (0m)
     totalDuration: 2.4,             // 落下滞空時間（2.4秒：落ちるスリルを存分に魅せる）
     gravityPower: 1.6,              // 初速からストンと落ちる重力加速
     horizontalAirControlSpeed: 7.5, // 左右エアスライド速度（直立維持）
@@ -132,14 +133,13 @@ export const TRAPDOOR_CONFIG = {
     openDuration: 0.14,             // 扉開放所要時間（瞬時開放）
     exclusionRadius: 5.0            // 施設周辺の床ブロック生成禁止半径
   },
-  // ★ 斜め上クォーターチェイスカメラ（キャラを置き去りにせず、背景がぶっ飛ぶ）
+  // ★ タイト・クォーターチェイスカメラ（キャラを見失わず斜め上から密着追従）
   CAMERA: {
-    offsetX: 4.5,                   // キャラを少し左にずらしつつ真後ろを避ける
-    offsetY: 6.5,                   // 上から見守る高度
-    offsetZ: 7.0,                   // 離れすぎずロックオン
-    lookOffsetY: -2.5,              // 水平線と着地島の中間を注視
-    lookAheadZ: -12.0,              // 前方奥
-    lagPhase1Duration: 0.20,        // 開放直後の上空置き去り遅延時間
+    offsetX: 2.4,                   // キャラを画面中央に収めるタイトな横オフセット (+2.4m)
+    offsetY: 6.0,                   // 上から見守る高度 (+6.0m)
+    offsetZ: 5.5,                   // 離れすぎずロックオン (+5.5m)
+    lookOffsetY: -1.5,              // 注視点 Y (-1.5m)
+    lookAheadZ: -4.0,               // 前方注視点 (-4.0m)
     fovStart: 62,                   // 開始時FOV
     fovDrop: 76                     // 追従加速時FOV（ワイドパノラマ）
   }

@@ -1,4 +1,4 @@
-// パーティクル・エフェクト・飛翔体・床ブロックプール（視界を塞ぐ空中パーティクルノイズを完全撤廃・高初速着地インパクト）
+// パーティクル・エフェクト・飛翔体・床ブロックプール（視界を塞ぐ空中パーティクルノイズを完全撤廃・高初速着地インパクト・視認性を極限まで高めた攻撃エフェクト）
 import {
   sharedMats,
   sharedMaterialsSet,
@@ -15,7 +15,7 @@ export const PUFF_POOL_SIZE = 24;
 export const RING_POOL_SIZE = 18;
 export const SHOCKWAVE_POOL_SIZE = 16;
 export const PROJECTILE_POOL_SIZE = 3;
-export const NUM_TRAILS_PER_PROJ = 14;
+export const NUM_TRAILS_PER_PROJ = 18; // トレイル球体数を増やして途切れのない滑らかな光の帯へ
 export const DRAIN_POOL_SIZE = 8;
 export const FLOOR_BLOCK_POOL_SIZE = 400;
 
@@ -110,14 +110,17 @@ export function initParticlePools(scene) {
       const projGroup = new THREE.Group();
       projGroup.visible = false;
 
+      // 飛翔クリスタル本体を 1.6 倍に拡大して遠距離でも明確に視認可能に
       const crystalMesh = new THREE.Mesh(itemCrystalGeo, sharedMats.itemAttackCrystal);
-      crystalMesh.scale.set(1.2, 1.2, 1.2);
+      crystalMesh.scale.set(1.65, 1.65, 1.65);
       crystalMesh.castShadow = true;
       projGroup.add(crystalMesh);
 
       const ring1 = new THREE.Mesh(attackRingGeo, sharedMats.attackRingMat);
+      ring1.scale.set(1.25, 1.25, 1.25);
       projGroup.add(ring1);
       const ring2 = new THREE.Mesh(attackRingGeo, sharedMats.attackRingMat);
+      ring2.scale.set(1.25, 1.25, 1.25);
       ring2.rotation.x = Math.PI / 2;
       projGroup.add(ring2);
 
@@ -129,7 +132,8 @@ export function initParticlePools(scene) {
         sharedMaterialsSet.add(tMat);
         const tMesh = new THREE.Mesh(attackTrailSphereGeo, tMat);
         tMesh.visible = false;
-        const s = Math.max(0.2, (1.0 - (i / NUM_TRAILS_PER_PROJ)) * 0.95);
+        // 太く鮮やかな彗星のようなフェードアウトスケール
+        const s = Math.max(0.28, (1.0 - (i / NUM_TRAILS_PER_PROJ)) * 1.35);
         tMesh.scale.set(s, s, s);
         scene.add(tMesh);
         trailSpheres.push({
@@ -140,7 +144,7 @@ export function initParticlePools(scene) {
       }
 
       const history = [];
-      for (let h = 0; h < 20; h++) {
+      for (let h = 0; h < 26; h++) {
         history.push(new THREE.Vector3());
       }
 
@@ -157,7 +161,7 @@ export function initParticlePools(scene) {
         target: null,
         isRear: false,
         progress: 0,
-        duration: 0.82,
+        duration: 1.35,
         active: false
       });
     }
@@ -165,8 +169,8 @@ export function initParticlePools(scene) {
 
   if (drainBlockPool.length === 0) {
     for (let d = 0; d < DRAIN_POOL_SIZE; d++) {
-      const drainMesh = new THREE.Mesh(blockGeometry, sharedMats.drainBlockMat);
-      drainMesh.scale.set(1.0, 1.0, 1.0);
+      const drainMesh = new THREE.Mesh(blockGeometry, sharedMats.blockBlue);
+      drainMesh.scale.set(1.15, 1.15, 1.15);
       drainMesh.visible = false;
       scene.add(drainMesh);
       drainBlockPool.push({
@@ -176,7 +180,7 @@ export function initParticlePools(scene) {
         index: 0,
         delay: 0,
         progress: 0,
-        duration: 0.75,
+        duration: 0.85,
         active: false
       });
     }
