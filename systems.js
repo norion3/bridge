@@ -282,7 +282,9 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
           char.onTrapdoor = true;
           char.trapdoorProgress = 0;
           char.activeTrapdoor = trapB;
-          char.trapdoorX = char.pos.x;
+          // ★ 修正：開口部中心 (X=0) へ吸い込み完全センタリング
+          char.trapdoorX = 0;
+          char.pos.x = 0;
           trapB.isHatchOpen = true;
 
           if (char.isPlayer && soundRef) {
@@ -750,6 +752,15 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
       char.pos.set(char.trapdoorX || char.freefallX, nextStageObj.y, nextStageObj.z + nextStageObj.r * 0.4);
       char.slideCooldown = 0.5;
       char.lastPlankIdx = -1;
+
+      // ★ 修正：通過後はハッチ扉を自動的に閉じる（Bot通過後に開きっぱなしになる現象を根絶）
+      b.isHatchOpen = false;
+      b.hatchOpenProgress = 0;
+      if (b.doorLeftPivot && b.doorRightPivot) {
+        b.doorLeftPivot.rotation.z = 0;
+        b.doorRightPivot.rotation.z = 0;
+      }
+
       char.activeTrapdoor = null;
       char.activeFreefall = null;
 
@@ -772,9 +783,14 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
       const packProg = Math.min(1.0, char.trapdoorProgress / (0.40 / totalFlyTime));
       packCharacterLuggage(char, packProg);
 
+      // ★ 修正：落下初期（見下ろし中）は中心 (X=0) を厳格維持
       const airSpeed = TRAPDOOR_CONFIG.PHYSICS.horizontalAirControlSpeed;
       const maxAirX = TRAPDOOR_CONFIG.PHYSICS.maxAirOffsetX;
-      char.trapdoorX = Math.max(-maxAirX, Math.min(maxAirX, (char.trapdoorX || char.freefallX || 0) + dirX * airSpeed * dt));
+      if (t < 0.45) {
+        char.trapdoorX = 0;
+      } else {
+        char.trapdoorX = Math.max(-maxAirX, Math.min(maxAirX, (char.trapdoorX || 0) + dirX * airSpeed * dt));
+      }
 
       // 完全垂直直下落下：ハッチ直下Z座標（b.startZ）を完全固定
       const pZ = b.startZ;

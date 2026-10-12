@@ -392,20 +392,15 @@ export function createTrapdoorHatchStructure(scene, posX, posY, hatchZ, approach
   indR.position.set(posX + 2.2, posY + 3.75, hatchZ + 0.18);
   group.add(indR);
 
-  // 4. タワー上部クロスバー
-  const topCrossBarGeo = new THREE.BoxGeometry(4.8, 0.32, 0.32);
-  const topCrossBar = new THREE.Mesh(topCrossBarGeo, sharedMats.dropPylonSteel);
-  topCrossBar.position.set(posX, posY + 7.3, hatchZ);
-  group.add(topCrossBar);
+  // ★ 修正：開口部直上を横切っていたクロスバーと滑車を完全撤去（上空見下ろしカメラの視界遮蔽を解消）
+  const pylonCapGeo = new THREE.BoxGeometry(0.55, 0.28, 0.55);
+  const capL = new THREE.Mesh(pylonCapGeo, sharedMats.dropPylonSteel);
+  capL.position.set(posX - 2.2, posY + 7.5, hatchZ);
+  group.add(capL);
 
-  // 5. 最上部オレンジ滑車プーリー（絶叫タワー構造）
-  const pulleyL = new THREE.Mesh(dropPulleyGeo, sharedMats.dropPulleySteel);
-  pulleyL.position.set(posX - 1.8, posY + 7.3, hatchZ);
-  group.add(pulleyL);
-
-  const pulleyR = new THREE.Mesh(dropPulleyGeo, sharedMats.dropPulleySteel);
-  pulleyR.position.set(posX + 1.8, posY + 7.3, hatchZ);
-  group.add(pulleyR);
+  const capR = new THREE.Mesh(pylonCapGeo, sharedMats.dropPylonSteel);
+  capR.position.set(posX + 2.2, posY + 7.5, hatchZ);
+  group.add(capR);
 
   // 6. 左右に開放するガラスハッチ扉（ピボット制御）
   const doorLeftPivot = new THREE.Group();

@@ -72,6 +72,9 @@ let gameStarted = false;
 let placedPlankCount = 0;
 let lastDisplayedSec = -1;
 
+let trapdoorLandingRecoveryTimer = 0;
+let wasTrapdoorLastFrame = false;
+
 const input = { x: 0, y: 0, active: false };
 
 export function updateHUD() {
@@ -117,6 +120,8 @@ export function resetGame() {
   placedPlankCount = 0;
   timeLeft = 300;
   lastDisplayedSec = -1;
+  trapdoorLandingRecoveryTimer = 0;
+  wasTrapdoorLastFrame = false;
 
   buildWorld(scene);
   resetCharacters(STAGES);
@@ -631,6 +636,16 @@ export function animate(currentTime) {
     const isSkydive = player.onSkydive;
     const isTrapdoor = (player.onTrapdoor || player.onFreefall);
 
+    // ★ 修正：フリーフォール終了の瞬間を検知して着地リカバリータイマーを発火
+    if (wasTrapdoorLastFrame && !isTrapdoor) {
+      trapdoorLandingRecoveryTimer = 1.2;
+    }
+    wasTrapdoorLastFrame = isTrapdoor;
+
+    if (trapdoorLandingRecoveryTimer > 0) {
+      trapdoorLandingRecoveryTimer = Math.max(0, trapdoorLandingRecoveryTimer - dt);
+    }
+
     // ★ 落ちる直前のスカイウォーク歩行時判定（手前島エッジからハッチ前まで）
     const isApproachingTrapdoor = (() => {
       if (isTrapdoor) return null;
@@ -733,19 +748,18 @@ export function animate(currentTime) {
       targetLookAheadZ = player.pos.z - 2.5;
       targetFOV = 64;
     } else if (isTrapdoor) {
-      // ★ フリーフォール：3段階シネマティックカメラ（開口部直上センタリング補正）
+      // ★ フリーフォール：3段階シネマティックカメラ（開口部円心の完全垂直センタリング）
       const b = player.activeTrapdoor || player.activeFreefall;
       const prog = player.trapdoorProgress || player.freefallProgress || 0;
       const tX = player.trapdoorX || player.freefallX || player.pos.x;
       const camCfg = TRAPDOOR_CONFIG.CAMERA;
 
       if (b && prog < 0.45) {
-        // ① 第1段階：じっくり見下ろしゾーン（開口部の真上直上から完全センタリング見下ろし）
-        const ratio = prog / 0.45;
-        targetCamX = THREE.MathUtils.lerp(tX + 0.6, tX * 0.1, ratio);
-        targetCamY = b.startY + 12.0 - ratio * 2.0; // 真上高所
-        targetCamZ = b.startZ + 0.9 - ratio * 0.5; // 開口部円心直上へセンタリング補正
-        targetLookX = tX;
+        // ① 第1段階：じっくり見下ろしゾーン（開口部円心 X=0, Z=b.startZ の直上真上から完全垂直センタリング見下ろし）
+        targetCamX = 0;
+        targetCamY = b.startY + 12.5; // 真上高所
+        targetCamZ = b.startZ; // ハッチ開口部円心 (X=0, Z=b.startZ) の真上直上
+        targetLookX = 0;
         targetLookY = player.pos.y; // 落ちていくキャラを真下に見下ろす
         targetLookAheadZ = b.startZ; // ハッチ開口部の中心
         targetFOV = 74;
@@ -753,11 +767,11 @@ export function animate(currentTime) {
         // ② 第2段階：滑らかな移行チェイス（真上直上見下ろしから斜め横チェイスへ優雅に回り込み）
         const blend = THREE.MathUtils.smoothstep(prog, 0.45, 0.75);
 
-        // トップダウン終点座標
-        const fromCamX = tX * 0.1;
-        const fromCamY = b.startY + 10.0;
-        const fromCamZ = b.startZ + 0.4;
-        const fromLookX = tX;
+        // トップダウン終点座標（完全垂直センタリング）
+        const fromCamX = 0;
+        const fromCamY = b.startY + 12.5;
+        const fromCamZ = b.startZ;
+        const fromLookX = 0;
         const fromLookY = player.pos.y;
         const fromLookZ = b.startZ;
 
@@ -777,15 +791,15 @@ export function animate(currentTime) {
         targetLookAheadZ = THREE.MathUtils.lerp(fromLookZ, toLookZ, blend);
         targetFOV = THREE.MathUtils.lerp(74, camCfg.fovDrop, blend);
       } else if (b) {
-        // ③ 第3段階：先行ランディング（着地デッキを視野下部に先回りして捉え、両足でスマートに着地）
+        // ③ 第3段階：先行ランディング（着地フロアを視野下部に先回りして捉え、両足でスマートに着地）
         const landRatio = (prog - 0.75) / 0.25;
         targetCamX = tX + camCfg.offsetX * (1.0 - landRatio * 0.35);
-        targetCamY = b.endY + camCfg.offsetY * 0.85;
-        targetCamZ = b.endZ + camCfg.offsetZ * 0.85;
-        targetLookX = tX * 0.4;
-        targetLookY = b.endY + 0.8;
+        targetCamY = b.endY + 8.5; // 着地フロアに近い高さ
+        targetCamZ = b.endZ + 13.0; // 後方適正距離
+        targetLookX = 0;
+        targetLookY = b.endY + 1.0;
         targetLookAheadZ = b.endZ - 6.0;
-        targetFOV = THREE.MathUtils.lerp(camCfg.fovDrop, 64, landRatio);
+        targetFOV = THREE.MathUtils.lerp(camCfg.fovDrop, 62, landRatio);
       } else {
         targetCamX = tX + camCfg.offsetX;
         targetCamY = player.pos.y + camCfg.offsetY;
@@ -797,11 +811,27 @@ export function animate(currentTime) {
       }
     }
 
+    // ★ 修正：フリーフォール着地後のスムーズ復帰リカバリーカメラ
+    // 着地後1.2秒間、上空から取り残されたような急角度見下ろしを防止し、斜め後方から力強く復帰
+    if (trapdoorLandingRecoveryTimer > 0) {
+      const recRatio = trapdoorLandingRecoveryTimer / 1.2; // 1.0 -> 0.0
+      const recCamY = player.pos.y + 9.5;
+      const recCamZ = player.pos.z + 14.5;
+      const recLookY = player.pos.y + 1.2;
+      const recLookAheadZ = player.pos.z - 6.0;
+
+      targetCamY = THREE.MathUtils.lerp(targetCamY, recCamY, recRatio);
+      targetCamZ = THREE.MathUtils.lerp(targetCamZ, recCamZ, recRatio);
+      targetLookY = THREE.MathUtils.lerp(targetLookY, recLookY, recRatio);
+      targetLookAheadZ = THREE.MathUtils.lerp(targetLookAheadZ, recLookAheadZ, recRatio);
+      targetFOV = THREE.MathUtils.lerp(targetFOV, 62, recRatio);
+    }
+
     // 垂直自由落下・高速滑空時にキャラを見失わない強固な追従LERP
     const prog = player.trapdoorProgress || player.freefallProgress || 0;
-    const lerpFactorX = isTrapdoor ? (prog < 0.45 ? 0.28 : TRAPDOOR_CONFIG.CAMERA.lerpFactor) : (isApproachingTrapdoor ? 0.20 : (isSkydive ? 0.40 : 0.14));
-    const lerpFactorY = isTrapdoor ? (prog < 0.45 ? 0.28 : TRAPDOOR_CONFIG.CAMERA.lerpFactor) : (isApproachingTrapdoor ? 0.20 : (isSkydive ? 0.40 : (isJumping ? 0.16 : 0.14)));
-    const lerpFactorZ = isTrapdoor ? (prog < 0.45 ? 0.28 : TRAPDOOR_CONFIG.CAMERA.lerpFactor) : (isApproachingTrapdoor ? 0.20 : (isSkydive ? 0.44 : 0.14));
+    const lerpFactorX = isTrapdoor ? (prog < 0.45 ? 0.32 : TRAPDOOR_CONFIG.CAMERA.lerpFactor) : (isApproachingTrapdoor ? 0.20 : (isSkydive ? 0.40 : (trapdoorLandingRecoveryTimer > 0 ? 0.18 : 0.14)));
+    const lerpFactorY = isTrapdoor ? (prog < 0.45 ? 0.32 : TRAPDOOR_CONFIG.CAMERA.lerpFactor) : (isApproachingTrapdoor ? 0.20 : (isSkydive ? 0.40 : (isJumping ? 0.16 : (trapdoorLandingRecoveryTimer > 0 ? 0.18 : 0.14))));
+    const lerpFactorZ = isTrapdoor ? (prog < 0.45 ? 0.32 : TRAPDOOR_CONFIG.CAMERA.lerpFactor) : (isApproachingTrapdoor ? 0.20 : (isSkydive ? 0.44 : (trapdoorLandingRecoveryTimer > 0 ? 0.18 : 0.14)));
 
     camera.position.x = THREE.MathUtils.lerp(camera.position.x, targetCamX, lerpFactorX);
     camera.position.y = THREE.MathUtils.lerp(camera.position.y, targetCamY, lerpFactorY);
