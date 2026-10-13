@@ -833,29 +833,56 @@ export function animate(currentTime) {
       targetLookAheadZ = player.pos.z - 2.5;
       targetFOV = 64;
     } else if (isTrapdoor) {
-      // ★ ドロップタワー猛追走カメラ：上空静止を撤廃し、背後斜め上から密着追従
+      // ★ フリーフォール：2段階ドラマティックカメラ
+      // 前半（0〜35%）: 上からまっすぐ落ちていく様子をしっかり画面で見せる見下ろし導入
+      // 後半（35〜100%）: 背後斜め上へ急速に回り込んで急降下猛追走するチェイス
       const b = player.activeTrapdoor || player.activeFreefall;
       const prog = player.trapdoorProgress || player.freefallProgress || 0;
       const camCfg = TRAPDOOR_CONFIG.CAMERA;
 
-      if (prog < 0.80) {
-        // 急降下追走ゾーン：背後斜め上からキャラを猛追走し、景色が上空へ飛び去るスピード感を演出
-        targetCamX = player.pos.x * 0.35 + camCfg.offsetX * 0.4;
-        targetCamY = player.pos.y + camCfg.offsetY;
-        targetCamZ = player.pos.z + camCfg.offsetZ;
-        targetLookX = player.pos.x * 0.2;
-        targetLookY = player.pos.y + camCfg.lookOffsetY;
-        targetLookAheadZ = player.pos.z + camCfg.lookAheadZ;
-        targetFOV = camCfg.fovDrop;
-      } else {
-        // 着地ゾーン：着地フロアへ先行して視線を合わせる
+      if (b && prog < 0.35) {
+        // 【第1段階：見下ろし導入】ハッチ開口部直上から直下を捉え、キャラが足元から真下へ吸い込まれる様子をしっかり見せる
+        targetCamX = 0;
+        targetCamY = b.startY + 11.5;
+        targetCamZ = b.startZ;
+        targetLookX = 0;
+        targetLookY = player.pos.y;
+        targetLookAheadZ = b.startZ;
+        targetFOV = 72;
+      } else if (b && prog < 0.80) {
+        // 【第2段階：急降下猛チェイス】見下ろしからカメラが急接近して背後斜め上へ回り込み、大迫力で並走ダイブ！
+        const chaseBlend = THREE.MathUtils.smoothstep(prog, 0.35, 0.50);
+
+        const fromCamX = 0;
+        const fromCamY = b.startY + 11.5;
+        const fromCamZ = b.startZ;
+        const fromLookX = 0;
+        const fromLookY = player.pos.y;
+        const fromLookZ = b.startZ;
+
+        const toCamX = player.pos.x * 0.35 + camCfg.offsetX * 0.4;
+        const toCamY = player.pos.y + camCfg.offsetY;
+        const toCamZ = player.pos.z + camCfg.offsetZ;
+        const toLookX = player.pos.x * 0.2;
+        const toLookY = player.pos.y + camCfg.lookOffsetY;
+        const toLookZ = player.pos.z + camCfg.lookAheadZ;
+
+        targetCamX = THREE.MathUtils.lerp(fromCamX, toCamX, chaseBlend);
+        targetCamY = THREE.MathUtils.lerp(fromCamY, toCamY, chaseBlend);
+        targetCamZ = THREE.MathUtils.lerp(fromCamZ, toCamZ, chaseBlend);
+        targetLookX = THREE.MathUtils.lerp(fromLookX, toLookX, chaseBlend);
+        targetLookY = THREE.MathUtils.lerp(fromLookY, toLookY, chaseBlend);
+        targetLookAheadZ = THREE.MathUtils.lerp(fromLookZ, toLookZ, chaseBlend);
+        targetFOV = THREE.MathUtils.lerp(72, camCfg.fovDrop, chaseBlend);
+      } else if (b) {
+        // 【着地ゾーン】着地フロアへ先行して視線を合わせ、両足でスマートに着地
         const landRatio = (prog - 0.80) / 0.20;
         targetCamX = THREE.MathUtils.lerp(player.pos.x * 0.35 + camCfg.offsetX * 0.4, 0, landRatio);
-        targetCamY = THREE.MathUtils.lerp(player.pos.y + camCfg.offsetY, (b ? b.endY : 0) + 7.5, landRatio);
-        targetCamZ = THREE.MathUtils.lerp(player.pos.z + camCfg.offsetZ, (b ? b.endZ : player.pos.z) + 11.5, landRatio);
+        targetCamY = THREE.MathUtils.lerp(player.pos.y + camCfg.offsetY, b.endY + 7.5, landRatio);
+        targetCamZ = THREE.MathUtils.lerp(player.pos.z + camCfg.offsetZ, b.endZ + 11.5, landRatio);
         targetLookX = 0;
-        targetLookY = (b ? b.endY : player.pos.y) + 1.0;
-        targetLookAheadZ = (b ? b.endZ : player.pos.z) - 5.0;
+        targetLookY = b.endY + 1.0;
+        targetLookAheadZ = b.endZ - 5.0;
         targetFOV = THREE.MathUtils.lerp(camCfg.fovDrop, 62, landRatio);
       }
     }
@@ -876,9 +903,10 @@ export function animate(currentTime) {
     }
 
     // 自由落下・高速滑空時にキャラを見失わない強固な追従LERP
-    const lerpFactorX = isTrapdoor ? TRAPDOOR_CONFIG.CAMERA.lerpFactor : (isApproachingTrapdoor ? 0.20 : (isSkydive ? 0.40 : (trapdoorLandingRecoveryTimer > 0 ? 0.18 : 0.14)));
-    const lerpFactorY = isTrapdoor ? TRAPDOOR_CONFIG.CAMERA.lerpFactor : (isApproachingTrapdoor ? 0.20 : (isSkydive ? 0.40 : (isJumping ? 0.16 : (trapdoorLandingRecoveryTimer > 0 ? 0.18 : 0.14))));
-    const lerpFactorZ = isTrapdoor ? TRAPDOOR_CONFIG.CAMERA.lerpFactor : (isApproachingTrapdoor ? 0.20 : (isSkydive ? 0.44 : (trapdoorLandingRecoveryTimer > 0 ? 0.18 : 0.14)));
+    const prog = player.trapdoorProgress || player.freefallProgress || 0;
+    const lerpFactorX = isTrapdoor ? (prog < 0.35 ? 0.30 : TRAPDOOR_CONFIG.CAMERA.lerpFactor) : (isApproachingTrapdoor ? 0.20 : (isSkydive ? 0.40 : (trapdoorLandingRecoveryTimer > 0 ? 0.18 : 0.14)));
+    const lerpFactorY = isTrapdoor ? (prog < 0.35 ? 0.30 : TRAPDOOR_CONFIG.CAMERA.lerpFactor) : (isApproachingTrapdoor ? 0.20 : (isSkydive ? 0.40 : (isJumping ? 0.16 : (trapdoorLandingRecoveryTimer > 0 ? 0.18 : 0.14))));
+    const lerpFactorZ = isTrapdoor ? (prog < 0.35 ? 0.30 : TRAPDOOR_CONFIG.CAMERA.lerpFactor) : (isApproachingTrapdoor ? 0.20 : (isSkydive ? 0.44 : (trapdoorLandingRecoveryTimer > 0 ? 0.18 : 0.14)));
 
     camera.position.x = THREE.MathUtils.lerp(camera.position.x, targetCamX, lerpFactorX);
     camera.position.y = THREE.MathUtils.lerp(camera.position.y, targetCamY, lerpFactorY);

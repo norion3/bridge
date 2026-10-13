@@ -1033,6 +1033,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
   const isJump = (type === 'jump');
   const isSlide = (type === 'slide');
   const isVertical = (type === 'vertical');
+  const isStairs = (!isJump && !isSlide);
 
   let jumpTiers = [];
   if (isJump) {
@@ -1047,8 +1048,9 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     const laneX = LANES[laneIdx];
     const prevInsetZ = Math.sqrt(Math.max(1, prevR * prevR - laneX * laneX));
     const nextInsetZ = Math.sqrt(Math.max(1, nextR * nextR - laneX * laneX));
-    const startZ = prevIslandZ - prevInsetZ + 1.2;
-    const endZ = nextIslandZ + nextInsetZ - 1.2;
+    // ★ 修正：階段の場合、始点を手前島のエッジに密着させ、終点を上の島のオレンジ外周リングより奥（天面側 -2.6m）へしっかり延伸
+    const startZ = prevIslandZ - prevInsetZ + (isStairs ? 0.4 : 1.2);
+    const endZ = nextIslandZ + nextInsetZ - (isStairs ? 2.6 : 1.2);
     const distZ = startZ - endZ;
 
     const dist3D = Math.hypot(distZ, endY - startY);
@@ -1075,20 +1077,35 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       scene.add(slopeMesh);
       bridge.visualMeshes.push(slopeMesh);
 
-      // ★ 修正：レーンごとに両側にパイプを作ると中間に重複して密集するため、
-      // 最左端（レーン0の左）と最右端（レーン2の右）のみに外枠レールを配置し、余計な仕切りを全廃
+      // ★ 修正：外枠レール（左・右）に加え、中央の2本の仕切りパイプレール（X = -2.0, +2.0）を追加配置
       const railGeo = new THREE.CylinderGeometry(0.15, 0.15, slopeLength, 8);
       railGeo.rotateX(Math.PI / 2);
 
       if (laneIdx === 0) {
+        // 最左端の外枠レール
         const leftRail = new THREE.Mesh(railGeo, sharedMats.slideRail);
         leftRail.position.set(LANES[laneIdx] - 1.85, midY + 0.3, midZ);
         leftRail.rotation.x = angleX;
         scene.add(leftRail);
         bridge.visualMeshes.push(leftRail);
+
+        // ★ レーン0とレーン1の中間仕切りパイプ (X = -2.0m)
+        const midRail1 = new THREE.Mesh(railGeo, sharedMats.slideRail);
+        midRail1.position.set(-2.0, midY + 0.3, midZ);
+        midRail1.rotation.x = angleX;
+        scene.add(midRail1);
+        bridge.visualMeshes.push(midRail1);
       }
 
       if (laneIdx === 2) {
+        // ★ レーン1とレーン2の中間仕切りパイプ (X = +2.0m)
+        const midRail2 = new THREE.Mesh(railGeo, sharedMats.slideRail);
+        midRail2.position.set(2.0, midY + 0.3, midZ);
+        midRail2.rotation.x = angleX;
+        scene.add(midRail2);
+        bridge.visualMeshes.push(midRail2);
+
+        // 最右端の外枠レール
         const rightRail = new THREE.Mesh(railGeo, sharedMats.slideRail);
         rightRail.position.set(LANES[laneIdx] + 1.85, midY + 0.3, midZ);
         rightRail.rotation.x = angleX;

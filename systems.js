@@ -810,7 +810,7 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     return;
   }
 
-  // ★ ドロップタワー（足先行・1.8秒高速前進ダイブ）：フワフワ静止感を解消し、着地デッキへ向けて前進急降下
+  // ★ ドロップタワー（足先行・完全垂直落下復元）：ハッチ直下のZ座標完全固定で真下へ吸い込まれる
   if ((char.onTrapdoor && char.activeTrapdoor) || (char.onFreefall && char.activeFreefall)) {
     const b = char.activeTrapdoor || char.activeFreefall;
 
@@ -864,21 +864,20 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
       const packProg = Math.min(1.0, char.trapdoorProgress / (0.35 / totalFlyTime));
       packCharacterLuggage(char, packProg);
 
-      // 落下初期（ハッチ通過直後）は中心を維持し、徐々に空中操作を許容
+      // 落下初期（ハッチ通過直後・見下ろし中）は中心を維持し、中盤以降に空中微調整を許容
       const airSpeed = TRAPDOOR_CONFIG.PHYSICS.horizontalAirControlSpeed;
       const maxAirX = TRAPDOOR_CONFIG.PHYSICS.maxAirOffsetX;
-      if (t < 0.30) {
+      if (t < 0.35) {
         char.trapdoorX = 0;
       } else {
         char.trapdoorX = Math.max(-maxAirX, Math.min(maxAirX, (char.trapdoorX || 0) + dirX * airSpeed * dt));
       }
 
-      // ★ 前進急降下ダイブ：ハッチ位置から着地サークル方向へ前進 (+18.0m)
-      const forwardDist = TRAPDOOR_CONFIG.PHYSICS.forwardDistance || 18.0;
-      const pZ = b.startZ - t * forwardDist;
+      // ★ 完全垂直落下復元：前進させずハッチ直下のZ座標を完全固定
+      const pZ = b.startZ;
 
-      // ★ 重力加速度 (t^1.6) で一気に急降下
-      const fallPower = TRAPDOOR_CONFIG.PHYSICS.gravityPower || 1.6;
+      // ★ 重力加速度 (t^1.8) で真下一直線にストンと急降下
+      const fallPower = TRAPDOOR_CONFIG.PHYSICS.gravityPower || 1.8;
       const pY = b.startY + (b.endY - b.startY) * Math.pow(t, fallPower);
       char.pos.set(char.trapdoorX, pY, pZ);
 

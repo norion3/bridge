@@ -115,13 +115,13 @@ export const SKYDIVE_CONFIG = {
   }
 };
 
-// ★ 看板ステージ2：ドロップタワー・スカイゲート仕様定数（落差-70m・1.8秒急降下ダイブ・前進18m）
+// ★ 看板ステージ2：ドロップタワー・スカイゲート仕様定数（落差-70m・完全垂直落下復元）
 export const TRAPDOOR_CONFIG = {
   PHYSICS: {
     minHeightDrop: 70.0,            // 超高層垂直落差 (-70m)
-    forwardDistance: 18.0,          // ★ 着地デッキに向けた前進ダイブ距離 (18.0m)
-    totalDuration: 1.8,             // ★ 落下滞空時間（1.8秒：ハイスピード急降下）
-    gravityPower: 1.6,              // ★ 初速からグンと引きずり込まれる重力カーブ
+    forwardDistance: 0.0,           // ★ 真下一直線への完全垂直落下復元 (0.0m)
+    totalDuration: 2.2,             // ★ 落下の様子とカメラ切り替えをじっくり味わえる黄金比滞空時間 (2.2秒)
+    gravityPower: 1.8,              // ★ 初速からストンと引きずり込まれる重力カーブ
     horizontalAirControlSpeed: 7.5, // 左右エアスライド速度（直立維持）
     maxAirOffsetX: 3.8              // 空中微調整の最大左右幅
   },
