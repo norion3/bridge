@@ -137,7 +137,6 @@ export function resetGame() {
 export function setupControls() {
   const zone = document.getElementById('touch-control-layer');
   let touchId = null, startX = 0, startY = 0;
-  let lastTouchEndTime = 0; // iOS ダブルタップズーム防止用タイマー
 
   function onPointerStart(x, y, id) {
     sound.init();
@@ -168,42 +167,22 @@ export function setupControls() {
   }
 
   if (zone) {
-    // タッチ開始：OSのデフォルト動作を抑止しつつ入力を開始
     zone.addEventListener('touchstart', e => {
-      e.preventDefault();
       if (e.touches.length > 0) {
         onPointerStart(e.touches[0].clientX, e.touches[0].clientY, e.touches[0].identifier);
       }
     }, { passive: false });
-
-    // タッチ移動：ラバーバンドスクロール（画面の上下バウンス）を完全に遮断
     window.addEventListener('touchmove', e => {
-      if (input.active) {
-        e.preventDefault();
-        for (let i = 0; i < e.touches.length; i++) {
-          if (e.touches[i].identifier === touchId) {
-            onPointerMove(e.touches[i].clientX, e.touches[i].clientY);
-            break;
-          }
+      if (!input.active) return;
+      for (let i = 0; i < e.touches.length; i++) {
+        if (e.touches[i].identifier === touchId) {
+          onPointerMove(e.touches[i].clientX, e.touches[i].clientY);
+          break;
         }
       }
     }, { passive: false });
-
-    // タッチ終了：300ms以内の連続タップを検知しiOSのダブルタップ強制ズームを完全遮断
-    window.addEventListener('touchend', e => {
-      const now = Date.now();
-      if (now - lastTouchEndTime < 300) {
-        e.preventDefault();
-      }
-      lastTouchEndTime = now;
-      onPointerEnd();
-    }, { passive: false });
-
-    window.addEventListener('touchcancel', e => {
-      e.preventDefault();
-      onPointerEnd();
-    }, { passive: false });
-
+    window.addEventListener('touchend', onPointerEnd, { passive: false });
+    window.addEventListener('touchcancel', onPointerEnd, { passive: false });
     zone.addEventListener('mousedown', e => {
       if (e.button === 0) onPointerStart(e.clientX, e.clientY, 'mouse');
     });
@@ -657,6 +636,7 @@ export function animate(currentTime) {
     const isSkydive = player.onSkydive;
     const isTrapdoor = (player.onTrapdoor || player.onFreefall);
 
+    // ★ 修正：フリーフォール終了の瞬間を検知して着地リカバリータイマーを発火
     if (wasTrapdoorLastFrame && !isTrapdoor) {
       trapdoorLandingRecoveryTimer = 1.2;
     }
@@ -666,6 +646,7 @@ export function animate(currentTime) {
       trapdoorLandingRecoveryTimer = Math.max(0, trapdoorLandingRecoveryTimer - dt);
     }
 
+    // ★ 落ちる直前のスカイウォーク歩行時判定（手前島エッジからハッチ前まで）
     const isApproachingTrapdoor = (() => {
       if (isTrapdoor) return null;
       const localTrapB = bridges.find(b => b.isTrapdoor && b.stageIdx === player.currentStage);
@@ -747,16 +728,18 @@ export function animate(currentTime) {
       targetLookAheadZ = player.pos.z - 12.0;
       targetFOV = 64;
     } else if (isSkydive) {
+      // スカイダイブ：板に隠れず跳ね上がったキャラをしっかり視野中心に追従
       const airX = player.skydiveX || player.pos.x;
       const camCfg = SKYDIVE_CONFIG.CAMERA;
       targetCamX = airX * 0.40;
-      targetCamY = player.pos.y + camCfg.offsetY;
-      targetCamZ = player.pos.z + camCfg.offsetZ;
+      targetCamY = player.pos.y + camCfg.offsetY; // +4.5m
+      targetCamZ = player.pos.z + camCfg.offsetZ; // +8.5m
       targetLookX = airX * 0.20;
       targetLookY = player.pos.y - 0.8;
-      targetLookAheadZ = player.pos.z + camCfg.lookAheadZ;
-      targetFOV = camCfg.fovDrop;
+      targetLookAheadZ = player.pos.z + camCfg.lookAheadZ; // -28.0m (奥の水平線パノラマ)
+      targetFOV = camCfg.fovDrop; // 78
     } else if (isApproachingTrapdoor) {
+      // ★ 落ちる直前（スカイウォーク歩行中）：ステージ上ではなく「脇（サイドビュー）」から捉えて高低差とガラス通路を際立たせる
       targetCamX = player.pos.x + 7.5;
       targetCamY = player.pos.y + 4.2;
       targetCamZ = player.pos.z + 3.0;
@@ -765,22 +748,26 @@ export function animate(currentTime) {
       targetLookAheadZ = player.pos.z - 2.5;
       targetFOV = 64;
     } else if (isTrapdoor) {
+      // ★ フリーフォール：3段階シネマティックカメラ（開口部円心の完全垂直センタリング）
       const b = player.activeTrapdoor || player.activeFreefall;
       const prog = player.trapdoorProgress || player.freefallProgress || 0;
       const tX = player.trapdoorX || player.freefallX || player.pos.x;
       const camCfg = TRAPDOOR_CONFIG.CAMERA;
 
       if (b && prog < 0.45) {
+        // ① 第1段階：じっくり見下ろしゾーン（開口部円心 X=0, Z=b.startZ の直上真上から完全垂直センタリング見下ろし）
         targetCamX = 0;
-        targetCamY = b.startY + 12.5;
-        targetCamZ = b.startZ;
+        targetCamY = b.startY + 12.5; // 真上高所
+        targetCamZ = b.startZ; // ハッチ開口部円心 (X=0, Z=b.startZ) の真上直上
         targetLookX = 0;
-        targetLookY = player.pos.y;
-        targetLookAheadZ = b.startZ;
+        targetLookY = player.pos.y; // 落ちていくキャラを真下に見下ろす
+        targetLookAheadZ = b.startZ; // ハッチ開口部の中心
         targetFOV = 74;
       } else if (b && prog < 0.75) {
+        // ② 第2段階：滑らかな移行チェイス（真上直上見下ろしから斜め横チェイスへ優雅に回り込み）
         const blend = THREE.MathUtils.smoothstep(prog, 0.45, 0.75);
 
+        // トップダウン終点座標（完全垂直センタリング）
         const fromCamX = 0;
         const fromCamY = b.startY + 12.5;
         const fromCamZ = b.startZ;
@@ -788,6 +775,7 @@ export function animate(currentTime) {
         const fromLookY = player.pos.y;
         const fromLookZ = b.startZ;
 
+        // 並走チェイス目標座標
         const toCamX = tX + camCfg.offsetX;
         const toCamY = player.pos.y + camCfg.offsetY;
         const toCamZ = player.pos.z + camCfg.offsetZ;
@@ -803,10 +791,11 @@ export function animate(currentTime) {
         targetLookAheadZ = THREE.MathUtils.lerp(fromLookZ, toLookZ, blend);
         targetFOV = THREE.MathUtils.lerp(74, camCfg.fovDrop, blend);
       } else if (b) {
+        // ③ 第3段階：先行ランディング（着地フロアを視野下部に先回りして捉え、両足でスマートに着地）
         const landRatio = (prog - 0.75) / 0.25;
         targetCamX = tX + camCfg.offsetX * (1.0 - landRatio * 0.35);
-        targetCamY = b.endY + 8.5;
-        targetCamZ = b.endZ + 13.0;
+        targetCamY = b.endY + 8.5; // 着地フロアに近い高さ
+        targetCamZ = b.endZ + 13.0; // 後方適正距離
         targetLookX = 0;
         targetLookY = b.endY + 1.0;
         targetLookAheadZ = b.endZ - 6.0;
@@ -822,8 +811,10 @@ export function animate(currentTime) {
       }
     }
 
+    // ★ 修正：フリーフォール着地後のスムーズ復帰リカバリーカメラ
+    // 着地後1.2秒間、上空から取り残されたような急角度見下ろしを防止し、斜め後方から力強く復帰
     if (trapdoorLandingRecoveryTimer > 0) {
-      const recRatio = trapdoorLandingRecoveryTimer / 1.2;
+      const recRatio = trapdoorLandingRecoveryTimer / 1.2; // 1.0 -> 0.0
       const recCamY = player.pos.y + 9.5;
       const recCamZ = player.pos.z + 14.5;
       const recLookY = player.pos.y + 1.2;
@@ -836,6 +827,7 @@ export function animate(currentTime) {
       targetFOV = THREE.MathUtils.lerp(targetFOV, 62, recRatio);
     }
 
+    // 垂直自由落下・高速滑空時にキャラを見失わない強固な追従LERP
     const prog = player.trapdoorProgress || player.freefallProgress || 0;
     const lerpFactorX = isTrapdoor ? (prog < 0.45 ? 0.32 : TRAPDOOR_CONFIG.CAMERA.lerpFactor) : (isApproachingTrapdoor ? 0.20 : (isSkydive ? 0.40 : (trapdoorLandingRecoveryTimer > 0 ? 0.18 : 0.14)));
     const lerpFactorY = isTrapdoor ? (prog < 0.45 ? 0.32 : TRAPDOOR_CONFIG.CAMERA.lerpFactor) : (isApproachingTrapdoor ? 0.20 : (isSkydive ? 0.40 : (isJumping ? 0.16 : (trapdoorLandingRecoveryTimer > 0 ? 0.18 : 0.14))));
