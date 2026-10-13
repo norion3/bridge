@@ -20,9 +20,9 @@ export const NUM_TRAILS_PER_PROJ = 18; // トレイル球体数を増やして�
 export const DRAIN_POOL_SIZE = 8;
 export const FLOOR_BLOCK_POOL_SIZE = 400;
 
-// ★ サンダー専用有弾道プール規格（高輝度イエロー雷球・シンプル尾）
+// ★ サンダー専用有弾道プール規格（高輝度イエロー雷球・二重放電リング・18連トレイル・黄色照準レティクル）
 export const THUNDER_PROJECTILE_POOL_SIZE = 2;
-export const NUM_TRAILS_PER_THUNDER = 14;
+export const NUM_TRAILS_PER_THUNDER = 18;
 
 export const puffCloudPool = [];
 export const speedStepRingPool = [];
@@ -180,7 +180,7 @@ export function initParticlePools(scene) {
     }
   }
 
-  // ★ サンダー専用弾頭プール初期化（過剰なリング等を省いた、くっきりボールド雷球＋直線尾）
+  // ★ サンダー専用弾頭プール初期化（高輝度イエロー雷球 ＋ 二重放電リング ＋ 黄色照準レティクル ＋ 18連トレイル）
   if (thunderProjectilePool.length === 0) {
     const thunderSphereGeo = new THREE.SphereGeometry(0.72, 16, 16);
     const thunderCoreMat = new THREE.MeshStandardMaterial({
@@ -199,7 +199,22 @@ export function initParticlePools(scene) {
       const sphereMesh = new THREE.Mesh(thunderSphereGeo, thunderCoreMat);
       sphereMesh.castShadow = true;
       thunderGroup.add(sphereMesh);
+
+      // コアの周囲を旋回するシアンブルー二重放電エネルギーリング
+      const ring1 = new THREE.Mesh(attackRingGeo, sharedMats.thunderRingMat);
+      ring1.scale.set(1.4, 1.4, 1.4);
+      thunderGroup.add(ring1);
+      const ring2 = new THREE.Mesh(attackRingGeo, sharedMats.thunderRingMat);
+      ring2.scale.set(1.4, 1.4, 1.4);
+      ring2.rotation.x = Math.PI / 2;
+      thunderGroup.add(ring2);
+
       scene.add(thunderGroup);
+
+      // 標的の足元に展開する黄色ロックオン照準レティクル
+      const reticle = new THREE.Mesh(targetReticleGeo, sharedMats.thunderTargetReticle);
+      reticle.visible = false;
+      scene.add(reticle);
 
       const trailSpheres = [];
       for (let i = 0; i < NUM_TRAILS_PER_THUNDER; i++) {
@@ -212,7 +227,7 @@ export function initParticlePools(scene) {
         sharedMaterialsSet.add(tMat);
         const tMesh = new THREE.Mesh(attackTrailSphereGeo, tMat);
         tMesh.visible = false;
-        const s = Math.max(0.30, (1.0 - (i / NUM_TRAILS_PER_THUNDER)) * 1.35);
+        const s = Math.max(0.35, (1.0 - (i / NUM_TRAILS_PER_THUNDER)) * 1.55);
         tMesh.scale.set(s, s, s);
         scene.add(tMesh);
         trailSpheres.push({
@@ -223,13 +238,16 @@ export function initParticlePools(scene) {
       }
 
       const history = [];
-      for (let h = 0; h < 20; h++) {
+      for (let h = 0; h < 26; h++) {
         history.push(new THREE.Vector3());
       }
 
       thunderProjectilePool.push({
         group: thunderGroup,
         sphere: sphereMesh,
+        ring1: ring1,
+        ring2: ring2,
+        reticle: reticle,
         trailSpheres: trailSpheres,
         history: history,
         startPos: new THREE.Vector3(),
@@ -237,7 +255,7 @@ export function initParticlePools(scene) {
         shooter: null,
         target: null,
         progress: 0,
-        duration: 0.85, // ★ 0.85秒の軽快な高速テンポ
+        duration: 1.35, // ★ 1.35秒のゆったりと目で追える速度
         active: false
       });
     }
@@ -303,11 +321,12 @@ export function resetParticlePools() {
       p.trailSpheres[j].mesh.visible = false;
     }
   }
-  // ★ サンダー弾頭プールのリセット
+  // ★ サンダー弾頭プールのリセット（照準レティクル含む）
   for (let i = 0; i < thunderProjectilePool.length; i++) {
     const tp = thunderProjectilePool[i];
     tp.active = false;
     tp.group.visible = false;
+    if (tp.reticle) tp.reticle.visible = false;
     for (let j = 0; j < tp.trailSpheres.length; j++) {
       tp.trailSpheres[j].mesh.visible = false;
     }

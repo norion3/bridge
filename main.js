@@ -492,7 +492,7 @@ export function animate(currentTime) {
       }
     }
 
-    // ★ サンダー専用有弾道更新ループ（高速0.85秒・低空アーク +5.5m・直撃落雷＆ちびキャラ化連動）
+    // ★ サンダー専用有弾道更新ループ（アタック弾と同等の 1.35秒 ＆ 山なり放物線 +8.5m ＆ 二重リング自転 ＆ 照準パルス連動）
     for (let i = 0; i < thunderProjectilePool.length; i++) {
       const tp = thunderProjectilePool[i];
       if (!tp.active) continue;
@@ -502,13 +502,27 @@ export function animate(currentTime) {
       if (tp.target) {
         tp.targetPos.copy(tp.target.pos);
         tp.targetPos.y += 1.0;
+
+        // ★ 標的の足元に黄色ロックオン照準レティクルを追従 ＆ パルスアニメーション
+        if (tp.reticle) {
+          tp.reticle.position.set(tp.target.pos.x, tp.target.pos.y + 0.08, tp.target.pos.z);
+          const pulseScale = 1.0 + Math.sin(timeSec * 22) * 0.25;
+          tp.reticle.scale.set(pulseScale, pulseScale, pulseScale);
+        }
       }
 
       const t = Math.min(1.0, tp.progress);
       _tempVec3A.lerpVectors(tp.startPos, tp.targetPos, t);
-      // 低空高速アーク弾道（高度 +5.5m：視界を塞がず標的へ一直線）
-      _tempVec3A.y += Math.sin(t * Math.PI) * 5.5;
+      // ★ アタック弾と同じく背中ブロックに遮られない誰でも追える山なり放物線（高度 +8.5m）
+      _tempVec3A.y += Math.sin(t * Math.PI) * 8.5;
       tp.group.position.copy(_tempVec3A);
+
+      if (tp.sphere) {
+        tp.sphere.rotation.x += dt * 20;
+        tp.sphere.rotation.y += dt * 28;
+      }
+      if (tp.ring1) tp.ring1.rotation.z += dt * 18;
+      if (tp.ring2) tp.ring2.rotation.y += dt * 22;
 
       if (tp.history && tp.history.length > 0) {
         const recycledVec = tp.history.pop();
@@ -529,14 +543,17 @@ export function animate(currentTime) {
         }
       }
 
-      // ★ 直撃の瞬間：落雷柱＆ちびキャラ化発動
+      // ★ 直撃の瞬間：照準消去 ＆ 落雷柱 ＆ ちびキャラ化発動
       if (tp.progress >= 1.0) {
         sound.playThunderStrike();
 
         // 1. 電撃イエロー衝撃波 (3.2m)
         triggerLandingShockwave(tp.targetPos.x, tp.targetPos.y - 0.8, tp.targetPos.z, 3.2, 0xfacc15);
 
-        // 2. 天空からの落雷閃光ピラー
+        // 2. 照準マーカーの非表示
+        if (tp.reticle) tp.reticle.visible = false;
+
+        // 3. 天空からの落雷閃光ピラー
         const boltMesh = new THREE.Mesh(lightningPillarGeo, sharedMats.lightningBolt);
         boltMesh.position.set(tp.targetPos.x, tp.targetPos.y + 13.0, tp.targetPos.z);
         scene.add(boltMesh);
@@ -545,7 +562,7 @@ export function animate(currentTime) {
         }, 130);
 
         if (tp.target) {
-          // 3. 敵に縮小・超鈍足デバフ (5.5秒) & ノックバックよろめき
+          // 4. 敵に縮小・超鈍足デバフ (5.5秒) & ノックバックよろめき
           tp.target.shrinkTimer = 5.5;
           tp.target.stunTimer = 1.0;
           tp.target.meshObj.root.rotation.x = 0.45;
@@ -721,7 +738,7 @@ export function animate(currentTime) {
     const isSkydive = player.onSkydive;
     const isTrapdoor = (player.onTrapdoor || player.onFreefall);
 
-    // ★ 修正：フリーフォール終了の瞬間を検知して着地リカバリータイマーを発火
+    // フリーフォール終了の瞬間を検知して着地リカバリータイマーを発火
     if (wasTrapdoorLastFrame && !isTrapdoor) {
       trapdoorLandingRecoveryTimer = 1.2;
     }
@@ -731,7 +748,7 @@ export function animate(currentTime) {
       trapdoorLandingRecoveryTimer = Math.max(0, trapdoorLandingRecoveryTimer - dt);
     }
 
-    // ★ 落ちる直前のスカイウォーク歩行時判定（手前島エッジからハッチ前まで）
+    // 落ちる直前のスカイウォーク歩行時判定（手前島エッジからハッチ前まで）
     const isApproachingTrapdoor = (() => {
       if (isTrapdoor) return null;
       const localTrapB = bridges.find(b => b.isTrapdoor && b.stageIdx === player.currentStage);
@@ -833,7 +850,7 @@ export function animate(currentTime) {
       targetLookAheadZ = player.pos.z - 2.5;
       targetFOV = 64;
     } else if (isTrapdoor) {
-      // ★ フリーフォール：突き抜けラグ ➜ FOV 82 ウルトラワイド急追走 ➜ 先行ランディング
+      // フリーフォール：突き抜けラグ ➜ FOV 82 ウルトラワイド急追走 ➜ 先行ランディング
       const b = player.activeTrapdoor || player.activeFreefall;
       const prog = player.trapdoorProgress || player.freefallProgress || 0;
       const camCfg = TRAPDOOR_CONFIG.CAMERA;
@@ -849,7 +866,7 @@ export function animate(currentTime) {
         targetFOV = camCfg.fovStart; // 62
       } else if (b && prog < 0.80) {
         // 【第2段階：急降下猛チェイス】
-        // 移行直後（0.22〜0.40）は意図的な追従ラグでキャラが画面下方へ突き抜けて落ちていく勢いを表現
+        // 移行直後（0.22〜0.42）は意図的な追従ラグでキャラが画面下方へ突き抜けて落ちていく勢いを表現
         // その後カメラが背後斜め上へ急接近し、FOV 82 のウルトラワイド画角で周囲の島や雲が爆速で飛び去る！
         const chaseBlend = THREE.MathUtils.smoothstep(prog, 0.22, 0.42);
 
@@ -903,8 +920,6 @@ export function animate(currentTime) {
     }
 
     // 自由落下・高速滑空時にキャラを見失わない強固な追従LERP
-    // ★ 修正：フリーフォール切り替え直後（0.22〜0.40）は意図的追従ラグ（lerpFactorLead: 0.22）でキャラが下方へ突き抜ける勢いを表現
-    // その後は猛追走LERP（lerpFactorChase: 0.48）で一気に追いつき並走ダイブ！
     const prog = player.trapdoorProgress || player.freefallProgress || 0;
     const trapdoorLerp = isTrapdoor
       ? (prog < 0.22 ? 0.32 : (prog < 0.42 ? TRAPDOOR_CONFIG.CAMERA.lerpFactorLead : TRAPDOOR_CONFIG.CAMERA.lerpFactorChase))

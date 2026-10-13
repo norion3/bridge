@@ -232,7 +232,7 @@ export function fireHomingCrystal(char) {
   }
 }
 
-// ★ サンダー有弾道発射処理（最前線の敵に向けて高速雷光弾を射出）
+// ★ サンダー有弾道発射処理（アタックと同等の 1.35秒 ＆ 標的足元照準レティクル連動）
 export function fireThunderStrike(scene, userChar) {
   if (soundRef && soundRef.playAttackShoot) soundRef.playAttackShoot();
 
@@ -265,7 +265,7 @@ export function fireThunderStrike(scene, userChar) {
   tp.shooter = userChar;
   tp.target = target;
   tp.progress = 0;
-  tp.duration = 0.85; // 0.85秒の高速テンポ
+  tp.duration = 1.35; // ★ アタック弾と同じ 1.35秒 のゆったり目で追える速度
 
   tp.startPos.copy(userChar.pos);
   tp.startPos.y += 1.3;
@@ -274,6 +274,12 @@ export function fireThunderStrike(scene, userChar) {
 
   tp.group.position.copy(tp.startPos);
   tp.group.visible = true;
+
+  // ★ 標的の足元にエレクトリックイエローのロックオン照準レティクルを展開
+  if (target && tp.reticle) {
+    tp.reticle.position.set(target.pos.x, target.pos.y + 0.08, target.pos.z);
+    tp.reticle.visible = true;
+  }
 
   for (let h = 0; h < tp.history.length; h++) {
     tp.history[h].copy(tp.startPos);
@@ -290,7 +296,7 @@ export function fireThunderStrike(scene, userChar) {
   triggerLandingShockwave(userChar.pos.x, userChar.pos.y + 0.1, userChar.pos.z, 2.2, 0xfacc15);
 
   if (userChar.isPlayer) {
-    setAttackCamTimer(1.0);
+    setAttackCamTimer(1.4);
   }
 }
 

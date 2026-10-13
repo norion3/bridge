@@ -875,7 +875,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     return;
   }
 
-  // ★ 修正：S字スライダー端部の高さ＆延伸補正（オレンジリングの上に跨がせる）
+  // ★ S字スライダー端部の高さ＆延伸補正（オレンジリングの上に跨がせる）
   if (type === 'curved_slide') {
     const startZ = prevIslandZ - prevR + 0.4;
     const endZ = nextIslandZ + nextR - 2.0;
@@ -883,7 +883,6 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     const dropY = startY - endY;
     const sDir = (stageIdx % 2 === 0 ? 1 : -1);
 
-    // 端部をリングの膨らみ（+0.2m）を超える +0.28m へ持ち上げ
     const p0 = new THREE.Vector3(0, startY + 0.28, startZ);
     const p1 = new THREE.Vector3(sDir * 7.5, startY - dropY * 0.28, startZ - distZ * 0.28);
     const p2 = new THREE.Vector3(-sDir * 5.8, startY - dropY * 0.72, startZ - distZ * 0.72);
@@ -1032,9 +1031,10 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     const prevInsetZ = Math.sqrt(Math.max(1, prevR * prevR - laneX * laneX));
     const nextInsetZ = Math.sqrt(Math.max(1, nextR * nextR - laneX * laneX));
 
-    // ★ 修正：階段の始点を手前島エッジに密着、終点 endZ を奥の島天面側へしっかり踏み込ませる（-2.8m）
+    // ★ 修正：階段の始点を手前島エッジに密着、終点 endZ をステージ外周エッジ（オレンジリング真上：-0.4m）にピタッと接合
+    // 板長1.6mの中心がエッジ-0.4mに来るため、板前半0.8mが天面にかかり、2段目・3段目は確実に外側（海の上）に100%露出して埋没を完全根絶
     const startZ = prevIslandZ - prevInsetZ + (isStairs ? 0.3 : 1.2);
-    const endZ = nextIslandZ + nextInsetZ - (isStairs ? 2.8 : 1.2);
+    const endZ = nextIslandZ + nextInsetZ - (isStairs ? 0.4 : 1.2);
     const distZ = startZ - endZ;
 
     const dist3D = Math.hypot(distZ, endY - startY);
@@ -1048,7 +1048,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     };
 
     if (isSlide) {
-      // ★ 修正：スライダースロープと仕切りパイプを前後に伸ばし（+3.2m）、端部がオレンジリングの上に堂々と跨がるように調整
+      // スライダースロープと仕切りパイプを前後に伸ばし（+3.2m）、端部がオレンジリングの上に堂々と跨がるように調整
       const slopeLength = Math.hypot(distZ, endY - startY) + 3.2;
       const slopeGeo = new THREE.BoxGeometry(3.6, 0.4, slopeLength);
       const slopeMesh = new THREE.Mesh(slopeGeo, sharedMats.slideSurface);
@@ -1129,8 +1129,8 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       for (let i = 0; i < numPlanks; i++) {
         const progress = (i + 0.5) / numPlanks;
         const pZ = startZ - progress * distZ;
-        // ★ 修正：階段の終点高さをリング（+0.2m）の上に確実に乗り上げるよう +0.16m 持ち上げ（リングに潜らない）
-        const stairsLift = isStairs ? (progress * 0.16) : 0;
+        // 最上段がステージ天面の白い床面（endY + 0.08m）と自然に接合するリフト
+        const stairsLift = isStairs ? (progress * 0.08) : 0;
         const pY = startY + progress * (endY - startY) + stairsLift;
 
         dummyPlankObj.position.set(LANES[laneIdx], pY, pZ);
@@ -1200,8 +1200,7 @@ export function extendCourse(scene) {
     r = 10.5;
     lastGimmickCategory = 'descent';
   } else {
-    // ★ 完全交互サイクル（登り ➜ 降り ➜ 登り ➜ 降り）＆ 2系統シャッフルバッグ
-    // 高度安全リミット（5m以下なら強制上昇、38m以上なら強制下降）を担保しつつ規則正しく交互選出
+    // 完全交互サイクル（登り ➜ 降り ➜ 登り ➜ 降り）＆ 2系統シャッフルバッグ
     let pickDescent = (lastGimmickCategory === 'ascent');
     if (prev.y <= 7.0) pickDescent = false;
     if (prev.y >= 38.0) pickDescent = true;
@@ -1268,7 +1267,6 @@ export function extendCourse(scene) {
   if (idx >= 1) {
     spawnGatesOnIsland(scene, idx, nextZ, nextY);
 
-    // ★ アイテム完全均等周期：2島に1回、シャッフルバッグから全4種を均等スポーン
     if (idx % 2 === 1) {
       const typeToSpawn = getNextBagItem();
       spawnItem(scene, idx, typeToSpawn);

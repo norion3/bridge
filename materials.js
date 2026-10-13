@@ -381,6 +381,21 @@ export const sharedMats = {
     side: THREE.DoubleSide,
     depthWrite: false
   }),
+  // ★ サンダー専用照準レティクル（イエロー）＆放電リング（シアンブルー）マテリアル
+  thunderTargetReticle: new THREE.MeshBasicMaterial({
+    color: 0xfacc15,
+    transparent: true,
+    opacity: 0.90,
+    side: THREE.DoubleSide,
+    depthWrite: false
+  }),
+  thunderRingMat: new THREE.MeshBasicMaterial({
+    color: 0x38bdf8,
+    transparent: true,
+    opacity: 0.90,
+    side: THREE.DoubleSide,
+    depthWrite: false
+  }),
   hitBurst: new THREE.MeshBasicMaterial({
     color: 0xffffff,
     transparent: true,
