@@ -1069,20 +1069,33 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       scene.add(slopeMesh);
       bridge.visualMeshes.push(slopeMesh);
 
-      // ★ 修正：レーンごとに両側にパイプを作ると中間に重複して密集するため、
-      // 最左端（レーン0の左）と最右端（レーン2の右）のみに外枠レールを配置し、余計な仕切りを全廃
+      // ★ 修正：真ん中レーンの両脇 (X = ±2.0m) および両外枠 (X = ±5.85m) の計4本が重複なく整然と並ぶ3連スライダー構造
       const railGeo = new THREE.CylinderGeometry(0.15, 0.15, slopeLength, 8);
       railGeo.rotateX(Math.PI / 2);
 
       if (laneIdx === 0) {
+        // レーン0外側（最左外枠レール: X = -5.85m）
         const leftRail = new THREE.Mesh(railGeo, sharedMats.slideRail);
         leftRail.position.set(LANES[laneIdx] - 1.85, midY + 0.3, midZ);
         leftRail.rotation.x = angleX;
         scene.add(leftRail);
         bridge.visualMeshes.push(leftRail);
-      }
+      } else if (laneIdx === 1) {
+        // レーン1左脇（真ん中レーン左側仕切り: X = -2.00m）
+        const midLeftRail = new THREE.Mesh(railGeo, sharedMats.slideRail);
+        midLeftRail.position.set(LANES[laneIdx] - 2.0, midY + 0.3, midZ);
+        midLeftRail.rotation.x = angleX;
+        scene.add(midLeftRail);
+        bridge.visualMeshes.push(midLeftRail);
 
-      if (laneIdx === 2) {
+        // レーン1右脇（真ん中レーン右側仕切り: X = +2.00m）
+        const midRightRail = new THREE.Mesh(railGeo, sharedMats.slideRail);
+        midRightRail.position.set(LANES[laneIdx] + 2.0, midY + 0.3, midZ);
+        midRightRail.rotation.x = angleX;
+        scene.add(midRightRail);
+        bridge.visualMeshes.push(midRightRail);
+      } else if (laneIdx === 2) {
+        // レーン2外側（最右外枠レール: X = +5.85m）
         const rightRail = new THREE.Mesh(railGeo, sharedMats.slideRail);
         rightRail.position.set(LANES[laneIdx] + 1.85, midY + 0.3, midZ);
         rightRail.rotation.x = angleX;
