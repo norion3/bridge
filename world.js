@@ -564,7 +564,8 @@ export function createIslandMesh(r, y, z) {
   const torusGeo = new THREE.TorusGeometry(r, 0.2, 8, 36);
   torusGeo.rotateX(Math.PI / 2);
   const border = new THREE.Mesh(torusGeo, sharedMats.islandBorder);
-  border.position.set(0, y, z);
+  // ★ 修正：リング上面を床面 +6cm に収め、階段の板が上から覆い隠せるよう高さを適正化
+  border.position.set(0, y - 0.14, z);
   group.add(border);
 
   return group;
@@ -1138,7 +1139,9 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       for (let i = 0; i < numPlanks; i++) {
         const progress = (i + 0.5) / numPlanks;
         const pZ = startZ - progress * distZ;
-        const pY = startY + progress * (endY - startY);
+        // ★ 修正：最上段がリング (上面 endY + 0.06m) を上から跨いで覆い隠し、島フロアへ美しく乗り上げる高さ補間
+        const normStep = (numPlanks > 1) ? (i / (numPlanks - 1)) : 1.0;
+        const pY = startY + normStep * ((endY - 0.16) - startY);
 
         dummyPlankObj.position.set(LANES[laneIdx], pY, pZ);
         dummyPlankObj.rotation.set(0, 0, 0);
