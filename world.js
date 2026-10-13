@@ -1041,7 +1041,8 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     const prevInsetZ = Math.sqrt(Math.max(1, prevR * prevR - laneX * laneX));
     const nextInsetZ = Math.sqrt(Math.max(1, nextR * nextR - laneX * laneX));
     const startZ = prevIslandZ - prevInsetZ + 1.2;
-    const endZ = nextIslandZ + nextInsetZ - 1.2;
+    // ★ 修正：階段終点を島エッジ手前 (+0.5m) に設定し、上から2段目の浮島床メッシュ埋没・欠落を完全解消
+    const endZ = nextIslandZ + nextInsetZ + 0.5;
     const distZ = startZ - endZ;
 
     const dist3D = Math.hypot(distZ, endY - startY);
