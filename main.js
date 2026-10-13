@@ -833,14 +833,12 @@ export function animate(currentTime) {
       targetLookAheadZ = player.pos.z - 2.5;
       targetFOV = 64;
     } else if (isTrapdoor) {
-      // ★ フリーフォール：2段階ドラマティックカメラ
-      // 前半（0〜35%）: 上からまっすぐ落ちていく様子をしっかり画面で見せる見下ろし導入
-      // 後半（35〜100%）: 背後斜め上へ急速に回り込んで急降下猛追走するチェイス
+      // ★ フリーフォール：突き抜けラグ ➜ FOV 82 ウルトラワイド急追走 ➜ 先行ランディング
       const b = player.activeTrapdoor || player.activeFreefall;
       const prog = player.trapdoorProgress || player.freefallProgress || 0;
       const camCfg = TRAPDOOR_CONFIG.CAMERA;
 
-      if (b && prog < 0.35) {
+      if (b && prog < 0.22) {
         // 【第1段階：見下ろし導入】ハッチ開口部直上から直下を捉え、キャラが足元から真下へ吸い込まれる様子をしっかり見せる
         targetCamX = 0;
         targetCamY = b.startY + 11.5;
@@ -848,10 +846,12 @@ export function animate(currentTime) {
         targetLookX = 0;
         targetLookY = player.pos.y;
         targetLookAheadZ = b.startZ;
-        targetFOV = 72;
+        targetFOV = camCfg.fovStart; // 62
       } else if (b && prog < 0.80) {
-        // 【第2段階：急降下猛チェイス】見下ろしからカメラが急接近して背後斜め上へ回り込み、大迫力で並走ダイブ！
-        const chaseBlend = THREE.MathUtils.smoothstep(prog, 0.35, 0.50);
+        // 【第2段階：急降下猛チェイス】
+        // 移行直後（0.22〜0.40）は意図的な追従ラグでキャラが画面下方へ突き抜けて落ちていく勢いを表現
+        // その後カメラが背後斜め上へ急接近し、FOV 82 のウルトラワイド画角で周囲の島や雲が爆速で飛び去る！
+        const chaseBlend = THREE.MathUtils.smoothstep(prog, 0.22, 0.42);
 
         const fromCamX = 0;
         const fromCamY = b.startY + 11.5;
@@ -873,9 +873,9 @@ export function animate(currentTime) {
         targetLookX = THREE.MathUtils.lerp(fromLookX, toLookX, chaseBlend);
         targetLookY = THREE.MathUtils.lerp(fromLookY, toLookY, chaseBlend);
         targetLookAheadZ = THREE.MathUtils.lerp(fromLookZ, toLookZ, chaseBlend);
-        targetFOV = THREE.MathUtils.lerp(72, camCfg.fovDrop, chaseBlend);
+        targetFOV = THREE.MathUtils.lerp(camCfg.fovStart, camCfg.fovDrop, chaseBlend);
       } else if (b) {
-        // 【着地ゾーン】着地フロアへ先行して視線を合わせ、両足でスマートに着地
+        // 【第3段階：先行ランディング】着地フロアへ先行して視線を合わせ、両足でスマートに着地
         const landRatio = (prog - 0.80) / 0.20;
         targetCamX = THREE.MathUtils.lerp(player.pos.x * 0.35 + camCfg.offsetX * 0.4, 0, landRatio);
         targetCamY = THREE.MathUtils.lerp(player.pos.y + camCfg.offsetY, b.endY + 7.5, landRatio);
@@ -903,10 +903,16 @@ export function animate(currentTime) {
     }
 
     // 自由落下・高速滑空時にキャラを見失わない強固な追従LERP
+    // ★ 修正：フリーフォール切り替え直後（0.22〜0.40）は意図的追従ラグ（lerpFactorLead: 0.22）でキャラが下方へ突き抜ける勢いを表現
+    // その後は猛追走LERP（lerpFactorChase: 0.48）で一気に追いつき並走ダイブ！
     const prog = player.trapdoorProgress || player.freefallProgress || 0;
-    const lerpFactorX = isTrapdoor ? (prog < 0.35 ? 0.30 : TRAPDOOR_CONFIG.CAMERA.lerpFactor) : (isApproachingTrapdoor ? 0.20 : (isSkydive ? 0.40 : (trapdoorLandingRecoveryTimer > 0 ? 0.18 : 0.14)));
-    const lerpFactorY = isTrapdoor ? (prog < 0.35 ? 0.30 : TRAPDOOR_CONFIG.CAMERA.lerpFactor) : (isApproachingTrapdoor ? 0.20 : (isSkydive ? 0.40 : (isJumping ? 0.16 : (trapdoorLandingRecoveryTimer > 0 ? 0.18 : 0.14))));
-    const lerpFactorZ = isTrapdoor ? (prog < 0.35 ? 0.30 : TRAPDOOR_CONFIG.CAMERA.lerpFactor) : (isApproachingTrapdoor ? 0.20 : (isSkydive ? 0.44 : (trapdoorLandingRecoveryTimer > 0 ? 0.18 : 0.14)));
+    const trapdoorLerp = isTrapdoor
+      ? (prog < 0.22 ? 0.32 : (prog < 0.42 ? TRAPDOOR_CONFIG.CAMERA.lerpFactorLead : TRAPDOOR_CONFIG.CAMERA.lerpFactorChase))
+      : 0.14;
+
+    const lerpFactorX = isTrapdoor ? trapdoorLerp : (isApproachingTrapdoor ? 0.20 : (isSkydive ? 0.40 : (trapdoorLandingRecoveryTimer > 0 ? 0.18 : 0.14)));
+    const lerpFactorY = isTrapdoor ? trapdoorLerp : (isApproachingTrapdoor ? 0.20 : (isSkydive ? 0.40 : (isJumping ? 0.16 : (trapdoorLandingRecoveryTimer > 0 ? 0.18 : 0.14))));
+    const lerpFactorZ = isTrapdoor ? trapdoorLerp : (isApproachingTrapdoor ? 0.20 : (isSkydive ? 0.44 : (trapdoorLandingRecoveryTimer > 0 ? 0.18 : 0.14)));
 
     camera.position.x = THREE.MathUtils.lerp(camera.position.x, targetCamX, lerpFactorX);
     camera.position.y = THREE.MathUtils.lerp(camera.position.y, targetCamY, lerpFactorY);

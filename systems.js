@@ -810,7 +810,7 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     return;
   }
 
-  // ★ ドロップタワー（足先行・完全垂直落下復元）：ハッチ直下のZ座標完全固定で真下へ吸い込まれる
+  // ★ ドロップタワー（足先行・完全垂直落下）：初速タメ ➜ 超重力急降下（メリハリのある落下勢い）
   if ((char.onTrapdoor && char.activeTrapdoor) || (char.onFreefall && char.activeFreefall)) {
     const b = char.activeTrapdoor || char.activeFreefall;
 
@@ -834,7 +834,7 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
       char.slideCooldown = 0.5;
       char.lastPlankIdx = -1;
 
-      // ★ 通過後はハッチ扉を閉じる
+      // 通過後はハッチ扉を閉じる
       b.isHatchOpen = false;
       b.hatchOpenProgress = 0;
       if (b.doorLeftPivot && b.doorRightPivot) {
@@ -864,21 +864,31 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
       const packProg = Math.min(1.0, char.trapdoorProgress / (0.35 / totalFlyTime));
       packCharacterLuggage(char, packProg);
 
-      // 落下初期（ハッチ通過直後・見下ろし中）は中心を維持し、中盤以降に空中微調整を許容
+      // 落下初期（ハッチ通過直後・見下ろし中）は中心を厳格維持し、中盤以降に空中微調整を許容
       const airSpeed = TRAPDOOR_CONFIG.PHYSICS.horizontalAirControlSpeed;
       const maxAirX = TRAPDOOR_CONFIG.PHYSICS.maxAirOffsetX;
-      if (t < 0.35) {
+      if (t < 0.28) {
         char.trapdoorX = 0;
       } else {
         char.trapdoorX = Math.max(-maxAirX, Math.min(maxAirX, (char.trapdoorX || 0) + dirX * airSpeed * dt));
       }
 
-      // ★ 完全垂直落下復元：前進させずハッチ直下のZ座標を完全固定
+      // 完全垂直直下落下：ハッチ直下Z座標（b.startZ）を完全固定
       const pZ = b.startZ;
 
-      // ★ 重力加速度 (t^1.8) で真下一直線にストンと急降下
-      const fallPower = TRAPDOOR_CONFIG.PHYSICS.gravityPower || 1.8;
-      const pY = b.startY + (b.endY - b.startY) * Math.pow(t, fallPower);
+      // ★ 改善：初速タメ（t < 0.22：ハッチ開口部を足元から抜けるタメ）➜ 超重力急降下（t >= 0.22：一気に急加速して突き抜けるメリハリ物理）
+      const introT = 0.22;
+      let effectiveFallT = 0;
+      if (t < introT) {
+        // 前半は全体の8%程度を静かに降り、見下ろし構図で落ちる姿をしっかり捉える
+        effectiveFallT = Math.pow(t / introT, 1.4) * 0.08;
+      } else {
+        // 後半は残り92%の落差を急峻な超重力カーブ（2.4乗）で一気に奈落へ叩き落とす
+        const frac = (t - introT) / (1.0 - introT);
+        effectiveFallT = 0.08 + Math.pow(frac, 2.4) * 0.92;
+      }
+
+      const pY = b.startY + (b.endY - b.startY) * effectiveFallT;
       char.pos.set(char.trapdoorX, pY, pZ);
 
       const timeSec = performance.now() * 0.001;

@@ -115,13 +115,13 @@ export const SKYDIVE_CONFIG = {
   }
 };
 
-// ★ 看板ステージ2：ドロップタワー・スカイゲート仕様定数（落差-70m・完全垂直落下復元）
+// ★ 看板ステージ2：ドロップタワー・スカイゲート仕様定数（落差-70m・超重力急降下・突き抜けラグ＆ワイドFOV）
 export const TRAPDOOR_CONFIG = {
   PHYSICS: {
     minHeightDrop: 70.0,            // 超高層垂直落差 (-70m)
-    forwardDistance: 0.0,           // ★ 真下一直線への完全垂直落下復元 (0.0m)
-    totalDuration: 2.2,             // ★ 落下の様子とカメラ切り替えをじっくり味わえる黄金比滞空時間 (2.2秒)
-    gravityPower: 1.8,              // ★ 初速からストンと引きずり込まれる重力カーブ
+    forwardDistance: 0.0,           // 真下一直線への完全垂直落下 (0.0m)
+    totalDuration: 2.0,             // ★ 勢いを殺さない締まりのある落下時間 (2.0秒)
+    gravityPower: 2.2,              // ★ 初速タメから後半猛烈に加速する超重力急降下カーブ
     horizontalAirControlSpeed: 7.5, // 左右エアスライド速度（直立維持）
     maxAirOffsetX: 3.8              // 空中微調整の最大左右幅
   },
@@ -134,14 +134,15 @@ export const TRAPDOOR_CONFIG = {
     exclusionRadius: 5.0            // 施設周辺の床ブロック生成禁止半径
   },
   CAMERA: {
-    offsetX: 4.8,                   // 斜め横から直立全身を捉える (+4.8m)
-    offsetY: 5.0,                   // キャラ全身と高さを合わせる高度 (+5.0m)
-    offsetZ: 9.5,                   // 全身と背景をバランス良く映す後方距離 (+9.5m)
-    lookOffsetY: -1.0,              // 注視点 Y (-1.0m)
-    lookAheadZ: -24.0,              // 前方奥の水平線パノラマを捉える (-24.0m)
-    lerpFactor: 0.45,               // 初速キックでもキャラを見失わない強固な追従速度
+    offsetX: 4.2,                   // 斜め横から直立全身を捉える (+4.2m)
+    offsetY: 4.6,                   // キャラ全身と高さを合わせる高度 (+4.6m)
+    offsetZ: 9.0,                   // 後方距離 (+9.0m)
+    lookOffsetY: -1.8,              // 注視点 Y (-1.8m: 下方への強い視線誘導)
+    lookAheadZ: -20.0,              // 前方注視点 (-20.0m)
+    lerpFactorLead: 0.22,           // ★ 切り替わり直後の意図的追従ラグ（キャラが下方へ突き抜ける勢いを表現）
+    lerpFactorChase: 0.48,          // ★ 突き抜けた後に一気に追走する高初速LERP
     fovStart: 62,                   // 開始時FOV
-    fovDrop: 78                     // 加速時ワイドFOV（超スピードパノラマ）
+    fovDrop: 82                     // ★ 最高速時のウルトラワイドFOV (82: 周囲の島や雲が爆速で飛び去る)
   }
 };
 

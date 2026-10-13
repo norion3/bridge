@@ -57,10 +57,21 @@ export const activeMagnetBlocks = [];
 export const floorBlocksByStage = new Map();
 export const bridgesByStage = new Map();
 
-export let speedItemIslandCounter = 0;
-// ★ サンダー（二十面体ジュエル）をローテーションに追加
-export const ITEM_ROTATION = ['speed', 'attack', 'magnet', 'thunder'];
-export let itemRotationIndex = 0;
+// ★ アイテム完全均等シャッフルバッグ（4種均等出現・偏り完全根絶）
+const BASE_ITEMS = ['speed', 'attack', 'magnet', 'thunder'];
+let itemBag = [];
+
+function getNextBagItem() {
+  if (itemBag.length === 0) {
+    itemBag = [...BASE_ITEMS];
+    for (let i = itemBag.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [itemBag[i], itemBag[j]] = [itemBag[j], itemBag[i]];
+    }
+  }
+  return itemBag.pop();
+}
+
 export let magnetDockStepCounter = 0;
 export let attackCamTimer = 0;
 
@@ -70,12 +81,12 @@ export function incMagnetDockStep() { return magnetDockStepCounter++; }
 
 const dummyPlankObj = new THREE.Object3D();
 
-// ★ シャッフルバッグ方式（偏り・同一ギミック連続の物理的完全根絶）
+// ★ ステージ完全交互サイクル ＆ 2系統シャッフルバッグ（全9種満遍なく均等出現）
 const DESCENT_GIMMICKS = ['slide', 'skydive', 'trapdoor', 'curved_slide', 'zipline'];
 const ASCENT_GIMMICKS = ['elevator', 'vertical', 'jump', 'bridge'];
 let descentBag = [];
 let ascentBag = [];
-let lastGimmickType = null;
+let lastGimmickCategory = 'descent'; // Stage 5 (zipline) 直後から交互に開始
 
 function getNextDescentGimmick() {
   if (descentBag.length === 0) {
@@ -84,15 +95,8 @@ function getNextDescentGimmick() {
       const j = Math.floor(Math.random() * (i + 1));
       [descentBag[i], descentBag[j]] = [descentBag[j], descentBag[i]];
     }
-    // 直前に選ばれたギミックと同じものが先頭（末尾pop対象）にある場合は入れ替えて連続を防止
-    if (descentBag[descentBag.length - 1] === lastGimmickType && descentBag.length > 1) {
-      const swapIdx = Math.floor(Math.random() * (descentBag.length - 1));
-      [descentBag[descentBag.length - 1], descentBag[swapIdx]] = [descentBag[swapIdx], descentBag[descentBag.length - 1]];
-    }
   }
-  const picked = descentBag.pop();
-  lastGimmickType = picked;
-  return picked;
+  return descentBag.pop();
 }
 
 function getNextAscentGimmick() {
@@ -102,14 +106,8 @@ function getNextAscentGimmick() {
       const j = Math.floor(Math.random() * (i + 1));
       [ascentBag[i], ascentBag[j]] = [ascentBag[j], ascentBag[i]];
     }
-    if (ascentBag[ascentBag.length - 1] === lastGimmickType && ascentBag.length > 1) {
-      const swapIdx = Math.floor(Math.random() * (ascentBag.length - 1));
-      [ascentBag[ascentBag.length - 1], ascentBag[swapIdx]] = [ascentBag[swapIdx], ascentBag[ascentBag.length - 1]];
-    }
   }
-  const picked = ascentBag.pop();
-  lastGimmickType = picked;
-  return picked;
+  return ascentBag.pop();
 }
 
 export function getFloorBlocksForStage(stageIdx) {
@@ -278,13 +276,12 @@ export function createElevatorStationStructure(scene, startX, startY, startZ, en
   return group;
 }
 
-// ★ スカイダイブ発射台：7.2m コースター滑走路規格（水色床面・シェブロン矢印・太いオレンジ安全パイプレール）
+// ★ スカイダイブ発射台：7.2m コースター滑走路規格
 export function createSkydiveCatapultStructure(scene, posX, posY, posZ) {
   const group = new THREE.Group();
-  const rampLen = SKYDIVE_CONFIG.CATAPULT.length; // 7.2m
+  const rampLen = SKYDIVE_CONFIG.CATAPULT.length;
   const slopeAng = SKYDIVE_CONFIG.CATAPULT.slopeAngle;
 
-  // 1. スカイブルー滑走路床面
   const rampMesh = new THREE.Mesh(catapultRampGeo, sharedMats.catapultDeck);
   rampMesh.position.set(posX, posY + 0.08, posZ - rampLen * 0.45);
   rampMesh.rotation.x = slopeAng;
@@ -292,7 +289,6 @@ export function createSkydiveCatapultStructure(scene, posX, posY, posZ) {
   rampMesh.castShadow = true;
   group.add(rampMesh);
 
-  // 2. 太いオレンジ安全パイプレール
   const railL = new THREE.Mesh(catapultTrimGeo, sharedMats.catapultNeonRail);
   railL.position.set(posX - 1.82, posY + 0.32, posZ - rampLen * 0.45);
   railL.rotation.x = slopeAng;
@@ -302,7 +298,6 @@ export function createSkydiveCatapultStructure(scene, posX, posY, posZ) {
   railR.position.x = posX + 1.82;
   group.add(railR);
 
-  // 3. 滑走面上のシェブロン矢印ガイドライン（加速誘導サイン）
   const numChevrons = 4;
   const chevronGeo = new THREE.BoxGeometry(1.1, 0.04, 0.16);
   for (let ci = 0; ci < numChevrons; ci++) {
@@ -320,7 +315,6 @@ export function createSkydiveCatapultStructure(scene, posX, posY, posZ) {
     group.add(chevR);
   }
 
-  // 4. 先端エッジトリム
   const tipEdgeGeo = new THREE.BoxGeometry(3.8, 0.16, 0.35);
   const tipEdge = new THREE.Mesh(tipEdgeGeo, sharedMats.catapultNeonRail);
   tipEdge.position.set(posX, posY - 0.28, posZ - rampLen * 0.92);
@@ -335,12 +329,10 @@ export function createSkydiveCatapultStructure(scene, posX, posY, posZ) {
   };
 }
 
-// ★ ドロップタワー・スカイゲート施設：白スチールトラス支柱＆最上部オレンジ滑車プーリー（完全垂直落下仕様）
+// ★ ドロップタワー・スカイゲート施設
 export function createTrapdoorHatchStructure(scene, posX, posY, hatchZ, approachStartZ) {
   const group = new THREE.Group();
 
-  // ★ 修正：手前島から開口部手前外縁（hatchZ + 1.6m）でピタッと止めるアプローチスカイウォーク
-  // 穴の中心（hatchZ）まで突き出さないため、穴の上に道が被らず、落ちるキャラが100%見え続けます
   const walkEndZ = hatchZ + 1.6;
   if (approachStartZ > walkEndZ + 0.5) {
     const walkLen = approachStartZ - walkEndZ;
@@ -351,7 +343,6 @@ export function createTrapdoorHatchStructure(scene, posX, posY, hatchZ, approach
     walkMesh.receiveShadow = true;
     group.add(walkMesh);
 
-    // スカイウォークのサイドパイプレール
     const sideRailGeo = new THREE.CylinderGeometry(0.06, 0.06, walkLen, 8);
     sideRailGeo.rotateX(Math.PI / 2);
     const sRailL = new THREE.Mesh(sideRailGeo, sharedMats.catapultNeonRail);
@@ -362,49 +353,44 @@ export function createTrapdoorHatchStructure(scene, posX, posY, hatchZ, approach
     group.add(sRailR);
   }
 
-  // 1. せり出し円形強化ガラスデッキ
   const deck = new THREE.Mesh(dropDeckGeo, sharedMats.dropGlassFloor);
   deck.position.set(posX, posY + 0.08, hatchZ);
   deck.receiveShadow = true;
   group.add(deck);
 
-  // 2. 外周スチールリム
   const rimGeo = new THREE.TorusGeometry(2.8, 0.08, 8, 32);
   rimGeo.rotateX(Math.PI / 2);
   const rim = new THREE.Mesh(rimGeo, sharedMats.dropPylonSteel);
   rim.position.set(posX, posY + 0.16, hatchZ);
   group.add(rim);
 
-  // 3. 左右にそびえ立つ白スチールトラス支柱 ＆ シアンブルーネオンインジケーター
   const pylonL = new THREE.Mesh(dropPylonGeo, sharedMats.dropPylonSteel);
-  pylonL.position.set(posX - 2.2, posY + 3.75, hatchZ);
+  pylonL.position.set(-2.2, posY + 3.75, hatchZ);
   pylonL.castShadow = true;
   group.add(pylonL);
 
   const indL = new THREE.Mesh(dropIndicatorGeo, sharedMats.dropIndicatorNeon);
-  indL.position.set(posX - 2.2, posY + 3.75, hatchZ + 0.18);
+  indL.position.set(-2.2, posY + 3.75, hatchZ + 0.18);
   group.add(indL);
 
   const pylonR = new THREE.Mesh(dropPylonGeo, sharedMats.dropPylonSteel);
-  pylonR.position.set(posX + 2.2, posY + 3.75, hatchZ);
+  pylonR.position.set(2.2, posY + 3.75, hatchZ);
   pylonR.castShadow = true;
   group.add(pylonR);
 
   const indR = new THREE.Mesh(dropIndicatorGeo, sharedMats.dropIndicatorNeon);
-  indR.position.set(posX + 2.2, posY + 3.75, hatchZ + 0.18);
+  indR.position.set(2.2, posY + 3.75, hatchZ + 0.18);
   group.add(indR);
 
-  // ★ 修正：開口部直上を横切っていたクロスバーと滑車を完全撤去（上空見下ろしカメラの視界遮蔽を解消）
   const pylonCapGeo = new THREE.BoxGeometry(0.55, 0.28, 0.55);
   const capL = new THREE.Mesh(pylonCapGeo, sharedMats.dropPylonSteel);
-  capL.position.set(posX - 2.2, posY + 7.5, hatchZ);
+  capL.position.set(-2.2, posY + 7.5, hatchZ);
   group.add(capL);
 
   const capR = new THREE.Mesh(pylonCapGeo, sharedMats.dropPylonSteel);
-  capR.position.set(posX + 2.2, posY + 7.5, hatchZ);
+  capR.position.set(2.2, posY + 7.5, hatchZ);
   group.add(capR);
 
-  // 6. 左右に開放するガラスハッチ扉（ピボット制御）
   const doorLeftPivot = new THREE.Group();
   doorLeftPivot.position.set(posX - 1.5, posY + 0.10, hatchZ);
   const doorL = new THREE.Mesh(hatchDoorGeo, sharedMats.dropGlassFloor);
@@ -554,7 +540,7 @@ export function createOceanIsletMesh(scale = 1.0, type = 'tropical') {
   return group;
 }
 
-// ★ 浮島メッシュ：海底へ垂れ下がるアンカーワイヤーを完全撤去（すっきりした南国スカイアイランド）
+// ★ 浮島メッシュ
 export function createIslandMesh(r, y, z) {
   const group = new THREE.Group();
   const plat = new THREE.Mesh(islandGeo, sharedMats.island);
@@ -620,7 +606,6 @@ export function spawnItem(scene, stageIdx, type = 'speed') {
     ringMat = sharedMats.itemMagnetBeaconRing;
     crystalGeoToUse = itemMagnetGeo;
   } else if (type === 'thunder') {
-    // ★ サンダー（二十面体ジュエル＆ネオンイエロー／シアン放電リング）
     crystalMat = sharedMats.itemThunderCrystal;
     ringMat = sharedMats.itemThunderBeaconRing;
     crystalGeoToUse = itemThunderGeo;
@@ -735,16 +720,13 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     return;
   }
 
-  // ★ ドロップタワー（足先行・真下の着地デッキへ完全垂直落下）
+  // ドロップタワー（足先行・真下の着地デッキへ完全垂直落下）
   if (type === 'trapdoor' || type === 'freefall') {
     const approachStartZ = prevIslandZ - prevR + 1.2;
-    // ハッチの位置を着地デッキの真上（endZ）に配置し、水平スライドを0にして真下へ一直線に落とす
     const targetDropZ = nextIslandZ + nextR - 1.2;
 
     const hatch = createTrapdoorHatchStructure(scene, 0, startY, targetDropZ, approachStartZ);
 
-    // ★ 修正：真下の着地点（下層島）のターゲット着地デッキ（白スチールリム＋シアンインジケーター）
-    // 開口部から下を見下ろした時に、着地点が遠くからでもクッキリと識別できます
     const landingPad = new THREE.Group();
     const landingRimGeo = new THREE.TorusGeometry(2.4, 0.08, 8, 32);
     landingRimGeo.rotateX(Math.PI / 2);
@@ -763,7 +745,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     const trapdoorBridge = {
       stageIdx, nextStageIdx, laneIdx: 1, planks: [],
       visualMeshes: [hatch.group, landingPad],
-      startZ: targetDropZ, // ★ 落下開始Zと着地Zを同一にして純粋な垂直落下を実現
+      startZ: targetDropZ,
       endZ: targetDropZ,
       approachStartZ: approachStartZ,
       startY, endY,
@@ -795,7 +777,6 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       elevators: []
     };
 
-    // ★ 修正：毎回同じ「緑・黄・赤」固定を廃止し、生成ごとに3レーンの速度属性をランダムシャッフル
     const shuffledLanes = ELEVATOR_CONFIG.LANES.map((cfg, idx) => ({ ...cfg, laneIdx: idx }));
     for (let i = shuffledLanes.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
@@ -894,17 +875,19 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     return;
   }
 
+  // ★ 修正：S字スライダー端部の高さ＆延伸補正（オレンジリングの上に跨がせる）
   if (type === 'curved_slide') {
-    const startZ = prevIslandZ - prevR + 1.2;
-    const endZ = nextIslandZ + nextR - 1.2;
+    const startZ = prevIslandZ - prevR + 0.4;
+    const endZ = nextIslandZ + nextR - 2.0;
     const distZ = startZ - endZ;
     const dropY = startY - endY;
     const sDir = (stageIdx % 2 === 0 ? 1 : -1);
 
-    const p0 = new THREE.Vector3(0, startY + 0.15, startZ);
+    // 端部をリングの膨らみ（+0.2m）を超える +0.28m へ持ち上げ
+    const p0 = new THREE.Vector3(0, startY + 0.28, startZ);
     const p1 = new THREE.Vector3(sDir * 7.5, startY - dropY * 0.28, startZ - distZ * 0.28);
     const p2 = new THREE.Vector3(-sDir * 5.8, startY - dropY * 0.72, startZ - distZ * 0.72);
-    const p3 = new THREE.Vector3(0, endY + 0.15, endZ);
+    const p3 = new THREE.Vector3(0, endY + 0.28, endZ);
     const spline = new THREE.CatmullRomCurve3([p0, p1, p2, p3]);
 
     const steps = 55;
@@ -1048,9 +1031,10 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     const laneX = LANES[laneIdx];
     const prevInsetZ = Math.sqrt(Math.max(1, prevR * prevR - laneX * laneX));
     const nextInsetZ = Math.sqrt(Math.max(1, nextR * nextR - laneX * laneX));
-    // ★ 修正：階段の場合、始点を手前島のエッジに密着させ、終点を上の島のオレンジ外周リングより奥（天面側 -2.6m）へしっかり延伸
-    const startZ = prevIslandZ - prevInsetZ + (isStairs ? 0.4 : 1.2);
-    const endZ = nextIslandZ + nextInsetZ - (isStairs ? 2.6 : 1.2);
+
+    // ★ 修正：階段の始点を手前島エッジに密着、終点 endZ を奥の島天面側へしっかり踏み込ませる（-2.8m）
+    const startZ = prevIslandZ - prevInsetZ + (isStairs ? 0.3 : 1.2);
+    const endZ = nextIslandZ + nextInsetZ - (isStairs ? 2.8 : 1.2);
     const distZ = startZ - endZ;
 
     const dist3D = Math.hypot(distZ, endY - startY);
@@ -1059,55 +1043,52 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     const bridge = {
       stageIdx, nextStageIdx, laneIdx, planks: [], visualMeshes: [],
       startZ, endZ, isJump, isSlide, isVertical,
-      isSkydive: false, isTrapdoor: false, isCurvedSlide: false, isZipline: false, isElevator: false,
+      isSkydive: false, isTrapdoor: false, isCurvedSlide: false, isZipline: false,
       ghostMesh: null, solidMesh: null
     };
 
     if (isSlide) {
-      const slopeLength = Math.hypot(distZ, endY - startY) + 2.0;
+      // ★ 修正：スライダースロープと仕切りパイプを前後に伸ばし（+3.2m）、端部がオレンジリングの上に堂々と跨がるように調整
+      const slopeLength = Math.hypot(distZ, endY - startY) + 3.2;
       const slopeGeo = new THREE.BoxGeometry(3.6, 0.4, slopeLength);
       const slopeMesh = new THREE.Mesh(slopeGeo, sharedMats.slideSurface);
 
       const midZ = (startZ + endZ) / 2;
       const midY = (startY + endY) / 2;
-      slopeMesh.position.set(LANES[laneIdx], midY - 0.1, midZ);
+      slopeMesh.position.set(LANES[laneIdx], midY - 0.04, midZ);
       const angleX = Math.atan2(endY - startY, startZ - endZ);
       slopeMesh.rotation.x = angleX;
       slopeMesh.receiveShadow = true;
       scene.add(slopeMesh);
       bridge.visualMeshes.push(slopeMesh);
 
-      // ★ 修正：外枠レール（左・右）に加え、中央の2本の仕切りパイプレール（X = -2.0, +2.0）を追加配置
+      // レール端部の高さを +0.38m に持ち上げ、オレンジリングの上に被せる
       const railGeo = new THREE.CylinderGeometry(0.15, 0.15, slopeLength, 8);
       railGeo.rotateX(Math.PI / 2);
 
       if (laneIdx === 0) {
-        // 最左端の外枠レール
         const leftRail = new THREE.Mesh(railGeo, sharedMats.slideRail);
-        leftRail.position.set(LANES[laneIdx] - 1.85, midY + 0.3, midZ);
+        leftRail.position.set(LANES[laneIdx] - 1.85, midY + 0.38, midZ);
         leftRail.rotation.x = angleX;
         scene.add(leftRail);
         bridge.visualMeshes.push(leftRail);
 
-        // ★ レーン0とレーン1の中間仕切りパイプ (X = -2.0m)
         const midRail1 = new THREE.Mesh(railGeo, sharedMats.slideRail);
-        midRail1.position.set(-2.0, midY + 0.3, midZ);
+        midRail1.position.set(-2.0, midY + 0.38, midZ);
         midRail1.rotation.x = angleX;
         scene.add(midRail1);
         bridge.visualMeshes.push(midRail1);
       }
 
       if (laneIdx === 2) {
-        // ★ レーン1とレーン2の中間仕切りパイプ (X = +2.0m)
         const midRail2 = new THREE.Mesh(railGeo, sharedMats.slideRail);
-        midRail2.position.set(2.0, midY + 0.3, midZ);
+        midRail2.position.set(2.0, midY + 0.38, midZ);
         midRail2.rotation.x = angleX;
         scene.add(midRail2);
         bridge.visualMeshes.push(midRail2);
 
-        // 最右端の外枠レール
         const rightRail = new THREE.Mesh(railGeo, sharedMats.slideRail);
-        rightRail.position.set(LANES[laneIdx] + 1.85, midY + 0.3, midZ);
+        rightRail.position.set(LANES[laneIdx] + 1.85, midY + 0.38, midZ);
         rightRail.rotation.x = angleX;
         scene.add(rightRail);
         bridge.visualMeshes.push(rightRail);
@@ -1148,7 +1129,9 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       for (let i = 0; i < numPlanks; i++) {
         const progress = (i + 0.5) / numPlanks;
         const pZ = startZ - progress * distZ;
-        const pY = startY + progress * (endY - startY);
+        // ★ 修正：階段の終点高さをリング（+0.2m）の上に確実に乗り上げるよう +0.16m 持ち上げ（リングに潜らない）
+        const stairsLift = isStairs ? (progress * 0.16) : 0;
+        const pY = startY + progress * (endY - startY) + stairsLift;
 
         dummyPlankObj.position.set(LANES[laneIdx], pY, pZ);
         dummyPlankObj.rotation.set(0, 0, 0);
@@ -1191,31 +1174,41 @@ export function extendCourse(scene) {
     nextY = prev.y + 7.0;
     distZ = 34;
     r = 10;
+    lastGimmickCategory = 'ascent';
   } else if (idx === 2) {
     type = 'jump';
     nextY = prev.y + 1.0;
     distZ = 30;
     r = 9.5;
+    lastGimmickCategory = 'ascent';
   } else if (idx === 3) {
-    // 序盤のStage 3に直線スライダーを配置してシンプル＆爽快な滑走を早期体験
     type = 'slide';
     nextY = Math.max(5.0, prev.y - 8.5);
     distZ = 42;
     r = 11;
+    lastGimmickCategory = 'descent';
   } else if (idx === 4) {
     type = 'vertical';
     nextY = prev.y + 12.0;
     distZ = 24;
     r = 10;
+    lastGimmickCategory = 'ascent';
   } else if (idx === 5) {
     type = 'zipline';
     nextY = Math.max(7.0, prev.y - 10.5);
     distZ = 68;
     r = 10.5;
+    lastGimmickCategory = 'descent';
   } else {
-    // ★ シャッフルバッグ方式により、全ギミックが均等周期で選出され重複・偏りを完全根絶
-    if (prev.y >= 14.0) {
+    // ★ 完全交互サイクル（登り ➜ 降り ➜ 登り ➜ 降り）＆ 2系統シャッフルバッグ
+    // 高度安全リミット（5m以下なら強制上昇、38m以上なら強制下降）を担保しつつ規則正しく交互選出
+    let pickDescent = (lastGimmickCategory === 'ascent');
+    if (prev.y <= 7.0) pickDescent = false;
+    if (prev.y >= 38.0) pickDescent = true;
+
+    if (pickDescent) {
       type = getNextDescentGimmick();
+      lastGimmickCategory = 'descent';
       if (type === 'slide') {
         nextY = Math.max(5.0, prev.y - 10.0);
         distZ = 42;
@@ -1239,6 +1232,7 @@ export function extendCourse(scene) {
       }
     } else {
       type = getNextAscentGimmick();
+      lastGimmickCategory = 'ascent';
       if (type === 'elevator') {
         nextY = prev.y + 16.0;
         distZ = 30;
@@ -1274,19 +1268,9 @@ export function extendCourse(scene) {
   if (idx >= 1) {
     spawnGatesOnIsland(scene, idx, nextZ, nextY);
 
-    speedItemIslandCounter++;
-    let shouldSpawnItem = false;
-    if (idx === 1 || speedItemIslandCounter >= 3) {
-      shouldSpawnItem = true;
-      speedItemIslandCounter = 0;
-    } else if (speedItemIslandCounter >= 2 && Math.random() < 0.65) {
-      shouldSpawnItem = true;
-      speedItemIslandCounter = 0;
-    }
-
-    if (shouldSpawnItem) {
-      const typeToSpawn = ITEM_ROTATION[itemRotationIndex % ITEM_ROTATION.length];
-      itemRotationIndex++;
+    // ★ アイテム完全均等周期：2島に1回、シャッフルバッグから全4種を均等スポーン
+    if (idx % 2 === 1) {
+      const typeToSpawn = getNextBagItem();
       spawnItem(scene, idx, typeToSpawn);
     }
   }
@@ -1320,14 +1304,15 @@ export function extendCourse(scene) {
 export function buildWorld(scene) {
   descentBag.length = 0;
   ascentBag.length = 0;
-  lastGimmickType = null;
+  itemBag.length = 0;
+  lastGimmickCategory = 'descent';
 
   floorBlocksByStage.forEach(bucket => {
     bucket.forEach(b => {
       b.active = false;
       b.mesh.visible = false;
       b.attracting = false;
-      b.mesh.rotation.set(0, 0, 0); // 角度を確実にリセット
+      b.mesh.rotation.set(0, 0, 0);
     });
   });
   floorBlocksByStage.clear();
@@ -1383,7 +1368,7 @@ export function buildWorld(scene) {
       mb.poolItem.active = false;
       mb.poolItem.mesh.visible = false;
       mb.poolItem.attracting = false;
-      mb.poolItem.mesh.rotation.set(0, 0, 0); // 角度を確実にリセット
+      mb.poolItem.mesh.rotation.set(0, 0, 0);
     }
   });
   resetParticlePools();
@@ -1399,8 +1384,6 @@ export function buildWorld(scene) {
   oceanIslands.length = 0;
   curvedSlideBonusBlocks.length = 0;
   ziplineBonusBlocks.length = 0;
-  speedItemIslandCounter = 0;
-  itemRotationIndex = 0;
 
   STAGES.length = 0;
   STAGES.push({ z: 0, y: 0, r: 12 });
@@ -1446,7 +1429,7 @@ export function cleanupOldData(scene) {
         mb.poolItem.active = false;
         mb.poolItem.mesh.visible = false;
         mb.poolItem.attracting = false;
-        mb.poolItem.mesh.rotation.set(0, 0, 0); // 角度を確実にリセット
+        mb.poolItem.mesh.rotation.set(0, 0, 0);
       }
       activeMagnetBlocks.splice(i, 1);
     }
@@ -1490,7 +1473,7 @@ export function cleanupOldData(scene) {
         b.active = false;
         b.mesh.visible = false;
         b.attracting = false;
-        b.mesh.rotation.set(0, 0, 0); // 角度を確実にリセット
+        b.mesh.rotation.set(0, 0, 0);
       });
       floorBlocksByStage.delete(stageKey);
     }
@@ -1568,7 +1551,6 @@ export function spawnSingleBlock(scene, stageIdx, targetTeam = null) {
     const candX = Math.cos(theta) * r;
     const candZ = stageInfo.z + Math.sin(theta) * r;
 
-    // カタパルト台周辺（助走エリア）のブロック生成禁止
     if (skydiveB) {
       const dSkySq = candX * candX + (candZ - skydiveB.startZ) * (candZ - skydiveB.startZ);
       if (dSkySq < (SKYDIVE_CONFIG.CATAPULT.exclusionRadius * SKYDIVE_CONFIG.CATAPULT.exclusionRadius)) {
@@ -1577,7 +1559,6 @@ export function spawnSingleBlock(scene, stageIdx, targetTeam = null) {
       }
     }
 
-    // ドロップタワー・スカイゲート施設周辺のブロック生成禁止
     if (trapdoorB) {
       const dHatchSq = candX * candX + (candZ - trapdoorB.startZ) * (candZ - trapdoorB.startZ);
       if (dHatchSq < (TRAPDOOR_CONFIG.HATCH.exclusionRadius * TRAPDOOR_CONFIG.HATCH.exclusionRadius)) {
@@ -1586,7 +1567,6 @@ export function spawnSingleBlock(scene, stageIdx, targetTeam = null) {
       }
     }
 
-    // エレベーター乗り場デッキ周辺のブロック生成禁止
     if (eleB) {
       if (candZ < stageInfo.z - stageInfo.r * 0.45 && Math.abs(candX) < 5.5) {
         attempts++;
@@ -1628,7 +1608,6 @@ export function spawnSingleBlock(scene, stageIdx, targetTeam = null) {
 
   poolItem.mesh.material = mat;
   poolItem.mesh.position.set(validPos.x, stageInfo.y + 0.25, validPos.z);
-  // ★ 修正：X/Z回転角を確実に0にリセットし、床に斜めに突き刺さる現象を完全根絶
   poolItem.mesh.rotation.set(0, Math.random() * Math.PI, 0);
   poolItem.mesh.visible = true;
 
