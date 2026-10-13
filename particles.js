@@ -20,10 +20,15 @@ export const NUM_TRAILS_PER_PROJ = 18; // トレイル球体数を増やして�
 export const DRAIN_POOL_SIZE = 8;
 export const FLOOR_BLOCK_POOL_SIZE = 400;
 
+// ★ サンダー専用有弾道プール規格（高輝度イエロー雷球・シンプル尾）
+export const THUNDER_PROJECTILE_POOL_SIZE = 2;
+export const NUM_TRAILS_PER_THUNDER = 14;
+
 export const puffCloudPool = [];
 export const speedStepRingPool = [];
 export const shockwavePool = [];
 export const projectilePool = [];
+export const thunderProjectilePool = [];
 export const drainBlockPool = [];
 export const floorBlockPool = [];
 
@@ -175,6 +180,69 @@ export function initParticlePools(scene) {
     }
   }
 
+  // ★ サンダー専用弾頭プール初期化（過剰なリング等を省いた、くっきりボールド雷球＋直線尾）
+  if (thunderProjectilePool.length === 0) {
+    const thunderSphereGeo = new THREE.SphereGeometry(0.72, 16, 16);
+    const thunderCoreMat = new THREE.MeshStandardMaterial({
+      color: 0xfacc15,
+      emissive: 0xffea00,
+      emissiveIntensity: 1.4,
+      roughness: 0.1,
+      metalness: 0.1
+    });
+    sharedMaterialsSet.add(thunderCoreMat);
+
+    for (let tpIdx = 0; tpIdx < THUNDER_PROJECTILE_POOL_SIZE; tpIdx++) {
+      const thunderGroup = new THREE.Group();
+      thunderGroup.visible = false;
+
+      const sphereMesh = new THREE.Mesh(thunderSphereGeo, thunderCoreMat);
+      sphereMesh.castShadow = true;
+      thunderGroup.add(sphereMesh);
+      scene.add(thunderGroup);
+
+      const trailSpheres = [];
+      for (let i = 0; i < NUM_TRAILS_PER_THUNDER; i++) {
+        const tMat = new THREE.MeshBasicMaterial({
+          color: 0xfacc15,
+          transparent: true,
+          opacity: 0.95,
+          depthWrite: false
+        });
+        sharedMaterialsSet.add(tMat);
+        const tMesh = new THREE.Mesh(attackTrailSphereGeo, tMat);
+        tMesh.visible = false;
+        const s = Math.max(0.30, (1.0 - (i / NUM_TRAILS_PER_THUNDER)) * 1.35);
+        tMesh.scale.set(s, s, s);
+        scene.add(tMesh);
+        trailSpheres.push({
+          mesh: tMesh,
+          material: tMat,
+          historyOffset: i + 1
+        });
+      }
+
+      const history = [];
+      for (let h = 0; h < 20; h++) {
+        history.push(new THREE.Vector3());
+      }
+
+      thunderProjectilePool.push({
+        group: thunderGroup,
+        sphere: sphereMesh,
+        trailSpheres: trailSpheres,
+        history: history,
+        startPos: new THREE.Vector3(),
+        targetPos: new THREE.Vector3(),
+        shooter: null,
+        target: null,
+        progress: 0,
+        duration: 0.85, // ★ 0.85秒の軽快な高速テンポ
+        active: false
+      });
+    }
+  }
+
   if (drainBlockPool.length === 0) {
     for (let d = 0; d < DRAIN_POOL_SIZE; d++) {
       const drainMesh = new THREE.Mesh(blockGeometry, sharedMats.blockBlue);
@@ -233,6 +301,15 @@ export function resetParticlePools() {
     if (p.reticle) p.reticle.visible = false;
     for (let j = 0; j < p.trailSpheres.length; j++) {
       p.trailSpheres[j].mesh.visible = false;
+    }
+  }
+  // ★ サンダー弾頭プールのリセット
+  for (let i = 0; i < thunderProjectilePool.length; i++) {
+    const tp = thunderProjectilePool[i];
+    tp.active = false;
+    tp.group.visible = false;
+    for (let j = 0; j < tp.trailSpheres.length; j++) {
+      tp.trailSpheres[j].mesh.visible = false;
     }
   }
   for (let i = 0; i < drainBlockPool.length; i++) {

@@ -115,13 +115,13 @@ export const SKYDIVE_CONFIG = {
   }
 };
 
-// ★ 看板ステージ2：ドロップタワー・スカイゲート仕様定数（落差-70m・3.1秒自由落下・並走ワイドチェイス）
+// ★ 看板ステージ2：ドロップタワー・スカイゲート仕様定数（落差-70m・1.8秒急降下ダイブ・前進18m）
 export const TRAPDOOR_CONFIG = {
   PHYSICS: {
-    minHeightDrop: 70.0,            // ★ 超高層垂直落差 (-70m)
-    forwardDistance: 0.0,           // ★ 真下へ一直線に垂直落下 (0m)
-    totalDuration: 3.1,             // ★ 落下滞空時間（3.1秒：スカイダイブ同等にたっぷり絶叫）
-    gravityPower: 1.8,              // ★ 初速からストンと引きずり込まれる本物の重力加速
+    minHeightDrop: 70.0,            // 超高層垂直落差 (-70m)
+    forwardDistance: 18.0,          // ★ 着地デッキに向けた前進ダイブ距離 (18.0m)
+    totalDuration: 1.8,             // ★ 落下滞空時間（1.8秒：ハイスピード急降下）
+    gravityPower: 1.6,              // ★ 初速からグンと引きずり込まれる重力カーブ
     horizontalAirControlSpeed: 7.5, // 左右エアスライド速度（直立維持）
     maxAirOffsetX: 3.8              // 空中微調整の最大左右幅
   },
@@ -133,16 +133,15 @@ export const TRAPDOOR_CONFIG = {
     openDuration: 0.14,             // 扉開放所要時間（瞬時開放）
     exclusionRadius: 5.0            // 施設周辺の床ブロック生成禁止半径
   },
-  // ★ 新設計：落ちた瞬間から全身ロックオン並走ワイドチェイスカメラ
   CAMERA: {
-    offsetX: 4.8,                   // ★ 斜め横から直立全身を捉える (+4.8m)
-    offsetY: 5.0,                   // ★ キャラ全身と高さを合わせる高度 (+5.0m)
-    offsetZ: 9.5,                   // ★ 全身と背景をバランス良く映す後方距離 (+9.5m)
+    offsetX: 4.8,                   // 斜め横から直立全身を捉える (+4.8m)
+    offsetY: 5.0,                   // キャラ全身と高さを合わせる高度 (+5.0m)
+    offsetZ: 9.5,                   // 全身と背景をバランス良く映す後方距離 (+9.5m)
     lookOffsetY: -1.0,              // 注視点 Y (-1.0m)
-    lookAheadZ: -24.0,              // ★ 前方奥の水平線パノラマを捉える (-24.0m)
-    lerpFactor: 0.45,               // ★ 初速キックでもキャラを見失わない強固な追従速度
+    lookAheadZ: -24.0,              // 前方奥の水平線パノラマを捉える (-24.0m)
+    lerpFactor: 0.45,               // 初速キックでもキャラを見失わない強固な追従速度
     fovStart: 62,                   // 開始時FOV
-    fovDrop: 78                     // ★ 加速時ワイドFOV（超スピードパノラマ）
+    fovDrop: 78                     // 加速時ワイドFOV（超スピードパノラマ）
   }
 };
 

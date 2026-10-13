@@ -45,6 +45,7 @@ import {
 import {
   triggerLandingShockwave,
   projectilePool,
+  thunderProjectilePool,
   drainBlockPool,
   floorBlockPool
 } from './particles.js';
@@ -231,9 +232,9 @@ export function fireHomingCrystal(char) {
   }
 }
 
-// ★ 新規追加：最前線の敵を狙い撃つサンダー（落雷＆ちびキャラ化）発動処理
+// ★ サンダー有弾道発射処理（最前線の敵に向けて高速雷光弾を射出）
 export function fireThunderStrike(scene, userChar) {
-  if (soundRef && soundRef.playThunderStrike) soundRef.playThunderStrike();
+  if (soundRef && soundRef.playAttackShoot) soundRef.playAttackShoot();
 
   // 自分以外の敵の中で最も前方（Z座標が最小）にいる相手をサーチ
   let target = null;
@@ -248,22 +249,49 @@ export function fireThunderStrike(scene, userChar) {
 
   if (!target) return;
 
-  // 敵に縮小・超鈍足デバフを付与（5.5秒間）
-  target.shrinkTimer = 5.5;
+  let tp = thunderProjectilePool.find(p => !p.active);
+  if (!tp) {
+    tp = thunderProjectilePool[0];
+    let maxProg = tp.progress;
+    for (let i = 1; i < thunderProjectilePool.length; i++) {
+      if (thunderProjectilePool[i].progress > maxProg) {
+        maxProg = thunderProjectilePool[i].progress;
+        tp = thunderProjectilePool[i];
+      }
+    }
+  }
 
-  // 足元に電撃イエロー衝撃波
-  triggerLandingShockwave(target.pos.x, target.pos.y + 0.1, target.pos.z, 3.2, 0xfacc15);
+  tp.active = true;
+  tp.shooter = userChar;
+  tp.target = target;
+  tp.progress = 0;
+  tp.duration = 0.85; // 0.85秒の高速テンポ
 
-  // 天空から降り注ぐ雷光柱
-  const boltMesh = new THREE.Mesh(lightningPillarGeo, sharedMats.lightningBolt);
-  boltMesh.position.set(target.pos.x, target.pos.y + 14.0, target.pos.z);
-  scene.add(boltMesh);
+  tp.startPos.copy(userChar.pos);
+  tp.startPos.y += 1.3;
+  tp.targetPos.copy(target.pos);
+  tp.targetPos.y += 1.0;
 
-  setTimeout(() => {
-    try {
-      scene.remove(boltMesh);
-    } catch (e) {}
-  }, 130);
+  tp.group.position.copy(tp.startPos);
+  tp.group.visible = true;
+
+  for (let h = 0; h < tp.history.length; h++) {
+    tp.history[h].copy(tp.startPos);
+  }
+
+  for (let j = 0; j < tp.trailSpheres.length; j++) {
+    const item = tp.trailSpheres[j];
+    item.mesh.position.copy(tp.startPos);
+    item.mesh.visible = true;
+    const lifeFade = 1.0 - (j / tp.trailSpheres.length);
+    item.material.opacity = lifeFade * 0.95;
+  }
+
+  triggerLandingShockwave(userChar.pos.x, userChar.pos.y + 0.1, userChar.pos.z, 2.2, 0xfacc15);
+
+  if (userChar.isPlayer) {
+    setAttackCamTimer(1.0);
+  }
 }
 
 export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
@@ -782,7 +810,7 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     return;
   }
 
-  // ★ ドロップタワー（足先行・完全垂直落下 3.1秒）：扉開放 ➜ コミカルな空中ジタバタ ➜ ストンと急降下
+  // ★ ドロップタワー（足先行・1.8秒高速前進ダイブ）：フワフワ静止感を解消し、着地デッキへ向けて前進急降下
   if ((char.onTrapdoor && char.activeTrapdoor) || (char.onFreefall && char.activeFreefall)) {
     const b = char.activeTrapdoor || char.activeFreefall;
 
@@ -806,7 +834,7 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
       char.slideCooldown = 0.5;
       char.lastPlankIdx = -1;
 
-      // ★ 修正：通過後はハッチ扉を自動的に閉じる（Bot通過後に開きっぱなしになる現象を根絶）
+      // ★ 通過後はハッチ扉を閉じる
       b.isHatchOpen = false;
       b.hatchOpenProgress = 0;
       if (b.doorLeftPivot && b.doorRightPivot) {
@@ -833,31 +861,25 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     } else {
       const t = Math.min(0.999, Math.max(0, char.trapdoorProgress));
 
-      const packProg = Math.min(1.0, char.trapdoorProgress / (0.40 / totalFlyTime));
+      const packProg = Math.min(1.0, char.trapdoorProgress / (0.35 / totalFlyTime));
       packCharacterLuggage(char, packProg);
 
-      // ★ 修正：落下初期（見下ろし中）は中心 (X=0) を厳格維持
+      // 落下初期（ハッチ通過直後）は中心を維持し、徐々に空中操作を許容
       const airSpeed = TRAPDOOR_CONFIG.PHYSICS.horizontalAirControlSpeed;
       const maxAirX = TRAPDOOR_CONFIG.PHYSICS.maxAirOffsetX;
-      if (t < 0.45) {
+      if (t < 0.30) {
         char.trapdoorX = 0;
       } else {
         char.trapdoorX = Math.max(-maxAirX, Math.min(maxAirX, (char.trapdoorX || 0) + dirX * airSpeed * dt));
       }
 
-      // 完全垂直直下落下：ハッチ直下Z座標（b.startZ）を完全固定
-      const pZ = b.startZ;
+      // ★ 前進急降下ダイブ：ハッチ位置から着地サークル方向へ前進 (+18.0m)
+      const forwardDist = TRAPDOOR_CONFIG.PHYSICS.forwardDistance || 18.0;
+      const pZ = b.startZ - t * forwardDist;
 
-      // ★ 改善：フワフワした浮遊感を完全に排除。最初の0.06秒（t <= 0.02）だけハッチ開放のタメ（ビクッとする瞬間）、直後から重力加速でストンと急降下（t^1.8）
-      const hoverT = 0.02;
-      let effectiveFallT = 0;
-      if (t < hoverT) {
-        effectiveFallT = (t / hoverT) * 0.008;
-      } else {
-        const fallFrac = (t - hoverT) / (1.0 - hoverT);
-        effectiveFallT = 0.008 + Math.pow(fallFrac, 1.8) * 0.992;
-      }
-      const pY = b.startY + (b.endY - b.startY) * effectiveFallT;
+      // ★ 重力加速度 (t^1.6) で一気に急降下
+      const fallPower = TRAPDOOR_CONFIG.PHYSICS.gravityPower || 1.6;
+      const pY = b.startY + (b.endY - b.startY) * Math.pow(t, fallPower);
       char.pos.set(char.trapdoorX, pY, pZ);
 
       const timeSec = performance.now() * 0.001;
