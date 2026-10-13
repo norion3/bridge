@@ -67,6 +67,15 @@ export let seaMesh = null;
 export let attackCamTimer = 0;
 let magnetDockStep = 0;
 
+// ★ ワールド生成物のみを安全に追跡・管理するコレクション（ライト・パーティクル・キャラクターの保護用）
+const trackedWorldObjects = new Set();
+
+function addWorldObject(scene, obj) {
+  scene.add(obj);
+  trackedWorldObjects.add(obj);
+  return obj;
+}
+
 export function setAttackCamTimer(val) {
   attackCamTimer = val;
 }
@@ -123,6 +132,7 @@ export function createCloudCluster(x, y, z, scale = 1.0) {
 export function initSea(scene) {
   if (seaMesh) {
     scene.remove(seaMesh);
+    trackedWorldObjects.delete(seaMesh);
     if (seaMesh.geometry) seaMesh.geometry.dispose();
   }
   const seaGeo = new THREE.PlaneGeometry(1600, 1600);
@@ -130,7 +140,7 @@ export function initSea(scene) {
   seaMesh = new THREE.Mesh(seaGeo, sharedMats.sea);
   seaMesh.position.set(0, -140, -300);
   seaMesh.receiveShadow = true;
-  scene.add(seaMesh);
+  addWorldObject(scene, seaMesh);
 }
 
 // アイテム生成（スピード、攻撃、マグネット）
@@ -170,7 +180,7 @@ export function spawnItem(scene, stageIdx, type = 'speed') {
   const posY = stage.y;
 
   group.position.set(posX, posY, posZ);
-  scene.add(group);
+  addWorldObject(scene, group);
 
   const itemObj = {
     group,
@@ -242,7 +252,7 @@ export function spawnGatesOnIsland(scene, stageIdx) {
 
     const gx = gateXOffsets[gIdx];
     gateGroup.position.set(gx, stage.y, gateZ);
-    scene.add(gateGroup);
+    addWorldObject(scene, gateGroup);
 
     modifierGates.push({
       meshGroup: gateGroup,
@@ -310,7 +320,7 @@ export function createTrapdoorHatchStructure(scene, stageIdx, posX, posY, startZ
   doorRPivot.add(doorRMesh);
   group.add(doorRPivot);
 
-  scene.add(group);
+  addWorldObject(scene, group);
 
   return {
     group,
@@ -339,7 +349,7 @@ export function createSkydiveCatapultStructure(scene, posX, posY, startZ) {
   trimR.position.x = posX + 1.8;
   group.add(trimR);
 
-  scene.add(group);
+  addWorldObject(scene, group);
   return group;
 }
 
@@ -413,12 +423,12 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, type) {
     const pylon1 = new THREE.Mesh(pylonGeo, sharedMats.ziplinePylonPost);
     pylon1.position.set(0, startY + 2.5, startZ);
     pylon1.castShadow = true;
-    scene.add(pylon1);
+    addWorldObject(scene, pylon1);
 
     const pylon2 = new THREE.Mesh(pylonGeo, sharedMats.ziplinePylonPost);
     pylon2.position.set(0, endY + 2.5, endZ);
     pylon2.castShadow = true;
-    scene.add(pylon2);
+    addWorldObject(scene, pylon2);
 
     const cableLen = startPt.distanceTo(endPt);
     const cableGeo = new THREE.CylinderGeometry(0.042, 0.042, cableLen, 8);
@@ -426,7 +436,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, type) {
     const cableMesh = new THREE.Mesh(cableGeo, sharedMats.ziplineCable);
     cableMesh.position.lerpVectors(startPt, endPt, 0.5);
     cableMesh.lookAt(endPt);
-    scene.add(cableMesh);
+    addWorldObject(scene, cableMesh);
 
     const bonusBlocks = [];
     const bonusCount = 12;
@@ -436,7 +446,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, type) {
       const bMesh = new THREE.Mesh(blockGeometry, sharedMats.blockBlue);
       bMesh.position.set(bPos.x, bPos.y - 1.25, bPos.z);
       bMesh.scale.set(1.15, 1.15, 1.15);
-      scene.add(bMesh);
+      addWorldObject(scene, bMesh);
       const bObj = { mesh: bMesh, t, zi: bi, baseY: bPos.y - 1.25, collected: false };
       bonusBlocks.push(bObj);
       ziplineBonusBlocks.push(bObj);
@@ -471,7 +481,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, type) {
     const slideGeo = new THREE.TubeGeometry(curve, 64, 2.2, 12, false);
     const slideMesh = new THREE.Mesh(slideGeo, sharedMats.slideSurface);
     slideMesh.receiveShadow = true;
-    scene.add(slideMesh);
+    addWorldObject(scene, slideMesh);
 
     const bonusBlocks = [];
     const bonusCount = 14;
@@ -484,7 +494,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, type) {
 
       const bMesh = new THREE.Mesh(blockGeometry, sharedMats.blockBlue);
       bMesh.position.set(pt.x + norm.x * offset, pt.y + 0.5, pt.z + norm.z * offset);
-      scene.add(bMesh);
+      addWorldObject(scene, bMesh);
       const bObj = { mesh: bMesh, t, offset, collected: false };
       bonusBlocks.push(bObj);
       curvedSlideBonusBlocks.push(bObj);
@@ -510,7 +520,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, type) {
       const railGeo = new THREE.BoxGeometry(0.15, Math.abs(endY - startY) + 4.0, 0.15);
       const rail = new THREE.Mesh(railGeo, sharedMats.gateFrame);
       rail.position.set(LANES[laneCfg.laneIdx], (startY + endY) / 2, (startZ + endZ) / 2);
-      scene.add(rail);
+      addWorldObject(scene, rail);
 
       return {
         laneIdx: laneCfg.laneIdx,
@@ -563,7 +573,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, type) {
       const surfaceMesh = new THREE.Mesh(surfaceGeo, sharedMats.slideSurface);
       surfaceMesh.position.set(laneX, (startY + endY) / 2 + 0.08, (startZ + endZ) / 2);
       surfaceMesh.receiveShadow = true;
-      scene.add(surfaceMesh);
+      addWorldObject(scene, surfaceMesh);
       bridge.visualMeshes.push(surfaceMesh);
 
       // ★ 直線スライダー：4本レール（X = -5.85, -2.00, +2.00, +5.85）の適正配置
@@ -574,7 +584,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, type) {
           railGeo.rotateX(Math.PI / 2 - slideSlopeAngle);
           const rMesh = new THREE.Mesh(railGeo, sharedMats.slideRail);
           rMesh.position.set(rx, (startY + endY) / 2 + 0.32, (startZ + endZ) / 2);
-          scene.add(rMesh);
+          addWorldObject(scene, rMesh);
           bridge.visualMeshes.push(rMesh);
         });
       }
@@ -609,7 +619,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, type) {
       trampGroup.add(netMesh);
 
       trampGroup.position.set(laneX, startY, startZ - 1.2);
-      scene.add(trampGroup);
+      addWorldObject(scene, trampGroup);
       bridge.visualMeshes.push(trampGroup);
 
       bridge.planks.push({
@@ -657,8 +667,8 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, type) {
       solidMesh.instanceMatrix.needsUpdate = true;
       if (solidMesh.instanceColor) solidMesh.instanceColor.needsUpdate = true;
 
-      scene.add(ghostMesh);
-      scene.add(solidMesh);
+      addWorldObject(scene, ghostMesh);
+      addWorldObject(scene, solidMesh);
       bridge.ghostMesh = ghostMesh;
       bridge.solidMesh = solidMesh;
       bridge.visualMeshes.push(ghostMesh, solidMesh);
@@ -726,11 +736,12 @@ export function manageBlockSpawns(scene, isGameOver) {
 
 // 初期ワールドの構築
 export function buildWorld(scene) {
-  while (scene.children.length > 0) {
-    const obj = scene.children[0];
+  // ★ 修正：ライトやパーティクル、キャラクターを巻き込まず、ワールドオブジェクトのみを安全にクリーンアップ
+  for (const obj of trackedWorldObjects) {
     scene.remove(obj);
     disposeHierarchy(obj);
   }
+  trackedWorldObjects.clear();
 
   STAGES.length = 0;
   CONNECTIONS.length = 0;
@@ -770,7 +781,7 @@ export function buildWorld(scene) {
     st.floorBlocks = [];
     STAGES.push(st);
     const islandMesh = createIslandMesh(st.r, st.y, st.z);
-    scene.add(islandMesh);
+    addWorldObject(scene, islandMesh);
   });
 
   initialConns.forEach(c => {
@@ -793,7 +804,7 @@ export function buildWorld(scene) {
     const cy = 20 + Math.random() * 65;
     const cz = -ci * 25 + 10;
     const cloud = createCloudCluster(cx, cy, cz, 1.2 + Math.random() * 0.8);
-    scene.add(cloud);
+    addWorldObject(scene, cloud);
     cloudObjects.push({ mesh: cloud, baseY: cy, offset: Math.random() * Math.PI * 2 });
   }
 }
@@ -861,7 +872,7 @@ export function extendCourse(scene) {
   STAGES.push(newStage);
 
   const islandMesh = createIslandMesh(newStage.r, newStage.y, newStage.z);
-  scene.add(islandMesh);
+  addWorldObject(scene, islandMesh);
 
   CONNECTIONS.push({ from: lastStage.id, to: newId, type });
   createBridgeLinks(scene, lastStage.id, newId, type);
@@ -882,7 +893,7 @@ export function extendCourse(scene) {
     const cy = nextY + 25 + Math.random() * 45;
     const cz = nextZ + (Math.random() - 0.5) * 30;
     const cloud = createCloudCluster(cx, cy, cz, 1.2 + Math.random() * 0.8);
-    scene.add(cloud);
+    addWorldObject(scene, cloud);
     cloudObjects.push({ mesh: cloud, baseY: cy, offset: Math.random() * Math.PI * 2 });
   }
 }
