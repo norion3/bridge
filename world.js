@@ -19,6 +19,7 @@ import {
   itemCrystalGeo,
   itemSpeedGeo,
   itemMagnetGeo,
+  itemThunderGeo,
   itemBeaconRingGeo,
   elevatorPlatformFloorGeo,
   elevatorHandrailPostGeo,
@@ -57,7 +58,8 @@ export const floorBlocksByStage = new Map();
 export const bridgesByStage = new Map();
 
 export let speedItemIslandCounter = 0;
-export const ITEM_ROTATION = ['speed', 'attack', 'magnet'];
+// ★ サンダー（二十面体ジュエル）をローテーションに追加
+export const ITEM_ROTATION = ['speed', 'attack', 'magnet', 'thunder'];
 export let itemRotationIndex = 0;
 export let magnetDockStepCounter = 0;
 export let attackCamTimer = 0;
@@ -617,6 +619,11 @@ export function spawnItem(scene, stageIdx, type = 'speed') {
     crystalMat = sharedMats.itemMagnetCrystal;
     ringMat = sharedMats.itemMagnetBeaconRing;
     crystalGeoToUse = itemMagnetGeo;
+  } else if (type === 'thunder') {
+    // ★ サンダー（二十面体ジュエル＆ネオンイエロー／シアン放電リング）
+    crystalMat = sharedMats.itemThunderCrystal;
+    ringMat = sharedMats.itemThunderBeaconRing;
+    crystalGeoToUse = itemThunderGeo;
   } else {
     crystalMat = sharedMats.itemCrystal;
     ringMat = sharedMats.itemBeaconRing;

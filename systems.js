@@ -17,7 +17,8 @@ import {
   _tempVec3A,
   _tempVec3B,
   _tempVec3C,
-  disposeHierarchy
+  disposeHierarchy,
+  lightningPillarGeo
 } from './materials.js';
 import {
   characters,
@@ -207,6 +208,12 @@ export function fireHomingCrystal(char) {
   proj.group.position.copy(proj.startPos);
   proj.group.visible = true;
 
+  // ★ 標的の足元にロックオン照準レティクルを展開
+  if (selectedTarget && proj.reticle) {
+    proj.reticle.position.set(selectedTarget.pos.x, selectedTarget.pos.y + 0.08, selectedTarget.pos.z);
+    proj.reticle.visible = true;
+  }
+
   for (let h = 0; h < proj.history.length; h++) {
     proj.history[h].copy(proj.startPos);
   }
@@ -222,6 +229,41 @@ export function fireHomingCrystal(char) {
   if (char.isPlayer) {
     setAttackCamTimer(1.4);
   }
+}
+
+// ★ 新規追加：最前線の敵を狙い撃つサンダー（落雷＆ちびキャラ化）発動処理
+export function fireThunderStrike(scene, userChar) {
+  if (soundRef && soundRef.playThunderStrike) soundRef.playThunderStrike();
+
+  // 自分以外の敵の中で最も前方（Z座標が最小）にいる相手をサーチ
+  let target = null;
+  let minZ = 999999;
+  characters.forEach(c => {
+    if (c === userChar) return;
+    if (c.pos.z < minZ) {
+      minZ = c.pos.z;
+      target = c;
+    }
+  });
+
+  if (!target) return;
+
+  // 敵に縮小・超鈍足デバフを付与（5.5秒間）
+  target.shrinkTimer = 5.5;
+
+  // 足元に電撃イエロー衝撃波
+  triggerLandingShockwave(target.pos.x, target.pos.y + 0.1, target.pos.z, 3.2, 0xfacc15);
+
+  // 天空から降り注ぐ雷光柱
+  const boltMesh = new THREE.Mesh(lightningPillarGeo, sharedMats.lightningBolt);
+  boltMesh.position.set(target.pos.x, target.pos.y + 14.0, target.pos.z);
+  scene.add(boltMesh);
+
+  setTimeout(() => {
+    try {
+      scene.remove(boltMesh);
+    } catch (e) {}
+  }, 130);
 }
 
 export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
@@ -616,6 +658,17 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     char.meshObj.root.visible = (Math.floor(Date.now() / 90) % 2 === 0);
   } else {
     char.meshObj.root.visible = true;
+  }
+
+  // ★ 縮小化（ちびキャラ化）デバフタイマーおよびスケール制御
+  if (char.shrinkTimer > 0) {
+    char.shrinkTimer -= dt;
+    const shrinkScale = 0.42;
+    char.meshObj.root.scale.set(shrinkScale, shrinkScale, shrinkScale);
+    if (char.shrinkTimer <= 0) {
+      char.shrinkTimer = 0;
+      char.meshObj.root.scale.set(1.0, 1.0, 1.0);
+    }
   }
 
   if (char.slideCooldown > 0) {
@@ -1175,6 +1228,9 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
   if (char.onSlide) {
     speed = 28;
     if (char.isPlayer && soundRef) soundRef.playSlide();
+  } else if (char.shrinkTimer > 0) {
+    // ★ サンダーによるちびキャラ化中は大幅に鈍足化！
+    speed = 3.6;
   }
 
   let effectiveDirX = dirX;
@@ -1297,6 +1353,9 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
             char.magnetTimer = 6.5;
             if (char.meshObj.magnetAura) char.meshObj.magnetAura.visible = true;
             if (char.isPlayer && soundRef) soundRef.playMagnetCharge();
+          } else if (item.type === 'thunder') {
+            // ★ 新規追加：サンダー取得による落雷＆ちびキャラ化発動
+            fireThunderStrike(scene, char);
           }
         }
       }

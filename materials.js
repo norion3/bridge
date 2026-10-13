@@ -24,6 +24,7 @@ export const islandGeo = new THREE.CylinderGeometry(1, 1, 0.5, 36);
 export const itemCrystalGeo = new THREE.OctahedronGeometry(0.68, 0);       
 export const itemSpeedGeo = new THREE.TetrahedronGeometry(0.75, 1);        
 export const itemMagnetGeo = new THREE.DodecahedronGeometry(0.72, 0);      
+export const itemThunderGeo = new THREE.IcosahedronGeometry(0.70, 0);
 
 export const itemBeaconRingGeo = new THREE.RingGeometry(0.55, 0.95, 32);
 itemBeaconRingGeo.rotateX(-Math.PI / 2);
@@ -36,6 +37,16 @@ export const attackRingGeo = new THREE.TorusGeometry(0.85, 0.10, 8, 24);
 
 export const baseShockwaveGeo = new THREE.RingGeometry(0.3, 0.65, 32);
 baseShockwaveGeo.rotateX(-Math.PI / 2);
+
+// ロックオン照準リング
+export const targetReticleGeo = new THREE.RingGeometry(0.85, 1.15, 24);
+targetReticleGeo.rotateX(-Math.PI / 2);
+
+// 着弾時の十字スターバースト（立体的な破裂閃光）
+export const hitBurstGeo = new THREE.BoxGeometry(0.2, 4.2, 0.2);
+
+// 落雷閃光ピラー用ジオメトリ
+export const lightningPillarGeo = new THREE.CylinderGeometry(0.18, 0.32, 28, 8);
 
 // エレベーター展望リフト用ジオメトリ（邪魔なワイヤー類を完全撤去しホバーリフトへ）
 export const elevatorPlatformFloorGeo = new THREE.BoxGeometry(2.4, 0.16, 2.0);
@@ -343,6 +354,39 @@ export const sharedMats = {
     depthWrite: false
   }),
 
+  // ★ サンダー・ボルト用マテリアル
+  itemThunderCrystal: new THREE.MeshStandardMaterial({
+    color: ITEM_COLORS.THUNDER.hex,
+    emissive: ITEM_COLORS.THUNDER.emissive,
+    emissiveIntensity: 1.15,
+    roughness: 0.08,
+    metalness: 0.20
+  }),
+  itemThunderBeaconRing: new THREE.MeshBasicMaterial({
+    color: ITEM_COLORS.THUNDER.beaconHex,
+    transparent: true,
+    opacity: 0.85,
+    side: THREE.DoubleSide,
+    depthWrite: false
+  }),
+  lightningBolt: new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    transparent: true,
+    opacity: 0.95
+  }),
+  targetReticle: new THREE.MeshBasicMaterial({
+    color: 0xf43f5e,
+    transparent: true,
+    opacity: 0.90,
+    side: THREE.DoubleSide,
+    depthWrite: false
+  }),
+  hitBurst: new THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    transparent: true,
+    opacity: 0.95
+  }),
+
   elevatorDeckPlate: new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.25, metalness: 0.15 }),
   elevatorHandrailSteel: new THREE.MeshStandardMaterial({ color: 0xe2e8f0, roughness: 0.20, metalness: 0.75 }),
   elevatorFast: new THREE.MeshStandardMaterial({ color: 0x10b981, emissive: 0x059669, emissiveIntensity: 0.70, roughness: 0.2 }),
@@ -507,12 +551,16 @@ export const sharedGeometriesSet = new Set([
   itemCrystalGeo,
   itemSpeedGeo,
   itemMagnetGeo,
+  itemThunderGeo,
   itemBeaconRingGeo,
   speedStepRingGeo,
   puffCloudGeo,
   attackTrailSphereGeo,
   attackRingGeo,
   baseShockwaveGeo,
+  targetReticleGeo,
+  hitBurstGeo,
+  lightningPillarGeo,
   elevatorPlatformFloorGeo,
   elevatorHandrailPostGeo,
   elevatorHandrailBarGeo,

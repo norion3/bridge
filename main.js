@@ -387,20 +387,27 @@ export function animate(currentTime) {
       if (p.target) {
         p.targetPos.copy(p.target.pos);
         p.targetPos.y += 1.0;
+
+        // ★ 標的の足元にロックオン照準レティクルを追従 ＆ パルスアニメーション
+        if (p.reticle) {
+          p.reticle.position.set(p.target.pos.x, p.target.pos.y + 0.08, p.target.pos.z);
+          const pulseScale = 1.0 + Math.sin(timeSec * 22) * 0.25;
+          p.reticle.scale.set(pulseScale, pulseScale, pulseScale);
+        }
       }
 
       const t = Math.min(1.0, p.progress);
       _tempVec3A.lerpVectors(p.startPos, p.targetPos, t);
-      // 誰でも目で追える高く美しい山なり放物線弾道
-      _tempVec3A.y += Math.sin(t * Math.PI) * 7.5;
+      // ★ 誰でも目で追える高く美しい山なり放物線弾道（最大高度 +8.5m）
+      _tempVec3A.y += Math.sin(t * Math.PI) * 8.5;
       p.group.position.copy(_tempVec3A);
 
       if (p.crystal) {
-        p.crystal.rotation.x += dt * 22;
-        p.crystal.rotation.y += dt * 28;
+        p.crystal.rotation.x += dt * 24;
+        p.crystal.rotation.y += dt * 32;
       }
-      if (p.ring1) p.ring1.rotation.z += dt * 14;
-      if (p.ring2) p.ring2.rotation.y += dt * 18;
+      if (p.ring1) p.ring1.rotation.z += dt * 18;
+      if (p.ring2) p.ring2.rotation.y += dt * 22;
 
       if (p.history && p.history.length > 0) {
         const recycledVec = p.history.pop();
@@ -416,7 +423,7 @@ export function animate(currentTime) {
             item.mesh.position.copy(p.history[histIdx]);
             item.mesh.visible = true;
             const lifeFade = 1.0 - (j / p.trailSpheres.length);
-            item.material.opacity = (1.0 - t * 0.2) * lifeFade * 0.95;
+            item.material.opacity = (1.0 - t * 0.15) * lifeFade * 0.95;
           }
         }
       }
@@ -424,10 +431,16 @@ export function animate(currentTime) {
       if (p.progress >= 1.0) {
         sound.playAttackHit();
 
-        triggerLandingShockwave(p.targetPos.x, p.targetPos.y - 0.8, p.targetPos.z, 3.8, 0xf43f5e);
+        // 1. 強烈な二重衝撃波（赤紫の特大リング 4.5m）
+        triggerLandingShockwave(p.targetPos.x, p.targetPos.y - 0.8, p.targetPos.z, 4.5, 0xf43f5e);
+
+        // 2. 照準マーカーの非表示
+        if (p.reticle) p.reticle.visible = false;
 
         if (p.target) {
+          // 3. 敵キャラが物理的によろめく（一瞬のノックバック衝撃）
           p.target.stunTimer = 1.4;
+          p.target.meshObj.root.rotation.x = 0.55;
           scatterBricks(scene, p.target, 3);
 
           const drainCount = 4;
@@ -438,9 +451,9 @@ export function animate(currentTime) {
               db.active = true;
               db.targetChar = p.shooter;
               db.index = spawned;
-              db.delay = spawned * 0.09;
+              db.delay = spawned * 0.08;
               db.progress = 0;
-              db.duration = 0.85;
+              db.duration = 0.80;
 
               // 奪ったブロックの色を自分のチームカラー（青）に変化させてリソース獲得を直感化
               if (p.shooter && p.shooter.team && p.shooter.team.id === 'blue') {
@@ -454,13 +467,13 @@ export function animate(currentTime) {
               }
 
               const sOffset = _tempVec3B.set(
-                (Math.random() - 0.5) * 1.5,
-                1.0 + Math.random() * 1.0,
-                (Math.random() - 0.5) * 1.5
+                (Math.random() - 0.5) * 1.2,
+                1.2 + Math.random() * 0.8,
+                (Math.random() - 0.5) * 1.2
               );
               db.startPos.copy(p.target.pos).add(sOffset);
               db.mesh.position.copy(db.startPos);
-              db.mesh.scale.set(1.2, 1.2, 1.2);
+              db.mesh.scale.set(1.3, 1.3, 1.3);
               db.mesh.visible = true;
               spawned++;
             }

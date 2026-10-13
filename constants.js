@@ -153,5 +153,7 @@ export const FREEFALL_CONFIG = TRAPDOOR_CONFIG;
 export const ITEM_COLORS = {
   SPEED: { hex: 0xfde047, emissive: 0xeab308 },
   ATTACK: { hex: 0xf43f5e, emissive: 0xd946ef },
-  MAGNET: { hex: 0xc084fc, emissive: 0x9333ea, beaconHex: 0xd8b4fe }
+  MAGNET: { hex: 0xc084fc, emissive: 0x9333ea, beaconHex: 0xd8b4fe },
+  // ★ サンダー（エレクトリックイエロー＆シアン放電リング）
+  THUNDER: { hex: 0xfacc15, emissive: 0xffea00, beaconHex: 0x38bdf8 }
 };

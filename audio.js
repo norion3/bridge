@@ -224,6 +224,48 @@ export class SoundEngine {
     } catch (e) {}
   }
 
+  // ★ 新規追加：落雷インパクト音（放電クラッシュ＋重低音雷鳴）
+  playThunderStrike() {
+    if (this.muted || !this.ctx) return;
+    try {
+      const now = this.ctx.currentTime;
+      // 1. バチッ！という強烈な初期放電クラッシュ音
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(920, now);
+      osc.frequency.exponentialRampToValueAtTime(50, now + 0.30);
+      gain.gain.setValueAtTime(0.55, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.30);
+      osc.connect(gain);
+      gain.connect(this.masterGain);
+      this.autoDisconnect(osc, gain);
+      osc.start(now);
+      osc.stop(now + 0.31);
+
+      // 2. ドゴォォン！と空気を震わせる重低音落雷ノイズ
+      const noise = this.getNoiseBuffer();
+      if (noise) {
+        const src = this.ctx.createBufferSource();
+        src.buffer = noise;
+        const filter = this.ctx.createBiquadFilter();
+        filter.type = 'lowpass';
+        filter.frequency.setValueAtTime(650, now);
+        filter.frequency.exponentialRampToValueAtTime(70, now + 0.65);
+
+        const nGain = this.ctx.createGain();
+        nGain.gain.setValueAtTime(0.65, now);
+        nGain.gain.exponentialRampToValueAtTime(0.001, now + 0.70);
+
+        src.connect(filter);
+        filter.connect(nGain);
+        nGain.connect(this.masterGain);
+        src.start(now);
+        src.stop(now + 0.72);
+      }
+    } catch (e) {}
+  }
+
   playDrainCollect(pitchStep = 0) {
     if (this.muted || !this.ctx) return;
     try {

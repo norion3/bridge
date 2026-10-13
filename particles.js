@@ -8,7 +8,8 @@ import {
   itemCrystalGeo,
   attackRingGeo,
   attackTrailSphereGeo,
-  blockGeometry
+  blockGeometry,
+  targetReticleGeo
 } from './materials.js';
 
 export const PUFF_POOL_SIZE = 24;
@@ -110,21 +111,27 @@ export function initParticlePools(scene) {
       const projGroup = new THREE.Group();
       projGroup.visible = false;
 
-      // 飛翔クリスタル本体を 1.6 倍に拡大して遠距離でも明確に視認可能に
+      // 弾頭クリスタルを 1.9 倍に拡大し遠距離からの視認性を最大化
       const crystalMesh = new THREE.Mesh(itemCrystalGeo, sharedMats.itemAttackCrystal);
-      crystalMesh.scale.set(1.65, 1.65, 1.65);
+      crystalMesh.scale.set(1.9, 1.9, 1.9);
       crystalMesh.castShadow = true;
       projGroup.add(crystalMesh);
 
+      // コアの周囲を旋回する二重エネルギーリング
       const ring1 = new THREE.Mesh(attackRingGeo, sharedMats.attackRingMat);
-      ring1.scale.set(1.25, 1.25, 1.25);
+      ring1.scale.set(1.4, 1.4, 1.4);
       projGroup.add(ring1);
       const ring2 = new THREE.Mesh(attackRingGeo, sharedMats.attackRingMat);
-      ring2.scale.set(1.25, 1.25, 1.25);
+      ring2.scale.set(1.4, 1.4, 1.4);
       ring2.rotation.x = Math.PI / 2;
       projGroup.add(ring2);
 
       scene.add(projGroup);
+
+      // 標的の足元に展開するロックオン照準レティクル
+      const reticle = new THREE.Mesh(targetReticleGeo, sharedMats.targetReticle);
+      reticle.visible = false;
+      scene.add(reticle);
 
       const trailSpheres = [];
       for (let i = 0; i < NUM_TRAILS_PER_PROJ; i++) {
@@ -133,7 +140,7 @@ export function initParticlePools(scene) {
         const tMesh = new THREE.Mesh(attackTrailSphereGeo, tMat);
         tMesh.visible = false;
         // 太く鮮やかな彗星のようなフェードアウトスケール
-        const s = Math.max(0.28, (1.0 - (i / NUM_TRAILS_PER_PROJ)) * 1.35);
+        const s = Math.max(0.35, (1.0 - (i / NUM_TRAILS_PER_PROJ)) * 1.6);
         tMesh.scale.set(s, s, s);
         scene.add(tMesh);
         trailSpheres.push({
@@ -153,6 +160,7 @@ export function initParticlePools(scene) {
         crystal: crystalMesh,
         ring1: ring1,
         ring2: ring2,
+        reticle: reticle,
         trailSpheres: trailSpheres,
         history: history,
         startPos: new THREE.Vector3(),
@@ -222,6 +230,7 @@ export function resetParticlePools() {
     const p = projectilePool[i];
     p.active = false;
     p.group.visible = false;
+    if (p.reticle) p.reticle.visible = false;
     for (let j = 0; j < p.trailSpheres.length; j++) {
       p.trailSpheres[j].mesh.visible = false;
     }

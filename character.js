@@ -395,6 +395,7 @@ export function setupCharacters(scene, STAGES) {
     stackCount: 0,
     currentStage: 0,
     stunTimer: 0,
+    shrinkTimer: 0, // ★ サンダーによる縮小デバフタイマー
     invulnerableTimer: 0,
     walkCycle: 0,
     isJumping: false,
@@ -457,6 +458,7 @@ export function setupCharacters(scene, STAGES) {
     aiState: 'COLLECT',
     aiCapacityGoal: 15,
     stunTimer: 0,
+    shrinkTimer: 0, // ★ サンダーによる縮小デバフタイマー
     invulnerableTimer: 0,
     walkCycle: 0,
     isJumping: false,
@@ -525,6 +527,7 @@ export function setupCharacters(scene, STAGES) {
     aiState: 'COLLECT',
     aiCapacityGoal: 17,
     stunTimer: 0,
+    shrinkTimer: 0, // ★ サンダーによる縮小デバフタイマー
     invulnerableTimer: 0,
     walkCycle: 0,
     isJumping: false,
@@ -587,6 +590,8 @@ export function resetCharacters(STAGES) {
     c.stackCount = 0;
     refreshCharacterStackVisuals(c);
     c.stunTimer = 0;
+    c.shrinkTimer = 0; // ★ リセット時に縮小タイマーをクリア
+    c.meshObj.root.scale.set(1.0, 1.0, 1.0); // ★ スケールを通常サイズへ復帰
     c.invulnerableTimer = 0;
     c.currentStage = 0;
     c.isJumping = false;
