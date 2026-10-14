@@ -1423,19 +1423,29 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     checkGateCollisions(scene, char);
   }
 
-  // ★ 修正：AI空中孤立・スタック防止フェイルセーフ（正規通過していない未クリア時の次島ワープを撤廃し、現在島中央へ正常復帰）
-  // 橋の入口アプローチゾーンにいる場合は中央引き戻しを除外し、入口でのループスタックを防止
+  // ★ 修正：AI空中孤立・スタック防止フェイルセーフ
+  // フリーフォールのスカイウォーク（空中ガラス通路）歩行中、および橋の入口アプローチゾーンにいるAIは
+  // 島中央への強制引き戻しから完全に除外（無限ループスタックの根本根絶）
   if (!char.isPlayer && !char.onSlide && !char.onCurvedSlide && !char.onZipline && !char.onElevator && !char.isJumping && !char.onSkydive && !char.onTrapdoor) {
     const curStage = STAGES[char.currentStage];
     if (curStage) {
       const distFromIsland = Math.hypot(char.pos.x, char.pos.z - curStage.z);
       const stageBridges = bridgesByStage.get(char.currentStage) || [];
-      const isNearBridgeEntrance = stageBridges.some(b => {
-        const laneX = (b.isSkydive || b.isTrapdoor || b.isCurvedSlide || b.isZipline || b.isFreefall) ? 0 : LANES[b.laneIdx];
+
+      const isProtectedInTransit = stageBridges.some(b => {
+        if (b.isTrapdoor || b.isFreefall) {
+          // スカイウォーク区間：手前島アプローチ開始からハッチ開口部直前までを完全保護
+          const approachStart = b.approachStartZ !== undefined ? b.approachStartZ : (b.startZ + 16.0);
+          return Math.abs(char.pos.x) < 2.5 && (char.pos.z <= approachStart + 2.0 && char.pos.z >= b.startZ - 2.5);
+        }
+        if (b.isSkydive) {
+          return Math.abs(char.pos.x) < 2.5 && (char.pos.z <= b.startZ + 3.0 && char.pos.z >= b.startZ - 4.0);
+        }
+        const laneX = (b.isCurvedSlide || b.isZipline) ? 0 : LANES[b.laneIdx];
         return Math.abs(char.pos.x - laneX) < 2.2 && (char.pos.z <= b.startZ + 2.5 && char.pos.z >= b.endZ - 1.0);
       });
 
-      if (distFromIsland > curStage.r + 2.0 && char.lastPlankIdx < 0 && !isNearBridgeEntrance) {
+      if (distFromIsland > curStage.r + 2.0 && char.lastPlankIdx < 0 && !isProtectedInTransit) {
         char.pos.set(0, curStage.y, curStage.z);
         char.lastPlankIdx = -1;
       }

@@ -1129,15 +1129,22 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
 
       for (let i = 0; i < numPlanks; i++) {
         const progress = (i + 0.5) / numPlanks;
-        const pZ = startZ - progress * distZ;
+        let pZ = startZ - progress * distZ;
 
         // ★ 自然で美しい階段スロープ幾何学（完全均一勾配）：
-        // 異物（topDeckMesh）を完全撤去し、手前島リング上面（startY + 0.20m）から
-        // 奥の島リング上面（endY + 0.20m）へ最初から最後まで一切の歪み・不連続・段差割れのない
+        // 手前島リング上面（startY + 0.20m）から奥の島リング上面（endY + 0.20m）へ
         // 完全均一な1本のスロープ直線補間として計算（段板厚み0.65mのため中心は -0.125m オフセット）
         let pY = startY + progress * (endY - startY);
         if (isStairs) {
           pY = (startY - 0.125) + progress * (endY - startY);
+
+          // ★ 最上段（i === numPlanks - 1）の厳密な接地配置：
+          // オレンジリングの中心線直上へ確実に踏み込ませ（nextIslandZ + nextInsetZ - 0.25m）、
+          // 段板天面をオレンジリング頂点（endY + 0.20m）と完全面一（ツライチ：中心 pY = endY - 0.125m）に整合
+          if (i === numPlanks - 1) {
+            pZ = nextIslandZ + nextInsetZ - 0.25;
+            pY = endY - 0.125;
+          }
         }
 
         dummyPlankObj.position.set(LANES[laneIdx], pY, pZ);
