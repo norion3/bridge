@@ -195,6 +195,7 @@ export function setupControls() {
 
   if (zone) {
     zone.addEventListener('touchstart', e => {
+      if (e.cancelable) e.preventDefault();
       if (e.touches.length > 0) {
         onPointerStart(e.touches[0].clientX, e.touches[0].clientY, e.touches[0].identifier);
       }

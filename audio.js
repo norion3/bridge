@@ -898,7 +898,7 @@ export class SoundEngine {
         sawOsc.frequency.exponentialRampToValueAtTime(2200, now + 0.65);
         sawGain.gain.setValueAtTime(0.32, now);
         sawGain.gain.exponentialRampToValueAtTime(0.001, now + 0.65);
-        osc.connect(filter);
+        sawOsc.connect(filter);
         filter.connect(sawGain);
         sawGain.connect(this.masterGain);
         this.autoDisconnect(sawOsc, filter, sawGain);
