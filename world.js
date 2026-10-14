@@ -1048,50 +1048,54 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     };
 
     if (isSlide) {
-      // スライダースロープと仕切りパイプを前後に伸ばし（+3.2m）、端部がオレンジリングの上に堂々と跨がるように調整
-      const slopeLength = Math.hypot(distZ, endY - startY) + 3.2;
-      const slopeGeo = new THREE.BoxGeometry(3.6, 0.4, slopeLength);
+      // 各レーンごとの円周エッジ接合（スライダースロープ面）
+      const sStartZ = prevIslandZ - prevInsetZ;
+      const sEndZ = nextIslandZ + nextInsetZ;
+
+      const slopeOverlap = 0.45;
+      const slopeDistZ = (sStartZ - sEndZ) + slopeOverlap * 2;
+      const slopeDistY = endY - startY;
+      const slopeLength = Math.hypot(slopeDistZ, slopeDistY);
+      const slopeGeo = new THREE.BoxGeometry(3.6, 0.22, slopeLength);
       const slopeMesh = new THREE.Mesh(slopeGeo, sharedMats.slideSurface);
 
-      const midZ = (startZ + endZ) / 2;
-      const midY = (startY + endY) / 2;
-      slopeMesh.position.set(LANES[laneIdx], midY - 0.04, midZ);
-      const angleX = Math.atan2(endY - startY, startZ - endZ);
+      const midZ = (sStartZ + sEndZ) / 2;
+      const midY = (startY + endY) / 2 + 0.10;
+      slopeMesh.position.set(laneX, midY, midZ);
+      const angleX = Math.atan2(slopeDistY, slopeDistZ);
       slopeMesh.rotation.x = angleX;
       slopeMesh.receiveShadow = true;
       scene.add(slopeMesh);
       bridge.visualMeshes.push(slopeMesh);
 
-      // レール端部の高さを +0.38m に持ち上げ、オレンジリングの上に被せる
-      const railGeo = new THREE.CylinderGeometry(0.15, 0.15, slopeLength, 8);
-      railGeo.rotateX(Math.PI / 2);
-
+      // ★ 4本のパイプレール幾何学計算：各パイプの X 座標ごとに円周エッジを個別に厳密算出
+      // 両端の高さをリング頂点（+0.20m）を超える +0.28m に正確にマウントし、淵の下への潜り込みと食い込みを根絶
       if (laneIdx === 0) {
-        const leftRail = new THREE.Mesh(railGeo, sharedMats.slideRail);
-        leftRail.position.set(LANES[laneIdx] - 1.85, midY + 0.38, midZ);
-        leftRail.rotation.x = angleX;
-        scene.add(leftRail);
-        bridge.visualMeshes.push(leftRail);
+        const railXList = [-5.85, -2.0, 2.0, 5.85];
+        railXList.forEach(rX => {
+          const rPrevInset = Math.sqrt(Math.max(1, prevR * prevR - rX * rX));
+          const rNextInset = Math.sqrt(Math.max(1, nextR * nextR - rX * rX));
+          const rStartZ = prevIslandZ - rPrevInset;
+          const rEndZ = nextIslandZ + rNextInset;
 
-        const midRail1 = new THREE.Mesh(railGeo, sharedMats.slideRail);
-        midRail1.position.set(-2.0, midY + 0.38, midZ);
-        midRail1.rotation.x = angleX;
-        scene.add(midRail1);
-        bridge.visualMeshes.push(midRail1);
-      }
+          // 手前島のオレンジリング上面（startY + 0.28m）から奥の島のオレンジリング上面（endY + 0.28m）へ一直線に架橋
+          // 島の淵（リング）の上に 0.35m だけ自然に乗せる（島の内側への不自然な突き出しを防止）
+          const rOverlap = 0.35;
+          const p1 = new THREE.Vector3(rX, startY + 0.28, rStartZ + rOverlap);
+          const p2 = new THREE.Vector3(rX, endY + 0.28, rEndZ - rOverlap);
 
-      if (laneIdx === 2) {
-        const midRail2 = new THREE.Mesh(railGeo, sharedMats.slideRail);
-        midRail2.position.set(2.0, midY + 0.38, midZ);
-        midRail2.rotation.x = angleX;
-        scene.add(midRail2);
-        bridge.visualMeshes.push(midRail2);
+          const railVec = new THREE.Vector3().subVectors(p2, p1);
+          const railLen = railVec.length();
+          const railMid = new THREE.Vector3().addVectors(p1, p2).multiplyScalar(0.5);
 
-        const rightRail = new THREE.Mesh(railGeo, sharedMats.slideRail);
-        rightRail.position.set(LANES[laneIdx] + 1.85, midY + 0.38, midZ);
-        rightRail.rotation.x = angleX;
-        scene.add(rightRail);
-        bridge.visualMeshes.push(rightRail);
+          const railGeo = new THREE.CylinderGeometry(0.15, 0.15, railLen, 8);
+          const railMesh = new THREE.Mesh(railGeo, sharedMats.slideRail);
+          railMesh.position.copy(railMid);
+          // 始点 p1 から終点 p2 へ向かうベクトルへ誤差ゼロで正確に向ける
+          railMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), railVec.clone().normalize());
+          scene.add(railMesh);
+          bridge.visualMeshes.push(railMesh);
+        });
       }
 
       for (let i = 0; i < numPlanks; i++) {
