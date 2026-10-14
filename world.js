@@ -1127,6 +1127,23 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       solidMesh.castShadow = true;
       solidMesh.receiveShadow = true;
 
+      // ★ 階段（isStairs）時：接続部の3レーン統合エントリーデッキ（レーン間スリットのオレンジリング露出を完全遮蔽）
+      if (isStairs && laneIdx === 0) {
+        const deckWidth = 11.8;
+        const deckDepth = 2.0;
+        const deckThickness = 0.35;
+        const topDeckGeo = new THREE.BoxGeometry(deckWidth, deckThickness, deckDepth);
+        const topDeckMesh = new THREE.Mesh(topDeckGeo, sharedMats.solidPlank);
+        // 奥の島の淵（オレンジリング頂点 endY + 0.20m）を上から包み隠す高さ
+        const deckZ = nextIslandZ + nextR - deckDepth * 0.40;
+        const deckY = endY + 0.08; // 天面: endY + 0.08 + 0.175 = endY + 0.255m (リング頂点 +0.20m を確実に被覆)
+        topDeckMesh.position.set(0, deckY, deckZ);
+        topDeckMesh.receiveShadow = true;
+        topDeckMesh.castShadow = true;
+        scene.add(topDeckMesh);
+        bridge.visualMeshes.push(topDeckMesh);
+      }
+
       for (let i = 0; i < numPlanks; i++) {
         const progress = (i + 0.5) / numPlanks;
         let pZ = startZ - progress * distZ;
@@ -1136,14 +1153,16 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
           // ★ 階段全レーンのオレンジリング潜り込み解消：
           // 終端数段にかけてオレンジリングの頂点（endY + 0.20m）を確実に跨ぎ隠すリフトアップ補正
           const liftT = Math.max(0, (progress - 0.70) / 0.30);
-          const stairsLift = Math.pow(liftT, 1.4) * 0.22;
+          const stairsLift = Math.pow(liftT, 1.3) * 0.26;
           pY += stairsLift;
 
-          // 最上段（i = numPlanks - 1）はオレンジリング直上（-0.35m）に配置し、
-          // 段板天面を endY + 0.28m（中心 pY = endY - 0.045m）に固定してリングを100%上から踏み敷く
+          // 終端2段（最上段および2段目）の標高とZ位置を精密アライメント
           if (i === numPlanks - 1) {
             pZ = nextIslandZ + nextInsetZ - 0.35;
             pY = endY - 0.045; // 天面: endY - 0.045 + 0.325 = endY + 0.28m (リング頂点 +0.20m を +8cm 上回る)
+          } else if (i === numPlanks - 2) {
+            // 円弧の張り出しと交差する2段目も、リング頂点(+0.20m)を確実に超える天面高さ(+0.24m)へリフト
+            pY = Math.max(pY, endY - 0.085); // 天面: endY - 0.085 + 0.325 = endY + 0.24m
           }
         }
 

@@ -1,4 +1,4 @@
-// Bot AI自律思考ロジック・レーン評価・スカイダイブ＆ドロップタワー進入・空中姿勢同期・自然な自律追走・スタック回避・進入アライメント誘導
+// Bot AI自律思考ロジック・レーン評価・スカイダイブ＆ドロップタワー進入・空中姿勢同期・自然な自律追走・スタック回避・進入アライメント誘導・動的ラバーバンド＆ワンストップ走破
 import {
   LANES,
   ELEVATOR_CONFIG,
@@ -106,9 +106,27 @@ export function avoidGateObstacles(bot, dirX, dirZ) {
 }
 
 export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStepRing) {
-  // ★ 自然なキャッチアップ走破：プレイヤーより後ろのステージにいる場合、ワープではなく走行・走破速度を1.25倍に自然ブースト
-  const isLaggingBehind = (player && bot.currentStage < player.currentStage);
-  const effectiveDt = isLaggingBehind ? dt * 1.25 : dt;
+  // ★ 動的ラバーバンド（ゴム紐）加速：プレイヤーとの距離（ステージ差）に応じて自然に走破速度をスケールアップ
+  const stageDiff = (player && bot.currentStage < player.currentStage) ? (player.currentStage - bot.currentStage) : 0;
+  const isLaggingBehind = stageDiff > 0;
+  let speedMultiplier = 1.0;
+  if (stageDiff === 1) {
+    speedMultiplier = 1.35; // 1ステージ遅れ：1.35倍速
+  } else if (stageDiff >= 2) {
+    speedMultiplier = 1.65; // 2ステージ以上遅れ：1.65倍速
+  }
+  const effectiveDt = dt * speedMultiplier;
+
+  // ★ 画面外（2ステージ以上後方）自律クリア処理：床でウロウロ停滞させず、迅速に自力で次の島へ渡る
+  if (stageDiff >= 2) {
+    bot.offscreenCollectTimer = (bot.offscreenCollectTimer || 0) + effectiveDt;
+    if (bot.offscreenCollectTimer >= 0.40) {
+      bot.offscreenCollectTimer = 0;
+      if (bot.aiState === 'COLLECT' && bot.stackCount < 18) {
+        addBrickToCharacter(bot, bot.team, 2);
+      }
+    }
+  }
 
   if (
     bot.onSkydive ||
@@ -156,19 +174,16 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
   if (bot.stuckCheckTimer >= 0.30) {
     const movedDist = Math.hypot(bot.pos.x - bot.lastPosCheck.x, bot.pos.z - bot.lastPosCheck.z);
     if (movedDist < 0.18) {
-      // 0.3秒間でほぼ前進できていない（壁・柱・外周エッジに引っかかりデッドロック）
       bot.unstuckTimer = 0.35;
       const curDirX = bot.aiDirX || 0;
       const curDirZ = bot.aiDirZ || -1;
       const sideSign = (Math.random() < 0.5 ? 1 : -1);
-      // 側方・斜め後方へ迂回脱出するステップベクトルを生成
       bot.unstuckDirX = -curDirZ * sideSign * 0.85 - curDirX * 0.35;
       bot.unstuckDirZ = curDirX * sideSign * 0.85 - curDirZ * 0.35;
       const uMag = Math.hypot(bot.unstuckDirX, bot.unstuckDirZ) || 1;
       bot.unstuckDirX /= uMag;
       bot.unstuckDirZ /= uMag;
 
-      // ターゲットをリセットして停滞原因を完全解除
       bot.targetBlock = null;
       bot.searchCooldown = 0;
     }
@@ -220,9 +235,24 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
   }
 
   if (bot.aiState === 'COLLECT') {
-    // 遅れている時はブロックを集めすぎず、迅速に階段へ向かえるようゴール数を効率化
-    const effectiveGoal = isLaggingBehind ? Math.min(bot.aiCapacityGoal, 12) : bot.aiCapacityGoal;
+    // ★ 改善：階段残段数の算出 ＆ ワンストップ走破（階段途中からの往復引き返しを完全根絶）
+    let neededForBridge = isVerticalNext ? 22 : 18;
+    const evalLane = (bot.targetLane !== undefined) ? bot.targetLane : 1;
+    const targetBridge = stageBridges.find(b =>
+      !b.isCurvedSlide && !b.isZipline && !b.isElevator && !b.isSkydive && !b.isTrapdoor && !b.isFreefall && b.laneIdx === evalLane
+    );
+    if (targetBridge && targetBridge.planks) {
+      let unbuiltCount = 0;
+      for (let pIdx = 0; pIdx < targetBridge.planks.length; pIdx++) {
+        if (targetBridge.planks[pIdx].teamId !== bot.team.id) unbuiltCount++;
+      }
+      neededForBridge = Math.min(24, Math.max(1, unbuiltCount));
+    }
+
+    // 遅れている時は中途半端な12個で階段へ向かわず、階段を架け切れる本数を目標にして一気に走破
+    const effectiveGoal = isLaggingBehind ? neededForBridge : bot.aiCapacityGoal;
     const threshold = isVerticalNext ? Math.max(18, effectiveGoal) : effectiveGoal;
+
     if (bot.stackCount >= threshold) {
       bot.aiState = 'BUILD';
       bot.targetLane = evaluateBestLaneForBot(bot);
@@ -251,7 +281,8 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
       !bot.targetBlock.active ||
       bot.targetBlock.stageIdx !== bot.currentStage
     ) {
-      bot.searchCooldown = isLaggingBehind ? 0.06 : 0.12;
+      // 距離に応じた探索即時化（2ステージ以上遅れは0.03秒、1ステージ遅れは0.06秒）
+      bot.searchCooldown = (stageDiff >= 2) ? 0.03 : (isLaggingBehind ? 0.06 : 0.12);
       let best = null, minDistSq = 999999;
 
       for (let i = 0; i < floorItems.length; i++) {
@@ -356,13 +387,10 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
         targetX = LANES[bot.elevatorChoice];
       }
 
-      // ドロップタワーの場合はハッチ中心（b.startZ）へ向かって直進
       const targetZ = b.isTrapdoor ? (b.startZ - 0.2) : (bot.pos.z < b.startZ ? bot.pos.z - 2 : b.startZ - 0.5);
       let dx = targetX - bot.pos.x;
       const dz = targetZ - bot.pos.z;
 
-      // ★ 特殊ギミック＆階段進入アライメント誘導：
-      // 島のエッジ（入口手前）に近づいたら、X方向のズレを優先的に補正して中央軸から真っ直ぐ進入
       const distToCenterAxis = Math.abs(targetX - bot.pos.x);
       if (bot.pos.z < stage.z - stage.r * 0.35 && distToCenterAxis > 0.35) {
         dx = (targetX - bot.pos.x) * 1.8;
