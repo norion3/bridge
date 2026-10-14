@@ -1031,9 +1031,10 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     const prevInsetZ = Math.sqrt(Math.max(1, prevR * prevR - laneX * laneX));
     const nextInsetZ = Math.sqrt(Math.max(1, nextR * nextR - laneX * laneX));
 
-    // 階段の始点を手前島エッジに密着、終点 endZ をステージ外周エッジ（オレンジリング真上：-0.4m）に接合
+    // ★ 左右レーン（laneIdx !== 1）は円弧感を保ちつつリングを隠すため約40cm手前に設定
+    const stairsEndOffset = isStairs ? (laneIdx === 1 ? -0.4 : +0.03) : -1.2;
     const startZ = prevIslandZ - prevInsetZ + (isStairs ? 0.3 : 1.2);
-    const endZ = nextIslandZ + nextInsetZ - (isStairs ? 0.4 : 1.2);
+    const endZ = nextIslandZ + nextInsetZ + stairsEndOffset;
     const distZ = startZ - endZ;
 
     const dist3D = Math.hypot(distZ, endY - startY);
@@ -1134,11 +1135,10 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
         if (isStairs) {
           pY = (startY - 0.125) + progress * (endY - startY);
 
-          // 最上段（i === numPlanks - 1）の厳密な接地配置：
-          // オレンジリングの中心線直上へ確実に踏み込ませ（nextIslandZ + nextInsetZ - 0.25m）、
-          // 段板天面をオレンジリング頂点（endY + 0.20m）と完全面一（ツライチ：中心 pY = endY - 0.125m）に整合
+          // 最上段：中央は既存の美しさを維持、左右は+43cm手前に出してリングを完全に隠す
           if (i === numPlanks - 1) {
-            pZ = nextIslandZ + nextInsetZ - 0.25;
+            const topOffset = (laneIdx === 1) ? -0.25 : +0.18;
+            pZ = nextIslandZ + nextInsetZ + topOffset;
             pY = endY - 0.125;
           }
         }
