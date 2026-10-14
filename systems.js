@@ -670,14 +670,25 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
     return;
   }
 
+  // ★ 修正：AIが橋・ギミック（階段全3レーン・エレベーター・スライダー等）に進入する際、
+  // 島の円周外周クランプ（safeR）で押し戻されて進入できなくなる現象を完全解消
   if (!char.isPlayer) {
     const curStage = STAGES[char.currentStage];
     if (curStage) {
       const stageBridges = bridgesByStage.get(char.currentStage) || [];
-      const hasForwardAttraction = stageBridges.some(b => b.isTrapdoor || b.isSkydive || b.isSlide || b.isCurvedSlide);
-      const isApproachingCenterExit = hasForwardAttraction && Math.abs(nextX) < 2.0 && (nextZ < curStage.z);
 
-      if (!isApproachingCenterExit) {
+      // 前方のいずれかの橋・ギミックのレーン幅に合致しており、かつ前進しているか判定
+      const isApproachingAnyBridge = (nextZ < curStage.z) && stageBridges.some(b => {
+        if (b.isSkydive || b.isTrapdoor || b.isCurvedSlide || b.isZipline || b.isFreefall) {
+          return Math.abs(nextX) < 2.0;
+        } else if (b.isElevator) {
+          return ELEVATOR_CONFIG.LANES.some(cfg => Math.abs(nextX - LANES[cfg.laneIdx]) < 1.7);
+        } else {
+          return Math.abs(nextX - LANES[b.laneIdx]) < 1.9;
+        }
+      });
+
+      if (!isApproachingAnyBridge) {
         const dx = nextX;
         const dz = nextZ - curStage.z;
         const dist = Math.hypot(dx, dz);
@@ -690,6 +701,7 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
           char.onSlide = false;
         }
       } else {
+        // 橋・ギミックへのアプローチ時は外周エッジを踏み越えて橋の1枚目へそのまま直進
         char.pos.x = nextX;
         char.pos.z = nextZ;
         char.pos.y = curStage.y;
@@ -1412,11 +1424,18 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
   }
 
   // ★ 修正：AI空中孤立・スタック防止フェイルセーフ（正規通過していない未クリア時の次島ワープを撤廃し、現在島中央へ正常復帰）
+  // 橋の入口アプローチゾーンにいる場合は中央引き戻しを除外し、入口でのループスタックを防止
   if (!char.isPlayer && !char.onSlide && !char.onCurvedSlide && !char.onZipline && !char.onElevator && !char.isJumping && !char.onSkydive && !char.onTrapdoor) {
     const curStage = STAGES[char.currentStage];
     if (curStage) {
       const distFromIsland = Math.hypot(char.pos.x, char.pos.z - curStage.z);
-      if (distFromIsland > curStage.r + 2.0 && char.lastPlankIdx < 0) {
+      const stageBridges = bridgesByStage.get(char.currentStage) || [];
+      const isNearBridgeEntrance = stageBridges.some(b => {
+        const laneX = (b.isSkydive || b.isTrapdoor || b.isCurvedSlide || b.isZipline || b.isFreefall) ? 0 : LANES[b.laneIdx];
+        return Math.abs(char.pos.x - laneX) < 2.2 && (char.pos.z <= b.startZ + 2.5 && char.pos.z >= b.endZ - 1.0);
+      });
+
+      if (distFromIsland > curStage.r + 2.0 && char.lastPlankIdx < 0 && !isNearBridgeEntrance) {
         char.pos.set(0, curStage.y, curStage.z);
         char.lastPlankIdx = -1;
       }

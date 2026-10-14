@@ -1,4 +1,4 @@
-// Bot AI自律思考ロジック・レーン評価・スカイダイブ＆ドロップタワー進入・空中姿勢同期
+// Bot AI自律思考ロジック・レーン評価・スカイダイブ＆ドロップタワー進入・空中姿勢同期・自然な自律追走・スタック回避・進入アライメント誘導
 import {
   LANES,
   ELEVATOR_CONFIG,
@@ -106,6 +106,10 @@ export function avoidGateObstacles(bot, dirX, dirZ) {
 }
 
 export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStepRing) {
+  // ★ 自然なキャッチアップ走破：プレイヤーより後ろのステージにいる場合、ワープではなく走行・走破速度を1.25倍に自然ブースト
+  const isLaggingBehind = (player && bot.currentStage < player.currentStage);
+  const effectiveDt = isLaggingBehind ? dt * 1.25 : dt;
+
   if (
     bot.onSkydive ||
     bot.onTrapdoor ||
@@ -131,28 +135,45 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
       steerX = -Math.sign(currentX) * 0.3;
     }
 
-    updateSingleCharacter(scene, bot, steerX, -1.0, dt, spawnPuffCloud, spawnSpeedStepRing);
+    updateSingleCharacter(scene, bot, steerX, -1.0, effectiveDt, spawnPuffCloud, spawnSpeedStepRing);
     return;
   }
 
-  if (player && bot.currentStage < player.currentStage - 1) {
-    bot.currentStage = player.currentStage;
-    const stage = STAGES[bot.currentStage];
-    if (stage) {
-      bot.pos.x = (Math.random() - 0.5) * 6;
-      bot.pos.z = stage.z + stage.r * 0.85;
-      bot.pos.y = stage.y;
-      bot.meshObj.root.position.copy(bot.pos);
-      bot.invulnerableTimer = 1.0;
-      bot.aiState = 'COLLECT';
-      bot.aiCapacityGoal = 14 + Math.floor(Math.random() * 5);
-      bot.lastPlankIdx = -1;
-      bot.targetBlock = null;
-      bot.elevatorChoice = undefined;
-      bot.searchCooldown = (bot.team.id === 'red') ? 0 : 0.06;
-      while (bot.stackCount < 4) { addBrickToCharacter(bot, bot.team); }
-    }
+  // ★ Unstuck回避ステップ実行中の処理（障害物や引っかかりから即時脱出）
+  if (bot.unstuckTimer > 0) {
+    bot.unstuckTimer -= effectiveDt;
+    updateSingleCharacter(scene, bot, bot.unstuckDirX, bot.unstuckDirZ, effectiveDt, spawnPuffCloud, spawnSpeedStepRing);
     return;
+  }
+
+  // ★ AIスタック（棒立ち・停止）検知ルーチン（0.3秒で0.18m未満しか進めていない場合に発動）
+  if (!bot.lastPosCheck) {
+    bot.lastPosCheck = new THREE.Vector3().copy(bot.pos);
+    bot.stuckCheckTimer = 0;
+  }
+
+  bot.stuckCheckTimer = (bot.stuckCheckTimer || 0) + effectiveDt;
+  if (bot.stuckCheckTimer >= 0.30) {
+    const movedDist = Math.hypot(bot.pos.x - bot.lastPosCheck.x, bot.pos.z - bot.lastPosCheck.z);
+    if (movedDist < 0.18) {
+      // 0.3秒間でほぼ前進できていない（壁・柱・外周エッジに引っかかりデッドロック）
+      bot.unstuckTimer = 0.35;
+      const curDirX = bot.aiDirX || 0;
+      const curDirZ = bot.aiDirZ || -1;
+      const sideSign = (Math.random() < 0.5 ? 1 : -1);
+      // 側方・斜め後方へ迂回脱出するステップベクトルを生成
+      bot.unstuckDirX = -curDirZ * sideSign * 0.85 - curDirX * 0.35;
+      bot.unstuckDirZ = curDirX * sideSign * 0.85 - curDirZ * 0.35;
+      const uMag = Math.hypot(bot.unstuckDirX, bot.unstuckDirZ) || 1;
+      bot.unstuckDirX /= uMag;
+      bot.unstuckDirZ /= uMag;
+
+      // ターゲットをリセットして停滞原因を完全解除
+      bot.targetBlock = null;
+      bot.searchCooldown = 0;
+    }
+    bot.lastPosCheck.copy(bot.pos);
+    bot.stuckCheckTimer = 0;
   }
 
   const stage = STAGES[bot.currentStage];
@@ -199,7 +220,9 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
   }
 
   if (bot.aiState === 'COLLECT') {
-    const threshold = isVerticalNext ? Math.max(18, bot.aiCapacityGoal) : bot.aiCapacityGoal;
+    // 遅れている時はブロックを集めすぎず、迅速に階段へ向かえるようゴール数を効率化
+    const effectiveGoal = isLaggingBehind ? Math.min(bot.aiCapacityGoal, 12) : bot.aiCapacityGoal;
+    const threshold = isVerticalNext ? Math.max(18, effectiveGoal) : effectiveGoal;
     if (bot.stackCount >= threshold) {
       bot.aiState = 'BUILD';
       bot.targetLane = evaluateBestLaneForBot(bot);
@@ -211,24 +234,24 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
     if (activeBridge && bot.pos.z < activeBridge.startZ) {
       bot.aiDirX = 0;
       bot.aiDirZ = 1.0;
-      updateSingleCharacter(scene, bot, 0, 1.0, dt, spawnPuffCloud, spawnSpeedStepRing);
+      updateSingleCharacter(scene, bot, 0, 1.0, effectiveDt, spawnPuffCloud, spawnSpeedStepRing);
       return;
     }
     if (bot.pos.z > stage.z + stage.r * 0.85) {
-      updateSingleCharacter(scene, bot, 0, -1, dt, spawnPuffCloud, spawnSpeedStepRing);
+      updateSingleCharacter(scene, bot, 0, -1, effectiveDt, spawnPuffCloud, spawnSpeedStepRing);
       return;
     }
 
     const stageBlocks = getFloorBlocksForStage(bot.currentStage);
 
-    bot.searchCooldown = (bot.searchCooldown || 0) - dt;
+    bot.searchCooldown = (bot.searchCooldown || 0) - effectiveDt;
     if (
       bot.searchCooldown <= 0 ||
       !bot.targetBlock ||
       !bot.targetBlock.active ||
       bot.targetBlock.stageIdx !== bot.currentStage
     ) {
-      bot.searchCooldown = 0.12;
+      bot.searchCooldown = isLaggingBehind ? 0.06 : 0.12;
       let best = null, minDistSq = 999999;
 
       for (let i = 0; i < floorItems.length; i++) {
@@ -277,7 +300,7 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
     bot.aiDirZ = THREE.MathUtils.lerp(bot.aiDirZ || -1, steer.z, 0.16);
     const dirMagSq = bot.aiDirX * bot.aiDirX + bot.aiDirZ * bot.aiDirZ;
     const dirMag = dirMagSq > 0.0001 ? Math.sqrt(dirMagSq) : 1;
-    updateSingleCharacter(scene, bot, bot.aiDirX / dirMag, bot.aiDirZ / dirMag, dt, spawnPuffCloud, spawnSpeedStepRing);
+    updateSingleCharacter(scene, bot, bot.aiDirX / dirMag, bot.aiDirZ / dirMag, effectiveDt, spawnPuffCloud, spawnSpeedStepRing);
 
   } else if (bot.aiState === 'BUILD') {
     const isSpecialGimmickAhead = stageBridges.some(
@@ -335,17 +358,26 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
 
       // ドロップタワーの場合はハッチ中心（b.startZ）へ向かって直進
       const targetZ = b.isTrapdoor ? (b.startZ - 0.2) : (bot.pos.z < b.startZ ? bot.pos.z - 2 : b.startZ - 0.5);
-      const dx = targetX - bot.pos.x, dz = targetZ - bot.pos.z;
+      let dx = targetX - bot.pos.x;
+      const dz = targetZ - bot.pos.z;
+
+      // ★ 特殊ギミック＆階段進入アライメント誘導：
+      // 島のエッジ（入口手前）に近づいたら、X方向のズレを優先的に補正して中央軸から真っ直ぐ進入
+      const distToCenterAxis = Math.abs(targetX - bot.pos.x);
+      if (bot.pos.z < stage.z - stage.r * 0.35 && distToCenterAxis > 0.35) {
+        dx = (targetX - bot.pos.x) * 1.8;
+      }
+
       const lenSq = dx * dx + dz * dz;
       const len = lenSq > 0.0001 ? Math.sqrt(lenSq) : 1;
 
       const oldZ = bot.pos.z;
       const steer = avoidGateObstacles(bot, dx / len, dz / len);
-      bot.aiDirX = THREE.MathUtils.lerp(bot.aiDirX || 0, steer.x, 0.22);
-      bot.aiDirZ = THREE.MathUtils.lerp(bot.aiDirZ || -1, steer.z, 0.22);
+      bot.aiDirX = THREE.MathUtils.lerp(bot.aiDirX || 0, steer.x, 0.25);
+      bot.aiDirZ = THREE.MathUtils.lerp(bot.aiDirZ || -1, steer.z, 0.25);
       const dirMagSq = bot.aiDirX * bot.aiDirX + bot.aiDirZ * bot.aiDirZ;
       const dirMag = dirMagSq > 0.0001 ? Math.sqrt(dirMagSq) : 1;
-      updateSingleCharacter(scene, bot, bot.aiDirX / dirMag, bot.aiDirZ / dirMag, dt, spawnPuffCloud, spawnSpeedStepRing);
+      updateSingleCharacter(scene, bot, bot.aiDirX / dirMag, bot.aiDirZ / dirMag, effectiveDt, spawnPuffCloud, spawnSpeedStepRing);
 
       if (bot.aiState !== 'COLLECT' && Math.abs(bot.pos.z - oldZ) < 0.0005) {
         if (
