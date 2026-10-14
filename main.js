@@ -140,6 +140,31 @@ export function setupControls() {
   const zone = document.getElementById('touch-control-layer');
   let touchId = null, startX = 0, startY = 0;
 
+  // ★ iOS (iPhone / Safari / WebView) 特有ジェスチャー・デフォルト動作の完全ガード
+  const preventDefaultHandler = (e) => {
+    if (e.cancelable) e.preventDefault();
+  };
+
+  // 1. iOS Safari 特有の 2本指ピンチズームイベントを根本遮断
+  document.addEventListener('gesturestart', preventDefaultHandler, { passive: false });
+  document.addEventListener('gesturechange', preventDefaultHandler, { passive: false });
+  document.addEventListener('gestureend', preventDefaultHandler, { passive: false });
+
+  // 2. 画面長押し時のコンテキストメニュー（コピー・共有・虫眼鏡）を完全抑止
+  window.addEventListener('contextmenu', preventDefaultHandler, { passive: false });
+
+  // 3. 300ms以内の連続タップによる「ダブルタップ自動ズーム」を数学的ブロック
+  let lastTouchEndTime = 0;
+  document.addEventListener('touchend', (e) => {
+    const now = Date.now();
+    if (now - lastTouchEndTime <= 300) {
+      if (!e.target.closest('button')) {
+        if (e.cancelable) e.preventDefault();
+      }
+    }
+    lastTouchEndTime = now;
+  }, { passive: false });
+
   function onPointerStart(x, y, id) {
     sound.init();
     touchId = id;

@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>Bridge Race 3D</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- Three.js r128 -->
@@ -14,12 +14,21 @@
       width: 100%;
       height: 100%;
       overflow: hidden;
-      user-select: none;
-      -webkit-user-select: none;
-      touch-action: none;
       font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       background: #7dd3fc;
     }
+
+    /* iOS/WebView特有の長押し、拡大、テキスト選択、ラバーバンドを完全マスク */
+    html, body, #canvas-container, #touch-control-layer {
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-touch-callout: none;
+      -webkit-tap-highlight-color: transparent;
+      overscroll-behavior: none;
+      -webkit-overflow-scrolling: auto;
+      touch-action: none;
+    }
+
     #canvas-container {
       position: absolute;
       inset: 0;
@@ -31,7 +40,6 @@
       position: absolute;
       inset: 0;
       z-index: 10;
-      touch-action: none;
     }
     .hidden {
       display: none !important;
