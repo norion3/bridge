@@ -1016,6 +1016,8 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
   const isSlide = (type === 'slide');
   const isVertical = (type === 'vertical');
   const isStairs = (!isJump && !isSlide && !isVertical);
+  // ★ 通常階段（isStairs）と垂直壁登り階段（isVertical）の両方を段板架橋ステップとして統合
+  const isStepBridge = (isStairs || isVertical);
 
   let jumpTiers = [];
   if (isJump) {
@@ -1031,9 +1033,9 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     const prevInsetZ = Math.sqrt(Math.max(1, prevR * prevR - laneX * laneX));
     const nextInsetZ = Math.sqrt(Math.max(1, nextR * nextR - laneX * laneX));
 
-    // ★ 左右レーン（laneIdx !== 1）は円弧感を保ちつつリングを隠すため約40cm手前に設定
-    const stairsEndOffset = isStairs ? (laneIdx === 1 ? -0.4 : +0.03) : -1.2;
-    const startZ = prevIslandZ - prevInsetZ + (isStairs ? 0.3 : 1.2);
+    // ★ 左右レーン（laneIdx !== 1）は円弧感を保ちつつリングを隠すため約40cm手前に設定（通常階段・垂直階段共通）
+    const stairsEndOffset = isStepBridge ? (laneIdx === 1 ? -0.4 : +0.03) : -1.2;
+    const startZ = prevIslandZ - prevInsetZ + (isStepBridge ? 0.3 : 1.2);
     const endZ = nextIslandZ + nextInsetZ + stairsEndOffset;
     const distZ = startZ - endZ;
 
@@ -1118,6 +1120,9 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       });
     } else {
       const geoToUse = isVertical ? verticalPlankGeo : plankGeo;
+      // ★ 垂直段板（厚み1.25m）と通常段板（厚み0.65m）それぞれの天面がリング頂点（+0.20m）とツライチになる中心オフセット
+      const plankH = isVertical ? 1.25 : 0.65;
+      const plankCenterOffsetY = 0.20 - plankH / 2; // isVertical: -0.425m, isStairs: -0.125m
 
       const ghostMesh = new THREE.InstancedMesh(geoToUse, sharedMats.ghostPlank, numPlanks);
       ghostMesh.receiveShadow = true;
@@ -1132,14 +1137,14 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
 
         // 自然で美しい階段スロープ幾何学（完全均一勾配）
         let pY = startY + progress * (endY - startY);
-        if (isStairs) {
-          pY = (startY - 0.125) + progress * (endY - startY);
+        if (isStepBridge) {
+          pY = (startY + plankCenterOffsetY) + progress * (endY - startY);
 
           // 最上段：中央は既存の美しさを維持、左右は+43cm手前に出してリングを完全に隠す
           if (i === numPlanks - 1) {
             const topOffset = (laneIdx === 1) ? -0.25 : +0.18;
             pZ = nextIslandZ + nextInsetZ + topOffset;
-            pY = endY - 0.125;
+            pY = endY + plankCenterOffsetY;
           }
         }
 
