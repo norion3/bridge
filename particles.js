@@ -17,7 +17,7 @@ export const RING_POOL_SIZE = 18;
 export const SHOCKWAVE_POOL_SIZE = 16;
 export const PROJECTILE_POOL_SIZE = 3;
 export const NUM_TRAILS_PER_PROJ = 18; // トレイル球体数を増やして途切れのない滑らかな光の帯へ
-export const DRAIN_POOL_SIZE = 8;
+export const DRAIN_POOL_SIZE = 16; // ★ アタック弾とサンダー弾の同時ドレインに対応するため16に拡張
 export const FLOOR_BLOCK_POOL_SIZE = 400;
 
 // ★ サンダー専用有弾道プール規格（高輝度イエロー雷球・二重放電リング・18連トレイル・黄色照準レティクル）

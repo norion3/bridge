@@ -492,7 +492,7 @@ export function animate(currentTime) {
       }
     }
 
-    // ★ サンダー専用有弾道更新ループ（アタック弾と同等の 1.35秒 ＆ 山なり放物線 +8.5m ＆ 二重リング自転 ＆ 照準パルス連動）
+    // ★ サンダー専用有弾道更新ループ（アタック弾と同等の 1.35秒 ＆ 山なり放物線 +8.5m ＆ 二重リング自転 ＆ 照準パルス連動 ＆ ドレインブロック連動）
     for (let i = 0; i < thunderProjectilePool.length; i++) {
       const tp = thunderProjectilePool[i];
       if (!tp.active) continue;
@@ -543,7 +543,7 @@ export function animate(currentTime) {
         }
       }
 
-      // ★ 直撃の瞬間：照準消去 ＆ 落雷柱 ＆ ちびキャラ化発動
+      // ★ 直撃の瞬間：照準消去 ＆ 落雷柱 ＆ ちびキャラ化 ＆ ブロック強奪（ドレイン）連動
       if (tp.progress >= 1.0) {
         sound.playThunderStrike();
 
@@ -567,6 +567,43 @@ export function animate(currentTime) {
           tp.target.stunTimer = 1.0;
           tp.target.meshObj.root.rotation.x = 0.45;
           scatterBricks(scene, tp.target, 2);
+
+          // 5. アタック弾と同等のブロック強奪（相手から4個のブロックが自分へ飛来）
+          const drainCount = 4;
+          let spawned = 0;
+          for (let d = 0; d < drainBlockPool.length && spawned < drainCount; d++) {
+            const db = drainBlockPool[d];
+            if (!db.active) {
+              db.active = true;
+              db.targetChar = tp.shooter;
+              db.index = spawned;
+              db.delay = spawned * 0.08;
+              db.progress = 0;
+              db.duration = 0.80;
+
+              // 奪ったブロックの色を自分のチームカラー（青）に変化させてリソース獲得を直感化
+              if (tp.shooter && tp.shooter.team && tp.shooter.team.id === 'blue') {
+                db.mesh.material = sharedMats.blockBlue;
+              } else if (tp.shooter && tp.shooter.team && tp.shooter.team.id === 'red') {
+                db.mesh.material = sharedMats.blockRed;
+              } else if (tp.shooter && tp.shooter.team && tp.shooter.team.id === 'yellow') {
+                db.mesh.material = sharedMats.blockYellow;
+              } else {
+                db.mesh.material = sharedMats.blockNeutral;
+              }
+
+              const sOffset = _tempVec3B.set(
+                (Math.random() - 0.5) * 1.2,
+                1.2 + Math.random() * 0.8,
+                (Math.random() - 0.5) * 1.2
+              );
+              db.startPos.copy(tp.target.pos).add(sOffset);
+              db.mesh.position.copy(db.startPos);
+              db.mesh.scale.set(1.3, 1.3, 1.3);
+              db.mesh.visible = true;
+              spawned++;
+            }
+          }
         }
 
         tp.active = false;

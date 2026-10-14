@@ -89,7 +89,6 @@ export function scatterBricks(scene, char, countToDrop) {
 
     poolItem.mesh.material = sharedMats.blockNeutral;
     poolItem.mesh.position.set(dropX, floorY, dropZ);
-    // ★ 修正：X/Z回転角を確実に0にリセットし、床に斜めに突き刺さる現象を完全根絶
     poolItem.mesh.rotation.set(0, Math.random() * Math.PI, 0);
     poolItem.mesh.visible = true;
 
@@ -209,7 +208,6 @@ export function fireHomingCrystal(char) {
   proj.group.position.copy(proj.startPos);
   proj.group.visible = true;
 
-  // ★ 標的の足元にロックオン照準レティクルを展開
   if (selectedTarget && proj.reticle) {
     proj.reticle.position.set(selectedTarget.pos.x, selectedTarget.pos.y + 0.08, selectedTarget.pos.z);
     proj.reticle.visible = true;
@@ -232,11 +230,9 @@ export function fireHomingCrystal(char) {
   }
 }
 
-// ★ サンダー有弾道発射処理（アタックと同等の 1.35秒 ＆ 標的足元照準レティクル連動）
 export function fireThunderStrike(scene, userChar) {
   if (soundRef && soundRef.playAttackShoot) soundRef.playAttackShoot();
 
-  // 自分以外の敵の中で最も前方（Z座標が最小）にいる相手をサーチ
   let target = null;
   let minZ = 999999;
   characters.forEach(c => {
@@ -265,7 +261,7 @@ export function fireThunderStrike(scene, userChar) {
   tp.shooter = userChar;
   tp.target = target;
   tp.progress = 0;
-  tp.duration = 1.35; // ★ アタック弾と同じ 1.35秒 のゆったり目で追える速度
+  tp.duration = 1.35;
 
   tp.startPos.copy(userChar.pos);
   tp.startPos.y += 1.3;
@@ -275,7 +271,6 @@ export function fireThunderStrike(scene, userChar) {
   tp.group.position.copy(tp.startPos);
   tp.group.visible = true;
 
-  // ★ 標的の足元にエレクトリックイエローのロックオン照準レティクルを展開
   if (target && tp.reticle) {
     tp.reticle.position.set(target.pos.x, target.pos.y + 0.08, target.pos.z);
     tp.reticle.visible = true;
@@ -322,7 +317,6 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
   }
 
   if (!isFarFromBridges) {
-    // スカイダイブ・カタパルト台発射判定
     const skyB = localBridges.find(b => b.isSkydive && b.stageIdx === char.currentStage);
     if (skyB && char.slideCooldown <= 0) {
       const distToCatapult = Math.hypot(nextX, nextZ - skyB.startZ);
@@ -341,24 +335,20 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
       }
     }
 
-    // ★ ドロップタワー・スカイゲート：スカイウォーク歩行判定 ＆ ハッチ進入トリガー
     const trapB = localBridges.find(b => b.isTrapdoor && b.stageIdx === char.currentStage);
     if (trapB && char.slideCooldown <= 0) {
       const approachStart = trapB.approachStartZ !== undefined ? trapB.approachStartZ : (trapB.startZ + 14.0);
       const hatchCenterZ = trapB.startZ;
 
-      // 1. スカイウォーク上の歩行可能エリア判定（幅 3.4m、手前島エッジからハッチまで）
       const inSkywalkX = Math.abs(nextX) <= 1.7;
       const inSkywalkZ = (nextZ <= approachStart + 0.6) && (nextZ >= hatchCenterZ - 1.8);
 
       if (inSkywalkX && inSkywalkZ) {
-        // ハッチ中心（hatchCenterZ）に到達したらフリーフォールを発火
         const distToHatch = Math.hypot(nextX, nextZ - hatchCenterZ);
         if (distToHatch < 2.0 && isForwardIntent) {
           char.onTrapdoor = true;
           char.trapdoorProgress = 0;
           char.activeTrapdoor = trapB;
-          // ★ 修正：開口部中心 (X=0) へ吸い込み完全センタリング
           char.trapdoorX = 0;
           char.pos.x = 0;
           trapB.isHatchOpen = true;
@@ -370,7 +360,6 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
           return;
         }
 
-        // ハッチ到達前：スカイウォーク上を問題なく歩行させる
         char.pos.x = Math.max(-1.5, Math.min(1.5, nextX));
         char.pos.z = nextZ;
         char.pos.y = trapB.startY;
@@ -537,6 +526,7 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
           return;
         }
 
+        // ★ 直線スライダー滑走判定（搭乗保護）
         if (onBridge.isSlide) {
           const laneCenterX = LANES[onBridge.laneIdx];
           const maxOffset = 1.35;
@@ -662,7 +652,7 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
     const curStage = STAGES[char.currentStage];
     if (curStage) {
       const stageBridges = bridgesByStage.get(char.currentStage) || [];
-      const hasForwardAttraction = stageBridges.some(b => b.isTrapdoor || b.isSkydive);
+      const hasForwardAttraction = stageBridges.some(b => b.isTrapdoor || b.isSkydive || b.isSlide || b.isCurvedSlide);
       const isApproachingCenterExit = hasForwardAttraction && Math.abs(nextX) < 2.0 && (nextZ < curStage.z);
 
       if (!isApproachingCenterExit) {
@@ -694,7 +684,6 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     char.meshObj.root.visible = true;
   }
 
-  // ★ 縮小化（ちびキャラ化）デバフタイマーおよびスケール制御
   if (char.shrinkTimer > 0) {
     char.shrinkTimer -= dt;
     const shrinkScale = 0.42;
@@ -763,7 +752,6 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     }
   }
 
-  // スカイダイブ（頭先行・斜め上ホップ放物線）
   if (char.onSkydive && char.activeSkydive) {
     const b = char.activeSkydive;
     const totalFlyTime = SKYDIVE_CONFIG.PHYSICS.totalDuration;
@@ -816,7 +804,6 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     return;
   }
 
-  // ★ ドロップタワー（足先行・完全垂直落下）：初速タメ ➜ 超重力急降下（メリハリのある落下勢い）
   if ((char.onTrapdoor && char.activeTrapdoor) || (char.onFreefall && char.activeFreefall)) {
     const b = char.activeTrapdoor || char.activeFreefall;
 
@@ -840,7 +827,6 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
       char.slideCooldown = 0.5;
       char.lastPlankIdx = -1;
 
-      // 通過後はハッチ扉を閉じる
       b.isHatchOpen = false;
       b.hatchOpenProgress = 0;
       if (b.doorLeftPivot && b.doorRightPivot) {
@@ -870,7 +856,6 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
       const packProg = Math.min(1.0, char.trapdoorProgress / (0.35 / totalFlyTime));
       packCharacterLuggage(char, packProg);
 
-      // 落下初期（ハッチ通過直後・見下ろし中）は中心を厳格維持し、中盤以降に空中微調整を許容
       const airSpeed = TRAPDOOR_CONFIG.PHYSICS.horizontalAirControlSpeed;
       const maxAirX = TRAPDOOR_CONFIG.PHYSICS.maxAirOffsetX;
       if (t < 0.28) {
@@ -879,17 +864,13 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
         char.trapdoorX = Math.max(-maxAirX, Math.min(maxAirX, (char.trapdoorX || 0) + dirX * airSpeed * dt));
       }
 
-      // 完全垂直直下落下：ハッチ直下Z座標（b.startZ）を完全固定
       const pZ = b.startZ;
 
-      // ★ 改善：初速タメ（t < 0.22：ハッチ開口部を足元から抜けるタメ）➜ 超重力急降下（t >= 0.22：一気に急加速して突き抜けるメリハリ物理）
       const introT = 0.22;
       let effectiveFallT = 0;
       if (t < introT) {
-        // 前半は全体の8%程度を静かに降り、見下ろし構図で落ちる姿をしっかり捉える
         effectiveFallT = Math.pow(t / introT, 1.4) * 0.08;
       } else {
-        // 後半は残り92%の落差を急峻な超重力カーブ（2.4乗）で一気に奈落へ叩き落とす
         const frac = (t - introT) / (1.0 - introT);
         effectiveFallT = 0.08 + Math.pow(frac, 2.4) * 0.92;
       }
@@ -1068,10 +1049,18 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     return;
   }
 
+  // ★ スライダー搭乗中のスタン保護（空中で止まらず滑り落ちを継続）
   if (char.stunTimer > 0) {
     char.stunTimer -= dt;
     char.meshObj.root.rotation.z = Math.sin(Date.now() * 0.02) * 0.4;
     char.meshObj.root.rotation.x = 0;
+
+    if (char.onSlide) {
+      const slideSpeed = 28;
+      const nextZ = char.pos.z - slideSpeed * dt;
+      handleCourseMovement(char, char.pos.x, nextZ, 0, -1.0);
+      char.meshObj.root.position.copy(char.pos);
+    }
     return;
   }
   char.meshObj.root.rotation.z = 0;
@@ -1266,12 +1255,12 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     speed = 28;
     if (char.isPlayer && soundRef) soundRef.playSlide();
   } else if (char.shrinkTimer > 0) {
-    // ★ サンダーによるちびキャラ化中は大幅に鈍足化！
     speed = 3.6;
   }
 
   let effectiveDirX = dirX;
   let effectiveDirZ = dirZ;
+  // ★ スライダー搭乗中は手前への逆走を完全禁止し奥（-Z）へ強制滑走
   if (char.onSlide) {
     effectiveDirZ = -1.0;
     effectiveDirX = dirX * 0.8;
@@ -1391,7 +1380,6 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
             if (char.meshObj.magnetAura) char.meshObj.magnetAura.visible = true;
             if (char.isPlayer && soundRef) soundRef.playMagnetCharge();
           } else if (item.type === 'thunder') {
-            // ★ 新規追加：サンダー取得による落雷＆ちびキャラ化発動
             fireThunderStrike(scene, char);
           }
         }
@@ -1399,6 +1387,24 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     }
 
     checkGateCollisions(scene, char);
+  }
+
+  // ★ AI空中孤立・スタック防止フェイルセーフ（海の上やスライダー付近で身動きが取れなくなった場合のリカバリー）
+  if (!char.isPlayer && !char.onSlide && !char.onCurvedSlide && !char.onZipline && !char.onElevator && !char.isJumping && !char.onSkydive && !char.onTrapdoor) {
+    const curStage = STAGES[char.currentStage];
+    if (curStage) {
+      const distFromIsland = Math.hypot(char.pos.x, char.pos.z - curStage.z);
+      if (distFromIsland > curStage.r + 2.0 && char.lastPlankIdx < 0) {
+        const nextStage = STAGES[char.currentStage + 1];
+        if (nextStage && char.pos.z < curStage.z - curStage.r) {
+          char.pos.set(0, nextStage.y, nextStage.z + nextStage.r * 0.35);
+          char.currentStage = char.currentStage + 1;
+        } else {
+          char.pos.set(0, curStage.y, curStage.z);
+        }
+        char.lastPlankIdx = -1;
+      }
+    }
   }
 
   const currentStageObj = STAGES[char.currentStage];
