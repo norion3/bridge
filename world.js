@@ -1032,7 +1032,6 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     const nextInsetZ = Math.sqrt(Math.max(1, nextR * nextR - laneX * laneX));
 
     // ★ 修正：階段の始点を手前島エッジに密着、終点 endZ をステージ外周エッジ（オレンジリング真上：-0.4m）にピタッと接合
-    // 板長1.6mの中心がエッジ-0.4mに来るため、板前半0.8mが天面にかかり、2段目・3段目は確実に外側（海の上）に100%露出して埋没を完全根絶
     const startZ = prevIslandZ - prevInsetZ + (isStairs ? 0.3 : 1.2);
     const endZ = nextIslandZ + nextInsetZ - (isStairs ? 0.4 : 1.2);
     const distZ = startZ - endZ;
@@ -1079,7 +1078,6 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
           const rEndZ = nextIslandZ + rNextInset;
 
           // 手前島のオレンジリング上面（startY + 0.28m）から奥の島のオレンジリング上面（endY + 0.28m）へ一直線に架橋
-          // 島の淵（リング）の上に 0.35m だけ自然に乗せる（島の内側への不自然な突き出しを防止）
           const rOverlap = 0.35;
           const p1 = new THREE.Vector3(rX, startY + 0.28, rStartZ + rOverlap);
           const p2 = new THREE.Vector3(rX, endY + 0.28, rEndZ - rOverlap);
@@ -1091,7 +1089,6 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
           const railGeo = new THREE.CylinderGeometry(0.15, 0.15, railLen, 8);
           const railMesh = new THREE.Mesh(railGeo, sharedMats.slideRail);
           railMesh.position.copy(railMid);
-          // 始点 p1 から終点 p2 へ向かうベクトルへ誤差ゼロで正確に向ける
           railMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), railVec.clone().normalize());
           scene.add(railMesh);
           bridge.visualMeshes.push(railMesh);
@@ -1132,10 +1129,23 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
 
       for (let i = 0; i < numPlanks; i++) {
         const progress = (i + 0.5) / numPlanks;
-        const pZ = startZ - progress * distZ;
-        // 最上段がステージ天面の白い床面（endY + 0.08m）と自然に接合するリフト
-        const stairsLift = isStairs ? (progress * 0.08) : 0;
-        const pY = startY + progress * (endY - startY) + stairsLift;
+        let pZ = startZ - progress * distZ;
+        let pY = startY + progress * (endY - startY);
+
+        if (isStairs) {
+          // ★ 階段全レーンのオレンジリング潜り込み解消：
+          // 終端数段にかけてオレンジリングの頂点（endY + 0.20m）を確実に跨ぎ隠すリフトアップ補正
+          const liftT = Math.max(0, (progress - 0.70) / 0.30);
+          const stairsLift = Math.pow(liftT, 1.4) * 0.22;
+          pY += stairsLift;
+
+          // 最上段（i = numPlanks - 1）はオレンジリング直上（-0.35m）に配置し、
+          // 段板天面を endY + 0.28m（中心 pY = endY - 0.045m）に固定してリングを100%上から踏み敷く
+          if (i === numPlanks - 1) {
+            pZ = nextIslandZ + nextInsetZ - 0.35;
+            pY = endY - 0.045; // 天面: endY - 0.045 + 0.325 = endY + 0.28m (リング頂点 +0.20m を +8cm 上回る)
+          }
+        }
 
         dummyPlankObj.position.set(LANES[laneIdx], pY, pZ);
         dummyPlankObj.rotation.set(0, 0, 0);

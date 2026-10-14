@@ -63,6 +63,7 @@ export function setSystemCallbacks(sound, updateHUD, onPlankPlaced = null) {
 }
 
 // 散乱ブロックの高さを +4cm 上げ（0.29m）、既存床ブロック（0.25m）とのポリゴン干渉・チラつきを根絶
+// ★ 修正：プール満杯時でも最古ステージのブロックを強制リサイクルし、ブロックの虚空消滅（ロスト）を100%防止
 export function scatterBricks(scene, char, countToDrop) {
   const count = Math.min(char.stackCount, countToDrop);
   const stage = STAGES[char.currentStage] || STAGES[0];
@@ -85,6 +86,26 @@ export function scatterBricks(scene, char, countToDrop) {
     }
 
     let poolItem = floorBlockPool.find(b => !b.active);
+    if (!poolItem) {
+      // プール枯渇時：最も古い（離れた）ステージのアクティブブロックを強制回収・リサイクル
+      let bestRecycleIdx = -1;
+      let minStageIdx = 999999;
+      for (let k = 0; k < floorBlockPool.length; k++) {
+        const blk = floorBlockPool[k];
+        if (blk.active && !blk.attracting) {
+          if (blk.stageIdx < minStageIdx) {
+            minStageIdx = blk.stageIdx;
+            bestRecycleIdx = k;
+          }
+        }
+      }
+      if (bestRecycleIdx >= 0) {
+        poolItem = floorBlockPool[bestRecycleIdx];
+        const oldStageBlocks = getFloorBlocksForStage(poolItem.stageIdx);
+        const oldIdx = oldStageBlocks.indexOf(poolItem);
+        if (oldIdx !== -1) oldStageBlocks.splice(oldIdx, 1);
+      }
+    }
     if (!poolItem) break;
 
     poolItem.mesh.material = sharedMats.blockNeutral;
@@ -457,7 +478,8 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
         }
       }
 
-      if (nextZ <= onBridge.endZ + 0.8) {
+      // ★ 修正：遷移判定を nextZ <= onBridge.endZ - 0.1 に適正化（最上段を確実に踏み込み、フライング・踏み抜けを根絶）
+      if (nextZ <= onBridge.endZ - 0.1) {
         const lastPlank = onBridge.planks[onBridge.planks.length - 1];
         const canPassEnd = onBridge.isSlide || onBridge.isJump || (lastPlank && lastPlank.teamId === char.team.id);
         if (canPassEnd) {
@@ -1389,19 +1411,13 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     checkGateCollisions(scene, char);
   }
 
-  // ★ AI空中孤立・スタック防止フェイルセーフ（海の上やスライダー付近で身動きが取れなくなった場合のリカバリー）
+  // ★ 修正：AI空中孤立・スタック防止フェイルセーフ（正規通過していない未クリア時の次島ワープを撤廃し、現在島中央へ正常復帰）
   if (!char.isPlayer && !char.onSlide && !char.onCurvedSlide && !char.onZipline && !char.onElevator && !char.isJumping && !char.onSkydive && !char.onTrapdoor) {
     const curStage = STAGES[char.currentStage];
     if (curStage) {
       const distFromIsland = Math.hypot(char.pos.x, char.pos.z - curStage.z);
       if (distFromIsland > curStage.r + 2.0 && char.lastPlankIdx < 0) {
-        const nextStage = STAGES[char.currentStage + 1];
-        if (nextStage && char.pos.z < curStage.z - curStage.r) {
-          char.pos.set(0, nextStage.y, nextStage.z + nextStage.r * 0.35);
-          char.currentStage = char.currentStage + 1;
-        } else {
-          char.pos.set(0, curStage.y, curStage.z);
-        }
+        char.pos.set(0, curStage.y, curStage.z);
         char.lastPlankIdx = -1;
       }
     }

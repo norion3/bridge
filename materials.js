@@ -199,14 +199,14 @@ export const sharedMats = {
 
   neutralPlank: new THREE.MeshStandardMaterial({ color: 0xd1d5db, roughness: 0.7 }),
   
-  // ★ 直線・S字カーブスライダー共通：階段と同等の透き通るクリアフロスト透過マテリアル
+  // ★ 直線・S字カーブスライダー共通：裏抜け・チラつきを防ぐため depthWrite: true に設定
   slideSurface: new THREE.MeshStandardMaterial({
     color: 0xbae6fd,
     roughness: 0.3,
     metalness: 0.05,
     transparent: true,
-    opacity: 0.30,
-    depthWrite: false,
+    opacity: 0.35,
+    depthWrite: true,
     side: THREE.DoubleSide
   }),
   slideRail: new THREE.MeshStandardMaterial({
