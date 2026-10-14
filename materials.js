@@ -18,6 +18,55 @@ export const COLOR_YELLOW_PLANK = new THREE.Color(TEAMS.YELLOW.hex);
 export const blockGeometry = new THREE.BoxGeometry(0.95, 0.36, 0.60);
 export const plankGeo = new THREE.BoxGeometry(3.6, 0.65, 1.6);
 export const verticalPlankGeo = new THREE.BoxGeometry(3.6, 1.25, 1.8);
+
+// ★ 階段段板の立体アンビエント陰影・法線明度差を付与（踏面・蹴込の境界をクッキリ際立たせる）
+export function applyPlankVertexShading(geometry) {
+  geometry.computeVertexNormals();
+  const pos = geometry.attributes.position;
+  const norm = geometry.attributes.normal;
+  const count = pos.count;
+  const colors = new Float32Array(count * 3);
+
+  geometry.computeBoundingBox();
+  const min = geometry.boundingBox.min;
+  const max = geometry.boundingBox.max;
+  const h = Math.max(0.001, max.y - min.y);
+  const d = Math.max(0.001, max.z - min.z);
+
+  for (let i = 0; i < count; i++) {
+    const ny = norm.getY(i);
+    const nz = norm.getZ(i);
+    const nx = norm.getX(i);
+    const py = pos.getY(i);
+    const pz = pos.getZ(i);
+
+    let shade = 1.0;
+    if (ny > 0.5) {
+      // 踏面（天面 +Y）：手前エッジ（+Z）に向かって光が当たり、奥（-Z）は上の段板の影
+      const tZ = (pz - min.z) / d; // 0 (奥) 〜 1 (手前エッジ)
+      shade = 0.82 + tZ * 0.24; // 0.82 (奥の落とし影) 〜 1.06 (手前リップハイライト)
+    } else if (nz > 0.5) {
+      // 蹴込（正面 +Z）：上端が明るく、下端は奥まった接地影
+      const tY = (py - min.y) / h; // 0 (下) 〜 1 (上)
+      shade = 0.72 + tY * 0.18; // 0.72 (接地影) 〜 0.90 (上端)
+    } else if (Math.abs(nx) > 0.5) {
+      // 側面（±X）：段差の厚み感を強調
+      shade = 0.85;
+    } else {
+      // 背面 (-Z) または底面 (-Y)
+      shade = 0.65;
+    }
+
+    colors[i * 3] = shade;
+    colors[i * 3 + 1] = shade;
+    colors[i * 3 + 2] = shade;
+  }
+  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+}
+
+applyPlankVertexShading(plankGeo);
+applyPlankVertexShading(verticalPlankGeo);
+
 export const islandGeo = new THREE.CylinderGeometry(1, 1, 0.5, 36);
 
 // アイテム形状ジオメトリ
@@ -191,15 +240,17 @@ export const sharedMats = {
     opacity: 0.35,
     depthWrite: false
   }),
+  // ★ solidPlank：頂点カラーによるアンビエント陰影（踏面と蹴込の陰影差・エッジハイライト）を反映
   solidPlank: new THREE.MeshStandardMaterial({
     color: 0xffffff,
-    roughness: 0.35,
-    metalness: 0.05
+    roughness: 0.28,
+    metalness: 0.08,
+    vertexColors: true
   }),
 
   neutralPlank: new THREE.MeshStandardMaterial({ color: 0xd1d5db, roughness: 0.7 }),
   
-  // ★ 直線・S字カーブスライダー共通：裏抜け・チラつきを防ぐため depthWrite: true に設定
+  // 直線・S字カーブスライダー共通：裏抜け・チラつきを防ぐため depthWrite: true に設定
   slideSurface: new THREE.MeshStandardMaterial({
     color: 0xbae6fd,
     roughness: 0.3,
@@ -261,6 +312,7 @@ export const sharedMats = {
     depthWrite: false
   }),
 
+  // スピードアイテム：鮮やかなエメラルドグリーン
   itemCrystal: new THREE.MeshStandardMaterial({
     color: ITEM_COLORS.SPEED.hex,
     emissive: ITEM_COLORS.SPEED.emissive,
@@ -269,9 +321,9 @@ export const sharedMats = {
     metalness: 0.15
   }),
   itemBeaconRing: new THREE.MeshBasicMaterial({
-    color: 0xfacc15,
+    color: ITEM_COLORS.SPEED.hex,
     transparent: true,
-    opacity: 0.65,
+    opacity: 0.70,
     side: THREE.DoubleSide,
     depthWrite: false
   }),
@@ -354,7 +406,7 @@ export const sharedMats = {
     depthWrite: false
   }),
 
-  // ★ サンダー・ボルト用マテリアル
+  // サンダー・ボルト用マテリアル
   itemThunderCrystal: new THREE.MeshStandardMaterial({
     color: ITEM_COLORS.THUNDER.hex,
     emissive: ITEM_COLORS.THUNDER.emissive,
@@ -381,7 +433,6 @@ export const sharedMats = {
     side: THREE.DoubleSide,
     depthWrite: false
   }),
-  // ★ サンダー専用照準レティクル（イエロー）＆放電リング（シアンブルー）マテリアル
   thunderTargetReticle: new THREE.MeshBasicMaterial({
     color: 0xfacc15,
     transparent: true,
@@ -408,7 +459,6 @@ export const sharedMats = {
   elevatorMid: new THREE.MeshStandardMaterial({ color: 0xfacc15, emissive: 0xeab308, emissiveIntensity: 0.70, roughness: 0.2 }),
   elevatorSlow: new THREE.MeshStandardMaterial({ color: 0xef4444, emissive: 0xb91c1c, emissiveIntensity: 0.70, roughness: 0.2 }),
 
-  // スカイダイブ発射台：スカイブルー滑走路床面＆太いオレンジ安全パイプレール
   catapultDeck: new THREE.MeshStandardMaterial({
     color: 0x38bdf8,
     emissive: 0x0284c7,
@@ -430,7 +480,6 @@ export const sharedMats = {
     depthWrite: false
   }),
 
-  // ★ ドロップタワー：しっかりとした視認性を持つ水色ガラスへ復元
   dropGlassFloor: new THREE.MeshStandardMaterial({
     color: 0x0284c7,
     emissive: 0x0369a1,

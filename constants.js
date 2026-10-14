@@ -151,7 +151,8 @@ export const FREEFALL_CONFIG = TRAPDOOR_CONFIG;
 
 // アイテム固有カラー
 export const ITEM_COLORS = {
-  SPEED: { hex: 0xfde047, emissive: 0xeab308 },
+  // ★ スピードアイテム（鮮やかなエメラルドグリーン・視認性完全分離）
+  SPEED: { hex: 0x10b981, emissive: 0x059669, beaconHex: 0x34d399 },
   ATTACK: { hex: 0xf43f5e, emissive: 0xd946ef },
   MAGNET: { hex: 0xc084fc, emissive: 0x9333ea, beaconHex: 0xd8b4fe },
   // ★ サンダー（エレクトリックイエロー＆シアン放電リング）

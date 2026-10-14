@@ -1,4 +1,4 @@
-// Bot AI自律思考ロジック・レーン評価・スカイダイブ＆ドロップタワー進入・空中姿勢同期・AIワープ追いつき復活・スタック回避・進入アライメント誘導
+// Bot AI自律思考ロジック・レーン評価・スカイダイブ＆ドロップタワー進入・空中姿勢同期・AIワープ追いつき復活・スタック回避・進入アライメント誘導・オーガニックスムージング
 import {
   LANES,
   ELEVATOR_CONFIG,
@@ -320,8 +320,21 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
 
     let rawDx = 0, rawDz = 0;
     if (bot.targetBlock && bot.targetBlock.active) {
-      rawDx = bot.targetBlock.pos.x - bot.pos.x;
-      rawDz = bot.targetBlock.pos.z - bot.pos.z;
+      const toBlockX = bot.targetBlock.pos.x - bot.pos.x;
+      const toBlockZ = bot.targetBlock.pos.z - bot.pos.z;
+      const distToBlock = Math.hypot(toBlockX, toBlockZ);
+
+      // ★ オーガニック・カーブアプローチ：
+      // 点と点の最短直線移動を解消し、中長距離では弧を描く緩やかな回り込みラインを付与
+      if (distToBlock > 1.2) {
+        const curveSign = (bot.team.id === 'red') ? 1.0 : -1.0;
+        const curveFactor = Math.min(0.24, distToBlock * 0.035) * curveSign;
+        rawDx = toBlockX - toBlockZ * curveFactor;
+        rawDz = toBlockZ + toBlockX * curveFactor;
+      } else {
+        rawDx = toBlockX;
+        rawDz = toBlockZ;
+      }
     } else {
       const timeSec = performance.now() * 0.0015;
       const patrolX = Math.sin(timeSec + bot.team.hex) * 4.2;
@@ -333,8 +346,10 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
     const len = lenSq > 0.0001 ? Math.sqrt(lenSq) : 1;
     const steer = avoidGateObstacles(bot, rawDx / len, rawDz / len);
 
-    bot.aiDirX = THREE.MathUtils.lerp(bot.aiDirX || 0, steer.x, 0.16);
-    bot.aiDirZ = THREE.MathUtils.lerp(bot.aiDirZ || -1, steer.z, 0.16);
+    // ★ スティック操作のようなオーガニックな旋回慣性補間（急激な角度変化を滑らかな曲線旋回へ）
+    const steerLerp = THREE.MathUtils.clamp(8.5 * effectiveDt, 0.09, 0.20);
+    bot.aiDirX = THREE.MathUtils.lerp(bot.aiDirX || 0, steer.x, steerLerp);
+    bot.aiDirZ = THREE.MathUtils.lerp(bot.aiDirZ || -1, steer.z, steerLerp);
     const dirMagSq = bot.aiDirX * bot.aiDirX + bot.aiDirZ * bot.aiDirZ;
     const dirMag = dirMagSq > 0.0001 ? Math.sqrt(dirMagSq) : 1;
     updateSingleCharacter(scene, bot, bot.aiDirX / dirMag, bot.aiDirZ / dirMag, effectiveDt, spawnPuffCloud, spawnSpeedStepRing);
@@ -407,8 +422,11 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
 
       const oldZ = bot.pos.z;
       const steer = avoidGateObstacles(bot, dx / len, dz / len);
-      bot.aiDirX = THREE.MathUtils.lerp(bot.aiDirX || 0, steer.x, 0.25);
-      bot.aiDirZ = THREE.MathUtils.lerp(bot.aiDirZ || -1, steer.z, 0.25);
+
+      // ★ 階段・ギミックアプローチ時の滑らかなステアリング補間
+      const buildSteerLerp = THREE.MathUtils.clamp(10.0 * effectiveDt, 0.14, 0.28);
+      bot.aiDirX = THREE.MathUtils.lerp(bot.aiDirX || 0, steer.x, buildSteerLerp);
+      bot.aiDirZ = THREE.MathUtils.lerp(bot.aiDirZ || -1, steer.z, buildSteerLerp);
       const dirMagSq = bot.aiDirX * bot.aiDirX + bot.aiDirZ * bot.aiDirZ;
       const dirMag = dirMagSq > 0.0001 ? Math.sqrt(dirMagSq) : 1;
       updateSingleCharacter(scene, bot, bot.aiDirX / dirMag, bot.aiDirZ / dirMag, effectiveDt, spawnPuffCloud, spawnSpeedStepRing);

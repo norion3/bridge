@@ -57,7 +57,7 @@ export const activeMagnetBlocks = [];
 export const floorBlocksByStage = new Map();
 export const bridgesByStage = new Map();
 
-// ★ アイテム完全均等シャッフルバッグ（4種均等出現・偏り完全根絶）
+// アイテム完全均等シャッフルバッグ（4種均等出現・偏り完全根絶）
 const BASE_ITEMS = ['speed', 'attack', 'magnet', 'thunder'];
 let itemBag = [];
 
@@ -81,7 +81,7 @@ export function incMagnetDockStep() { return magnetDockStepCounter++; }
 
 const dummyPlankObj = new THREE.Object3D();
 
-// ★ ステージ完全交互サイクル ＆ 2系統シャッフルバッグ（全9種満遍なく均等出現）
+// ステージ完全交互サイクル ＆ 2系統シャッフルバッグ（全9種満遍なく均等出現）
 const DESCENT_GIMMICKS = ['slide', 'skydive', 'trapdoor', 'curved_slide', 'zipline'];
 const ASCENT_GIMMICKS = ['elevator', 'vertical', 'jump', 'bridge'];
 let descentBag = [];
@@ -276,7 +276,7 @@ export function createElevatorStationStructure(scene, startX, startY, startZ, en
   return group;
 }
 
-// ★ スカイダイブ発射台：7.2m コースター滑走路規格
+// スカイダイブ発射台：7.2m コースター滑走路規格
 export function createSkydiveCatapultStructure(scene, posX, posY, posZ) {
   const group = new THREE.Group();
   const rampLen = SKYDIVE_CONFIG.CATAPULT.length;
@@ -329,7 +329,7 @@ export function createSkydiveCatapultStructure(scene, posX, posY, posZ) {
   };
 }
 
-// ★ ドロップタワー・スカイゲート施設
+// ドロップタワー・スカイゲート施設
 export function createTrapdoorHatchStructure(scene, posX, posY, hatchZ, approachStartZ) {
   const group = new THREE.Group();
 
@@ -540,7 +540,7 @@ export function createOceanIsletMesh(scale = 1.0, type = 'tropical') {
   return group;
 }
 
-// ★ 浮島メッシュ
+// 浮島メッシュ
 export function createIslandMesh(r, y, z) {
   const group = new THREE.Group();
   const plat = new THREE.Mesh(islandGeo, sharedMats.island);
@@ -875,7 +875,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     return;
   }
 
-  // ★ S字スライダー端部の高さ＆延伸補正（オレンジリングの上に跨がせる）
+  // S字スライダー端部の高さ＆延伸補正（オレンジリングの上に跨がせる）
   if (type === 'curved_slide') {
     const startZ = prevIslandZ - prevR + 0.4;
     const endZ = nextIslandZ + nextR - 2.0;
@@ -1031,7 +1031,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     const prevInsetZ = Math.sqrt(Math.max(1, prevR * prevR - laneX * laneX));
     const nextInsetZ = Math.sqrt(Math.max(1, nextR * nextR - laneX * laneX));
 
-    // ★ 修正：階段の始点を手前島エッジに密着、終点 endZ をステージ外周エッジ（オレンジリング真上：-0.4m）にピタッと接合
+    // 階段の始点を手前島エッジに密着、終点 endZ をステージ外周エッジ（オレンジリング真上：-0.4m）に接合
     const startZ = prevIslandZ - prevInsetZ + (isStairs ? 0.3 : 1.2);
     const endZ = nextIslandZ + nextInsetZ - (isStairs ? 0.4 : 1.2);
     const distZ = startZ - endZ;
@@ -1067,8 +1067,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       scene.add(slopeMesh);
       bridge.visualMeshes.push(slopeMesh);
 
-      // ★ 4本のパイプレール幾何学計算：各パイプの X 座標ごとに円周エッジを個別に厳密算出
-      // 両端の高さをリング頂点（+0.20m）を超える +0.28m に正確にマウントし、淵の下への潜り込みと食い込みを根絶
+      // 4本のパイプレール幾何学計算：各パイプの X 座標ごとに円周エッジを個別に厳密算出
       if (laneIdx === 0) {
         const railXList = [-5.85, -2.0, 2.0, 5.85];
         railXList.forEach(rX => {
@@ -1077,7 +1076,6 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
           const rStartZ = prevIslandZ - rPrevInset;
           const rEndZ = nextIslandZ + rNextInset;
 
-          // 手前島のオレンジリング上面（startY + 0.28m）から奥の島のオレンジリング上面（endY + 0.28m）へ一直線に架橋
           const rOverlap = 0.35;
           const p1 = new THREE.Vector3(rX, startY + 0.28, rStartZ + rOverlap);
           const p2 = new THREE.Vector3(rX, endY + 0.28, rEndZ - rOverlap);
@@ -1131,14 +1129,12 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
         const progress = (i + 0.5) / numPlanks;
         let pZ = startZ - progress * distZ;
 
-        // ★ 自然で美しい階段スロープ幾何学（完全均一勾配）：
-        // 手前島リング上面（startY + 0.20m）から奥の島リング上面（endY + 0.20m）へ
-        // 完全均一な1本のスロープ直線補間として計算（段板厚み0.65mのため中心は -0.125m オフセット）
+        // 自然で美しい階段スロープ幾何学（完全均一勾配）
         let pY = startY + progress * (endY - startY);
         if (isStairs) {
           pY = (startY - 0.125) + progress * (endY - startY);
 
-          // ★ 最上段（i === numPlanks - 1）の厳密な接地配置：
+          // 最上段（i === numPlanks - 1）の厳密な接地配置：
           // オレンジリングの中心線直上へ確実に踏み込ませ（nextIslandZ + nextInsetZ - 0.25m）、
           // 段板天面をオレンジリング頂点（endY + 0.20m）と完全面一（ツライチ：中心 pY = endY - 0.125m）に整合
           if (i === numPlanks - 1) {
