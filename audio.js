@@ -54,6 +54,42 @@ export class SoundEngine {
     }
   }
 
+  // ★ 提案内容：古いContextを安全に破棄し、クリーンなAudioContextを完全新規生成するメソッド
+  rebuild() {
+    // 1. 既存の壊れた/ゾンビ化したContextを安全に破棄
+    if (this.ctx) {
+      try {
+        this.ctx.close();
+      } catch (e) {}
+      this.ctx = null;
+    }
+    this.noiseBuffer = null; // ノイズバッファも新コンテキスト用にリセット
+
+    // 2. ユーザー操作イベントの直下でクリーンなAudioContextを完全新規生成
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (AudioContext) {
+      this.ctx = new AudioContext();
+
+      this.masterGain = this.ctx.createGain();
+      this.masterGain.gain.value = 0.82;
+
+      this.compressor = this.ctx.createDynamicsCompressor();
+      this.compressor.threshold.value = -24;
+      this.compressor.knee.value = 30;
+      this.compressor.ratio.value = 12;
+      this.compressor.attack.value = 0.003;
+      this.compressor.release.value = 0.25;
+
+      this.masterGain.connect(this.compressor);
+      this.compressor.connect(this.ctx.destination);
+
+      // 念のため即座にresume
+      if (this.ctx.state !== 'running') {
+        this.ctx.resume().catch(() => {});
+      }
+    }
+  }
+
   getNoiseBuffer() {
     if (!this.noiseBuffer && this.ctx) {
       const bufferSize = this.ctx.sampleRate * 4.0; // 4秒分の連続ノイズ

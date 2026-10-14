@@ -227,8 +227,16 @@ export function setupControls() {
   if (soundBtn) {
     soundBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      sound.init();
+
       const isMuted = sound.toggleMute();
+      if (!isMuted) {
+        // ★ 提案内容：ミュート解除（ONにする）時は、古いコンテキストを捨てて完全新規生成！
+        sound.rebuild();
+        // テスト発音（ポッと鳴らして物理DACスピーカー接続を即座に開通・確認）
+        sound.playCollect(1.0);
+      }
+
+      // UIアイコン切り替え
       if (iconSoundOff && iconSoundOn) {
         if (isMuted) {
           iconSoundOff.classList.remove('hidden');
