@@ -1,4 +1,4 @@
-// 物理移動判定・スカイウォーク歩行開放・ハッチ進入同期・リュック収納アニメーション連動・シームレス風音連携
+// 物理移動判定・スカイウォーク歩行開放・ハッチ進入同期・リュック収納アニメーション連動・シームレス風音連携・スカイダイブ＆スライダーボーナス回収
 import {
   TEAMS,
   TRAMPOLINE_TIERS,
@@ -316,7 +316,7 @@ export function fireThunderStrike(scene, userChar) {
   }
 }
 
-export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
+export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, inputDirZ) {
   char.onSlide = false;
   const isMovingDownwardOrBackward = (nextZ >= char.pos.z - 0.001) || (inputDirZ >= -0.05);
   const isForwardIntent = !isMovingDownwardOrBackward && (inputDirZ < -0.05);
@@ -548,7 +548,7 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
           return;
         }
 
-        // ★ 直線スライダー滑走判定（搭乗保護）
+        // ★ 直線スライダー滑走判定（搭乗保護 ＆ 滑走ボーナスブロック回収連動）
         if (onBridge.isSlide) {
           const laneCenterX = LANES[onBridge.laneIdx];
           const maxOffset = 1.35;
@@ -557,6 +557,23 @@ export function handleCourseMovement(char, nextX, nextZ, inputDirX, inputDirZ) {
           char.pos.y = plank.y;
           char.onSlide = true;
           char.lastPlankIdx = plankIdx;
+
+          // ★ 直線スライダー滑走中のボーナスブロック回収判定
+          if (scene && onBridge.bonusBlocks && onBridge.bonusBlocks.length > 0) {
+            for (let sbi = 0; sbi < onBridge.bonusBlocks.length; sbi++) {
+              const blk = onBridge.bonusBlocks[sbi];
+              if (!blk.collected) {
+                if (Math.abs(char.pos.z - blk.z) < 1.35 && Math.abs(char.pos.x - blk.laneX) < 1.3) {
+                  blk.collected = true;
+                  scene.remove(blk.mesh);
+                  addBrickToCharacter(char, char.team, 1, soundRef, updateHUDRef);
+                  if (char.isPlayer && soundRef) {
+                    soundRef.playCollect(1.2 + blk.prog * 0.6);
+                  }
+                }
+              }
+            }
+          }
           return;
         }
 
@@ -790,6 +807,25 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     const b = char.activeSkydive;
     const totalFlyTime = SKYDIVE_CONFIG.PHYSICS.totalDuration;
     char.skydiveProgress += dt / totalFlyTime;
+
+    // ★ スカイダイブ空中ボーナスブロック回収判定（左右バンク旋回連動）
+    if (b.bonusBlocks && b.bonusBlocks.length > 0) {
+      for (let si = 0; si < b.bonusBlocks.length; si++) {
+        const blk = b.bonusBlocks[si];
+        if (!blk.collected) {
+          const progDiff = Math.abs(blk.t - char.skydiveProgress);
+          const xDiff = Math.abs(blk.x - char.skydiveX);
+          if (progDiff < 0.055 && xDiff < 1.45) {
+            blk.collected = true;
+            scene.remove(blk.mesh);
+            addBrickToCharacter(char, char.team, 1, soundRef, updateHUDRef);
+            if (char.isPlayer && soundRef) {
+              soundRef.playCollect(1.2 + blk.t * 0.8);
+            }
+          }
+        }
+      }
+    }
 
     if (char.skydiveProgress >= 1.0) {
       char.onSkydive = false;
@@ -1092,7 +1128,7 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     if (char.onSlide) {
       const slideSpeed = 28;
       const nextZ = char.pos.z - slideSpeed * dt;
-      handleCourseMovement(char, char.pos.x, nextZ, 0, -1.0);
+      handleCourseMovement(scene, char, char.pos.x, nextZ, 0, -1.0);
       char.meshObj.root.position.copy(char.pos);
     }
     return;
@@ -1309,7 +1345,7 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     const nextX = char.pos.x + effectiveDirX * speed * dt;
     const nextZ = char.pos.z + effectiveDirZ * speed * dt;
 
-    handleCourseMovement(char, nextX, nextZ, effectiveDirX, effectiveDirZ);
+    handleCourseMovement(scene, char, nextX, nextZ, effectiveDirX, effectiveDirZ);
 
     const walkCycleSpeed = (char.onSlide ? 0 : 16) * (char.speedBoostActive ? 1.75 : 1.0);
     char.walkCycle += dt * walkCycleSpeed;

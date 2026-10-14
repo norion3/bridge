@@ -34,6 +34,8 @@ import {
   floorItems,
   curvedSlideBonusBlocks,
   ziplineBonusBlocks,
+  skydiveBonusBlocks,
+  slideBonusBlocks,
   activeMagnetBlocks,
   cloudObjects,
   seaMesh,
@@ -768,6 +770,23 @@ export function animate(currentTime) {
         if (Math.abs(blk.mesh.position.z - playerZ) > 95) return;
         blk.mesh.rotation.y = timeSec * 3.2 + blk.t * 4.5;
         blk.mesh.position.y = blk.baseY + Math.sin(timeSec * 3.5 + blk.zi) * 0.14;
+      }
+    });
+
+    // ★ スカイダイブ空中ボーナスブロックのきらめき自転＆微小浮遊アニメーション
+    skydiveBonusBlocks.forEach(blk => {
+      if (!blk.collected && blk.mesh) {
+        if (Math.abs(blk.mesh.position.z - playerZ) > 95) return;
+        blk.mesh.rotation.y = timeSec * 3.2 + blk.t * 4.0;
+        blk.mesh.position.y = blk.baseY + Math.sin(timeSec * 3.0 + blk.si) * 0.12;
+      }
+    });
+
+    // ★ 直線スライダー滑走ボーナスブロックのきらめき自転アニメーション
+    slideBonusBlocks.forEach(blk => {
+      if (!blk.collected && blk.mesh) {
+        if (Math.abs(blk.mesh.position.z - playerZ) > 95) return;
+        blk.mesh.rotation.y = timeSec * 2.8 + blk.prog * 3.0;
       }
     });
 

@@ -53,6 +53,8 @@ export const bridges = [];
 export const floorItems = [];
 export const curvedSlideBonusBlocks = [];
 export const ziplineBonusBlocks = [];
+export const skydiveBonusBlocks = [];
+export const slideBonusBlocks = [];
 export const activeMagnetBlocks = [];
 export const floorBlocksByStage = new Map();
 export const bridgesByStage = new Map();
@@ -698,7 +700,7 @@ export function spawnGatesOnIsland(scene, stageIdx, islandZ, islandY) {
 }
 
 export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, nextIslandZ, prevR, nextR, startY, endY, type) {
-  // スカイダイブ（頭先行・カタパルト台・前方放物線）
+  // スカイダイブ（頭先行・カタパルト台・前方放物線・空中ボーナスブロック配置）
   if (type === 'skydive') {
     const startZ = prevIslandZ - prevR + 1.2;
     const endZ = nextIslandZ + nextR - 1.2;
@@ -711,8 +713,37 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       startZ, endZ, startY, endY,
       launchPoint: catapult.launchPoint,
       isSkydive: true, isTrapdoor: false, isElevator: false, isZipline: false,
-      isCurvedSlide: false, isSlide: false, isJump: false, isVertical: false
+      isCurvedSlide: false, isSlide: false, isJump: false, isVertical: false,
+      bonusBlocks: []
     };
+
+    // ★ スカイダイブ空中ボーナスブロック（緩やかなS字ウェーブ配置：計7個）
+    const numSkydiveBlocks = 7;
+    for (let si = 0; si < numSkydiveBlocks; si++) {
+      const t = 0.18 + (si / (numSkydiveBlocks - 1)) * 0.68;
+      const bZ = THREE.MathUtils.lerp(startZ, endZ, t);
+      const fallPower = SKYDIVE_CONFIG.PHYSICS.gravityPower || 2.0;
+      const hop = Math.sin(t * Math.PI) * (SKYDIVE_CONFIG.PHYSICS.hopHeight || 3.5);
+      const bY = startY + (endY - startY) * Math.pow(t, fallPower) + hop + 0.35;
+      // プレイヤーがスワイプで気持ちよく回収できる緩やかなサインカーブ（左右幅 ±2.4m）
+      const bX = Math.sin(si * 1.5) * 2.4;
+
+      const bMesh = new THREE.Mesh(blockGeometry, sharedMats.blockNeutral);
+      bMesh.position.set(bX, bY, bZ);
+      scene.add(bMesh);
+
+      const bonusData = {
+        mesh: bMesh,
+        t: t,
+        x: bX,
+        baseY: bY,
+        si: si,
+        collected: false,
+        stageIdx: stageIdx
+      };
+      skydiveBridge.bonusBlocks.push(bonusData);
+      skydiveBonusBlocks.push(bonusData);
+    }
 
     if (!bridgesByStage.has(stageIdx)) bridgesByStage.set(stageIdx, []);
     bridgesByStage.get(stageIdx).push(skydiveBridge);
@@ -1016,7 +1047,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
   const isSlide = (type === 'slide');
   const isVertical = (type === 'vertical');
   const isStairs = (!isJump && !isSlide && !isVertical);
-  // ★ 通常階段（isStairs）と垂直壁登り階段（isVertical）の両方を段板架橋ステップとして統合
+  // 通常階段（isStairs）と垂直壁登り階段（isVertical）の両方を段板架橋ステップとして統合
   const isStepBridge = (isStairs || isVertical);
 
   let jumpTiers = [];
@@ -1033,7 +1064,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     const prevInsetZ = Math.sqrt(Math.max(1, prevR * prevR - laneX * laneX));
     const nextInsetZ = Math.sqrt(Math.max(1, nextR * nextR - laneX * laneX));
 
-    // ★ 左右レーン（laneIdx !== 1）は円弧感を保ちつつリングを隠すため約40cm手前に設定（通常階段・垂直階段共通）
+    // 左右レーン（laneIdx !== 1）は円弧感を保ちつつリングを隠すため約40cm手前に設定（通常階段・垂直階段共通）
     const stairsEndOffset = isStepBridge ? (laneIdx === 1 ? -0.4 : +0.03) : -1.2;
     const startZ = prevIslandZ - prevInsetZ + (isStepBridge ? 0.3 : 1.2);
     const endZ = nextIslandZ + nextInsetZ + stairsEndOffset;
@@ -1046,7 +1077,8 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       stageIdx, nextStageIdx, laneIdx, planks: [], visualMeshes: [],
       startZ, endZ, isJump, isSlide, isVertical,
       isSkydive: false, isTrapdoor: false, isCurvedSlide: false, isZipline: false,
-      ghostMesh: null, solidMesh: null
+      ghostMesh: null, solidMesh: null,
+      bonusBlocks: []
     };
 
     if (isSlide) {
@@ -1069,6 +1101,33 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       slopeMesh.receiveShadow = true;
       scene.add(slopeMesh);
       bridge.visualMeshes.push(slopeMesh);
+
+      // ★ 直線スライダー滑走ボーナスブロック配置（各レーン4個の縦一列ダッシュライン）
+      const numSlideBlocks = 4;
+      for (let sbi = 0; sbi < numSlideBlocks; sbi++) {
+        const prog = 0.22 + (sbi / (numSlideBlocks - 1)) * 0.58;
+        const bZ = sStartZ - prog * (sStartZ - sEndZ);
+        const bY = startY + prog * (endY - startY) + 0.34;
+
+        const bMesh = new THREE.Mesh(blockGeometry, sharedMats.blockNeutral);
+        bMesh.position.set(laneX, bY, bZ);
+        bMesh.rotation.x = angleX;
+        scene.add(bMesh);
+
+        const bonusData = {
+          mesh: bMesh,
+          laneIdx: laneIdx,
+          laneX: laneX,
+          prog: prog,
+          z: bZ,
+          baseY: bY,
+          sbi: sbi,
+          collected: false,
+          stageIdx: stageIdx
+        };
+        bridge.bonusBlocks.push(bonusData);
+        slideBonusBlocks.push(bonusData);
+      }
 
       // 4本のパイプレール幾何学計算：各パイプの X 座標ごとに円周エッジを個別に厳密算出
       if (laneIdx === 0) {
@@ -1120,7 +1179,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       });
     } else {
       const geoToUse = isVertical ? verticalPlankGeo : plankGeo;
-      // ★ 垂直段板（厚み1.25m）と通常段板（厚み0.65m）それぞれの天面がリング頂点（+0.20m）とツライチになる中心オフセット
+      // 垂直段板（厚み1.25m）と通常段板（厚み0.65m）それぞれの天面がリング頂点（+0.20m）とツライチになる中心オフセット
       const plankH = isVertical ? 1.25 : 0.65;
       const plankCenterOffsetY = 0.20 - plankH / 2; // isVertical: -0.425m, isStairs: -0.125m
 
@@ -1369,6 +1428,18 @@ export function buildWorld(scene) {
       scene.remove(b.mesh);
     }
   });
+  skydiveBonusBlocks.forEach(b => {
+    if (b.mesh) {
+      disposeHierarchy(b.mesh);
+      scene.remove(b.mesh);
+    }
+  });
+  slideBonusBlocks.forEach(b => {
+    if (b.mesh) {
+      disposeHierarchy(b.mesh);
+      scene.remove(b.mesh);
+    }
+  });
   floorItems.forEach(item => {
     if (item.group) {
       disposeHierarchy(item.group);
@@ -1397,6 +1468,8 @@ export function buildWorld(scene) {
   oceanIslands.length = 0;
   curvedSlideBonusBlocks.length = 0;
   ziplineBonusBlocks.length = 0;
+  skydiveBonusBlocks.length = 0;
+  slideBonusBlocks.length = 0;
 
   STAGES.length = 0;
   STAGES.push({ z: 0, y: 0, r: 12 });
@@ -1540,6 +1613,24 @@ export function cleanupOldData(scene) {
         scene.remove(ziplineBonusBlocks[i].mesh);
       }
       ziplineBonusBlocks.splice(i, 1);
+    }
+  }
+  for (let i = skydiveBonusBlocks.length - 1; i >= 0; i--) {
+    if (skydiveBonusBlocks[i].stageIdx < safeStage) {
+      if (skydiveBonusBlocks[i].mesh) {
+        disposeHierarchy(skydiveBonusBlocks[i].mesh);
+        scene.remove(skydiveBonusBlocks[i].mesh);
+      }
+      skydiveBonusBlocks.splice(i, 1);
+    }
+  }
+  for (let i = slideBonusBlocks.length - 1; i >= 0; i--) {
+    if (slideBonusBlocks[i].stageIdx < safeStage) {
+      if (slideBonusBlocks[i].mesh) {
+        disposeHierarchy(slideBonusBlocks[i].mesh);
+        scene.remove(slideBonusBlocks[i].mesh);
+      }
+      slideBonusBlocks.splice(i, 1);
     }
   }
 }
