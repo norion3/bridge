@@ -1015,7 +1015,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
   const isJump = (type === 'jump');
   const isSlide = (type === 'slide');
   const isVertical = (type === 'vertical');
-  const isStairs = (!isJump && !isSlide);
+  const isStairs = (!isJump && !isSlide && !isVertical);
 
   let jumpTiers = [];
   if (isJump) {
@@ -1127,43 +1127,17 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       solidMesh.castShadow = true;
       solidMesh.receiveShadow = true;
 
-      // ★ 階段（isStairs）時：接続部の3レーン統合エントリーデッキ（レーン間スリットのオレンジリング露出を完全遮蔽）
-      if (isStairs && laneIdx === 0) {
-        const deckWidth = 11.8;
-        const deckDepth = 2.0;
-        const deckThickness = 0.35;
-        const topDeckGeo = new THREE.BoxGeometry(deckWidth, deckThickness, deckDepth);
-        const topDeckMesh = new THREE.Mesh(topDeckGeo, sharedMats.solidPlank);
-        // 奥の島の淵（オレンジリング頂点 endY + 0.20m）を上から包み隠す高さ
-        const deckZ = nextIslandZ + nextR - deckDepth * 0.40;
-        const deckY = endY + 0.08; // 天面: endY + 0.08 + 0.175 = endY + 0.255m (リング頂点 +0.20m を確実に被覆)
-        topDeckMesh.position.set(0, deckY, deckZ);
-        topDeckMesh.receiveShadow = true;
-        topDeckMesh.castShadow = true;
-        scene.add(topDeckMesh);
-        bridge.visualMeshes.push(topDeckMesh);
-      }
-
       for (let i = 0; i < numPlanks; i++) {
         const progress = (i + 0.5) / numPlanks;
-        let pZ = startZ - progress * distZ;
+        const pZ = startZ - progress * distZ;
+
+        // ★ 自然で美しい階段スロープ幾何学（完全均一勾配）：
+        // 異物（topDeckMesh）を完全撤去し、手前島リング上面（startY + 0.20m）から
+        // 奥の島リング上面（endY + 0.20m）へ最初から最後まで一切の歪み・不連続・段差割れのない
+        // 完全均一な1本のスロープ直線補間として計算（段板厚み0.65mのため中心は -0.125m オフセット）
         let pY = startY + progress * (endY - startY);
-
         if (isStairs) {
-          // ★ 階段全レーンのオレンジリング潜り込み解消：
-          // 終端数段にかけてオレンジリングの頂点（endY + 0.20m）を確実に跨ぎ隠すリフトアップ補正
-          const liftT = Math.max(0, (progress - 0.70) / 0.30);
-          const stairsLift = Math.pow(liftT, 1.3) * 0.26;
-          pY += stairsLift;
-
-          // 終端2段（最上段および2段目）の標高とZ位置を精密アライメント
-          if (i === numPlanks - 1) {
-            pZ = nextIslandZ + nextInsetZ - 0.35;
-            pY = endY - 0.045; // 天面: endY - 0.045 + 0.325 = endY + 0.28m (リング頂点 +0.20m を +8cm 上回る)
-          } else if (i === numPlanks - 2) {
-            // 円弧の張り出しと交差する2段目も、リング頂点(+0.20m)を確実に超える天面高さ(+0.24m)へリフト
-            pY = Math.max(pY, endY - 0.085); // 天面: endY - 0.085 + 0.325 = endY + 0.24m
-          }
+          pY = (startY - 0.125) + progress * (endY - startY);
         }
 
         dummyPlankObj.position.set(LANES[laneIdx], pY, pZ);

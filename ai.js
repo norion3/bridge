@@ -1,4 +1,4 @@
-// Bot AI自律思考ロジック・レーン評価・スカイダイブ＆ドロップタワー進入・空中姿勢同期・自然な自律追走・スタック回避・進入アライメント誘導・動的ラバーバンド＆ワンストップ走破
+// Bot AI自律思考ロジック・レーン評価・スカイダイブ＆ドロップタワー進入・空中姿勢同期・AIワープ追いつき復活・スタック回避・進入アライメント誘導
 import {
   LANES,
   ELEVATOR_CONFIG,
@@ -106,27 +106,36 @@ export function avoidGateObstacles(bot, dirX, dirZ) {
 }
 
 export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStepRing) {
-  // ★ 動的ラバーバンド（ゴム紐）加速：プレイヤーとの距離（ステージ差）に応じて自然に走破速度をスケールアップ
-  const stageDiff = (player && bot.currentStage < player.currentStage) ? (player.currentStage - bot.currentStage) : 0;
-  const isLaggingBehind = stageDiff > 0;
-  let speedMultiplier = 1.0;
-  if (stageDiff === 1) {
-    speedMultiplier = 1.35; // 1ステージ遅れ：1.35倍速
-  } else if (stageDiff >= 2) {
-    speedMultiplier = 1.65; // 2ステージ以上遅れ：1.65倍速
-  }
-  const effectiveDt = dt * speedMultiplier;
-
-  // ★ 画面外（2ステージ以上後方）自律クリア処理：床でウロウロ停滞させず、迅速に自力で次の島へ渡る
-  if (stageDiff >= 2) {
-    bot.offscreenCollectTimer = (bot.offscreenCollectTimer || 0) + effectiveDt;
-    if (bot.offscreenCollectTimer >= 0.40) {
-      bot.offscreenCollectTimer = 0;
-      if (bot.aiState === 'COLLECT' && bot.stackCount < 18) {
-        addBrickToCharacter(bot, bot.team, 2);
+  // ★ AIワープ追いつき完全復活：プレイヤーから2ステージ以上離された瞬間に即時テレポート
+  if (player && bot.currentStage < player.currentStage - 1) {
+    bot.currentStage = player.currentStage;
+    const stage = STAGES[bot.currentStage];
+    if (stage) {
+      bot.pos.x = (Math.random() - 0.5) * 6;
+      bot.pos.z = stage.z + stage.r * 0.85;
+      bot.pos.y = stage.y;
+      bot.meshObj.root.position.copy(bot.pos);
+      bot.invulnerableTimer = 1.0;
+      bot.aiState = 'COLLECT';
+      bot.aiCapacityGoal = 14 + Math.floor(Math.random() * 5);
+      bot.lastPlankIdx = -1;
+      bot.targetBlock = null;
+      bot.elevatorChoice = undefined;
+      bot.searchCooldown = (bot.team.id === 'red') ? 0 : 0.06;
+      bot.unstuckTimer = 0;
+      // ワープ時に初期ブロック（4個）を補充して即座にレース参加
+      while (bot.stackCount < 4) {
+        addBrickToCharacter(bot, bot.team);
       }
     }
+    return;
   }
+
+  // ★ 動的ラバーバンド（ゴム紐）加速：1ステージ差の時に走破速度を自然にブースト
+  const stageDiff = (player && bot.currentStage < player.currentStage) ? (player.currentStage - bot.currentStage) : 0;
+  const isLaggingBehind = stageDiff > 0;
+  const speedMultiplier = isLaggingBehind ? 1.35 : 1.0;
+  const effectiveDt = dt * speedMultiplier;
 
   if (
     bot.onSkydive ||
@@ -235,7 +244,6 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
   }
 
   if (bot.aiState === 'COLLECT') {
-    // ★ 改善：階段残段数の算出 ＆ ワンストップ走破（階段途中からの往復引き返しを完全根絶）
     let neededForBridge = isVerticalNext ? 22 : 18;
     const evalLane = (bot.targetLane !== undefined) ? bot.targetLane : 1;
     const targetBridge = stageBridges.find(b =>
@@ -249,7 +257,6 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
       neededForBridge = Math.min(24, Math.max(1, unbuiltCount));
     }
 
-    // 遅れている時は中途半端な12個で階段へ向かわず、階段を架け切れる本数を目標にして一気に走破
     const effectiveGoal = isLaggingBehind ? neededForBridge : bot.aiCapacityGoal;
     const threshold = isVerticalNext ? Math.max(18, effectiveGoal) : effectiveGoal;
 
@@ -281,8 +288,7 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
       !bot.targetBlock.active ||
       bot.targetBlock.stageIdx !== bot.currentStage
     ) {
-      // 距離に応じた探索即時化（2ステージ以上遅れは0.03秒、1ステージ遅れは0.06秒）
-      bot.searchCooldown = (stageDiff >= 2) ? 0.03 : (isLaggingBehind ? 0.06 : 0.12);
+      bot.searchCooldown = isLaggingBehind ? 0.06 : 0.12;
       let best = null, minDistSq = 999999;
 
       for (let i = 0; i < floorItems.length; i++) {
