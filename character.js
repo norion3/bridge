@@ -91,8 +91,25 @@ export function createNameplateMesh(nameText, isLocalPlayer = false) {
 export const createNameplateSprite = createNameplateMesh;
 
 // 足元追従：見下ろしカメラから見て開けている画面手前側（カメラ方向: +Z 1.15m）へオフセット配置
+// ★ 案A適用：スライダー（直線・S字）・高速アクション搭乗中はスマートに非表示化！
 export function updateNameplatePosition(char) {
   if (!char || !char.nameplateSprite) return;
+
+  // スライダー（直線・S字）・スカイダイブ・ジップライン・トラップドア搭乗中は非表示にして滑走アクションに集中！
+  if (
+    char.onSlide ||
+    char.onCurvedSlide ||
+    char.onZipline ||
+    char.onSkydive ||
+    char.onTrapdoor ||
+    char.onFreefall
+  ) {
+    char.nameplateSprite.visible = false;
+    return;
+  }
+
+  // 平地走行・階段建設・島でのブロック収集時は手前足元に表示！
+  char.nameplateSprite.visible = true;
 
   const isShrunk = (char.shrinkTimer > 0);
 
@@ -105,7 +122,7 @@ export function updateNameplatePosition(char) {
   // 見下ろしカメラがある手前側（+Z方向）の開けた床面へ配置！タワーや身体で遮られない
   const targetX = char.pos.x;
   const targetY = char.pos.y + 0.05; // 床面スレスレ
-  const targetZ = char.pos.z + 1.15; // ★ 画面手前側（カメラ方向）へオフセット！
+  const targetZ = char.pos.z + 1.15; // 画面手前側（カメラ方向）へオフセット
 
   char.nameplateSprite.position.set(targetX, targetY, targetZ);
 }
@@ -464,7 +481,7 @@ export function setupCharacters(scene, STAGES) {
   pMesh.root.rotation.set(0, Math.PI, 0);
   scene.add(pMesh.root);
 
-  // ★ 足元の床面に水平投影されるフロストネームバッジ
+  // 足元の床面に水平投影されるフロストネームバッジ
   const pNameplate = createNameplateMesh(playerName, true);
   scene.add(pNameplate);
 
