@@ -1,4 +1,4 @@
-// 3Dキャラクター外観構築・手足メッシュ・スタックプール・トロリー・ホバー展望リフト・スカイダイブ＆トラップドア姿勢管理・足元前方フロスト投影ネームバッジ
+// 3Dキャラクター外観構築・手足メッシュ・スタックプール・トロリー・ホバー展望リフト・スカイダイブ＆トラップドア姿勢管理・足元手前側（カメラ方向）フロスト投影ネームバッジ
 import {
   TEAMS,
   MAX_VISUAL_STACK,
@@ -90,22 +90,22 @@ export function createNameplateMesh(nameText, isLocalPlayer = false) {
 
 export const createNameplateSprite = createNameplateMesh;
 
-// 足元追従：身体で遮られないよう前方足元（Z - 0.95m）にオフセット配置
+// 足元追従：見下ろしカメラから見て開けている画面手前側（カメラ方向: +Z 1.15m）へオフセット配置
 export function updateNameplatePosition(char) {
   if (!char || !char.nameplateSprite) return;
 
   const isShrunk = (char.shrinkTimer > 0);
 
   if (isShrunk) {
-    char.nameplateSprite.scale.set(0.55, 0.55, 0.55);
+    char.nameplateSprite.scale.set(0.60, 0.60, 0.60);
   } else {
     char.nameplateSprite.scale.set(1.0, 1.0, 1.0);
   }
 
-  // キャラの身体の真下ではなく、見下ろしカメラから見て遮られない前方足元（Z - 0.95m）へ配置
+  // 見下ろしカメラがある手前側（+Z方向）の開けた床面へ配置！タワーや身体で遮られない
   const targetX = char.pos.x;
-  const targetY = char.pos.y + 0.06; // 床面スレスレ
-  const targetZ = char.pos.z - 0.95; // ★ 前方足元にオフセット
+  const targetY = char.pos.y + 0.05; // 床面スレスレ
+  const targetZ = char.pos.z + 1.15; // ★ 画面手前側（カメラ方向）へオフセット！
 
   char.nameplateSprite.position.set(targetX, targetY, targetZ);
 }
@@ -464,7 +464,7 @@ export function setupCharacters(scene, STAGES) {
   pMesh.root.rotation.set(0, Math.PI, 0);
   scene.add(pMesh.root);
 
-  // ★ 足元に水平投影されるフロストネームバッジ
+  // ★ 足元の床面に水平投影されるフロストネームバッジ
   const pNameplate = createNameplateMesh(playerName, true);
   scene.add(pNameplate);
 
