@@ -29,34 +29,40 @@ export function setCharacterCallbacks(sound, updateHUD) {
   updateHUDRef = updateHUD;
 }
 
-// 背景座布団・枠線を完全排除し、さりげなく上品な純白タイポグラフィのみを描画
+// 洗練された極薄ダーク半透明カプセル（どんな背景でも白文字を100%際立たせる）
 export function createNameplateSprite(nameText, isLocalPlayer = false) {
   const canvas = document.createElement('canvas');
   canvas.width = 512;
   canvas.height = 128;
   const ctx = canvas.getContext('2d');
 
-  // 背景描画（カプセル・枠線）は一切行わず、完全透明
+  // 1. さりげなく上品な極薄ダーク半透明カプセル（UIと同じダークスレート）
+  ctx.fillStyle = isLocalPlayer ? 'rgba(15, 23, 42, 0.62)' : 'rgba(15, 23, 42, 0.50)';
+  ctx.beginPath();
+  ctx.roundRect(32, 24, 448, 80, 40);
+  ctx.fill();
 
-  // 長文ネームに合わせたフォントサイズ自動調整（Auto Font-Fit）
-  const maxTextWidth = 460;
-  let fontSize = 38;
+  // 2. 自キャラのみ極細シアンハイライト枠（他キャラは枠なしで極めてシンプル）
+  if (isLocalPlayer) {
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.65)';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+  }
+
+  // 3. テキスト自動スケール（Auto Font-Fit）
+  const maxTextWidth = 400;
+  let fontSize = 44;
   ctx.font = `bold ${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
 
   let textWidth = ctx.measureText(nameText).width;
-  while (textWidth > maxTextWidth && fontSize > 18) {
+  while (textWidth > maxTextWidth && fontSize > 20) {
     fontSize -= 2;
     ctx.font = `bold ${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
     textWidth = ctx.measureText(nameText).width;
   }
 
-  // 文字のソフトなドロップシャドウ（どんな背景でも文字輪郭を自然に立たせる）
-  ctx.shadowColor = 'rgba(0, 0, 0, 0.85)';
-  ctx.shadowBlur = 8;
-  ctx.shadowOffsetY = 2;
-
-  // ローカルプレイヤーはほんのりシアン寄り白、Botは純白
-  ctx.fillStyle = isLocalPlayer ? '#f0f9ff' : '#ffffff';
+  // 4. クッキリした純白文字描画
+  ctx.fillStyle = '#ffffff';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(nameText, 256, 64);
@@ -70,23 +76,23 @@ export function createNameplateSprite(nameText, isLocalPlayer = false) {
   });
 
   const sprite = new THREE.Sprite(mat);
-  // 横幅をスリムに引き締め、小さくさりげないサイズ感に設定
-  sprite.scale.set(1.9, 0.475, 1.0);
+  // 見下ろしカメラからでも自然に読める適正サイズへ調整
+  sprite.scale.set(2.6, 0.65, 1.0);
   return sprite;
 }
 
-// ブロックタワーの天面を正確に追従するリフト幾何学（ブロック串刺しを物理的に完全解消）
+// ブロックタワーの天面を正確に追従するリフト幾何学
 export function updateNameplatePosition(char) {
   if (!char || !char.nameplateSprite) return;
   // 現在表示されているブロック段数を取得（最大20段）
   const visibleStacks = Math.min(char.stackCount || 0, MAX_VISUAL_STACK);
   let targetY;
   if (visibleStacks === 0) {
-    // ブロック0個：頭頂部（Y=1.25）のすぐ上 +0.40m
-    targetY = char.pos.y + 1.25 + 0.40;
+    // ブロック0個：頭頂部（Y=1.25）のすぐ上 +0.45m
+    targetY = char.pos.y + 1.25 + 0.45;
   } else {
-    // ブロック積載時：スタックのベース高さ(Y=0.65) + 表示段数実高(段数 x 0.44m) + クリアランス(+0.40m)
-    targetY = char.pos.y + 0.65 + (visibleStacks * 0.44) + 0.40;
+    // ブロック積載時：スタックのベース高さ(Y=0.65) + 表示段数実高(段数 x 0.44m) + クリアランス(+0.50m)
+    targetY = char.pos.y + 0.65 + (visibleStacks * 0.44) + 0.50;
   }
   char.nameplateSprite.position.set(char.pos.x, targetY, char.pos.z);
 }
