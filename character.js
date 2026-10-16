@@ -29,62 +29,38 @@ export function setCharacterCallbacks(sound, updateHUD) {
   updateHUDRef = updateHUD;
 }
 
-// ★ Phase 1: 長文対応＆自動フォントスケール（Auto Font-Fit）付きスマートネームプレートスプライト生成
-export function createNameplateSprite(nameText, teamColorHex, isLocalPlayer = false) {
+// 背景座布団・枠線を完全排除し、さりげなく上品な純白タイポグラフィのみを描画
+export function createNameplateSprite(nameText, isLocalPlayer = false) {
   const canvas = document.createElement('canvas');
   canvas.width = 512;
   canvas.height = 128;
   const ctx = canvas.getContext('2d');
 
-  // 1. 背景カプセル（ローカルプレイヤーはシアン寄りダーク、他はスレートダーク）
-  ctx.fillStyle = isLocalPlayer ? 'rgba(2, 132, 199, 0.88)' : 'rgba(15, 23, 42, 0.82)';
-  ctx.beginPath();
-  if (ctx.roundRect) {
-    ctx.roundRect(16, 20, 480, 88, 44);
-  } else {
-    // 古い環境向けの角丸フォールバック
-    const rx = 16, ry = 20, rw = 480, rh = 88, radius = 44;
-    ctx.moveTo(rx + radius, ry);
-    ctx.lineTo(rx + rw - radius, ry);
-    ctx.quadraticCurveTo(rx + rw, ry, rx + rw, ry + radius);
-    ctx.lineTo(rx + rw, ry + rh - radius);
-    ctx.quadraticCurveTo(rx + rw, ry + rh, rx + rw - radius, ry + rh);
-    ctx.lineTo(rx + radius, ry + rh);
-    ctx.quadraticCurveTo(rx, ry + rh, rx, ry + rh - radius);
-    ctx.lineTo(rx, ry + radius);
-    ctx.quadraticCurveTo(rx, ry, rx + radius, ry);
-    ctx.closePath();
-  }
-  ctx.fill();
+  // 背景描画（カプセル・枠線）は一切行わず、完全透明
 
-  // 2. チームカラー枠線
-  const hexStr = `#${(teamColorHex || 0xffffff).toString(16).padStart(6, '0')}`;
-  ctx.strokeStyle = hexStr;
-  ctx.lineWidth = 6;
-  ctx.stroke();
-
-  // 3. 長文ネームに合わせたフォントサイズ自動調整（Auto Font-Fit）
-  const maxTextWidth = 430;
-  let fontSize = 42;
+  // 長文ネームに合わせたフォントサイズ自動調整（Auto Font-Fit）
+  const maxTextWidth = 460;
+  let fontSize = 38;
   ctx.font = `bold ${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
 
   let textWidth = ctx.measureText(nameText).width;
-  while (textWidth > maxTextWidth && fontSize > 20) {
+  while (textWidth > maxTextWidth && fontSize > 18) {
     fontSize -= 2;
     ctx.font = `bold ${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
     textWidth = ctx.measureText(nameText).width;
   }
 
-  // 4. テキスト描画（シャドウ付きで視認性最大化）
-  ctx.shadowColor = 'rgba(0, 0, 0, 0.9)';
+  // 文字のソフトなドロップシャドウ（どんな背景でも文字輪郭を自然に立たせる）
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.85)';
   ctx.shadowBlur = 8;
-  ctx.shadowOffsetY = 3;
-  ctx.fillStyle = '#ffffff';
+  ctx.shadowOffsetY = 2;
+
+  // ローカルプレイヤーはほんのりシアン寄り白、Botは純白
+  ctx.fillStyle = isLocalPlayer ? '#f0f9ff' : '#ffffff';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(nameText, 256, 64);
 
-  // 5. Three.js テクスチャ & スプライト
   const texture = new THREE.CanvasTexture(canvas);
   texture.minFilter = THREE.LinearFilter;
   const mat = new THREE.SpriteMaterial({
@@ -94,16 +70,24 @@ export function createNameplateSprite(nameText, teamColorHex, isLocalPlayer = fa
   });
 
   const sprite = new THREE.Sprite(mat);
-  sprite.scale.set(3.2, 0.8, 1.0);
+  // 横幅をスリムに引き締め、小さくさりげないサイズ感に設定
+  sprite.scale.set(1.9, 0.475, 1.0);
   return sprite;
 }
 
-// ネームプレートの頭上・スタックタワー連動リフトアップ追従
+// ブロックタワーの天面を正確に追従するリフト幾何学（ブロック串刺しを物理的に完全解消）
 export function updateNameplatePosition(char) {
   if (!char || !char.nameplateSprite) return;
-  // Y = char.pos.y + 1.85m + min(stackCount * 0.22m, 5.5m)
-  const stackLift = Math.min((char.stackCount || 0) * 0.22, 5.5);
-  const targetY = char.pos.y + 1.85 + stackLift;
+  // 現在表示されているブロック段数を取得（最大20段）
+  const visibleStacks = Math.min(char.stackCount || 0, MAX_VISUAL_STACK);
+  let targetY;
+  if (visibleStacks === 0) {
+    // ブロック0個：頭頂部（Y=1.25）のすぐ上 +0.40m
+    targetY = char.pos.y + 1.25 + 0.40;
+  } else {
+    // ブロック積載時：スタックのベース高さ(Y=0.65) + 表示段数実高(段数 x 0.44m) + クリアランス(+0.40m)
+    targetY = char.pos.y + 0.65 + (visibleStacks * 0.44) + 0.40;
+  }
   char.nameplateSprite.position.set(char.pos.x, targetY, char.pos.z);
 }
 
@@ -162,7 +146,7 @@ export function createZiplineTrolleyMesh() {
 export function createElevatorCageMesh() {
   const lift = new THREE.Group();
 
-  const floorMesh = new THREE.Mesh(elevatorPlatformFloorGeo, sharedMats.elevatorDeckPlate);
+  const floorMesh = new THREE.Mesh(elevatorPlatformFloorFloorGeo || elevatorPlatformFloorGeo, sharedMats.elevatorDeckPlate);
   floorMesh.position.y = -0.08;
   floorMesh.castShadow = true;
   floorMesh.receiveShadow = true;
@@ -344,17 +328,13 @@ export function refreshCharacterStackVisuals(char) {
   }
 }
 
-// ★ スカイダイブ時に頭や体の一部が突き抜けないよう、背中側（-Z方向）に安全にオフセット配置
+// スカイダイブ時に頭や体の一部が突き抜けないよう、背中側（-Z方向）に安全にオフセット配置
 export function packCharacterLuggage(char, packProgress) {
   if (!char || !char.meshObj || !char.meshObj.stackGroup) return;
   
-  // packProgress: 0.0 (通常) 〜 1.0 (完全収納)
   const t = Math.max(0, Math.min(1, packProgress));
-  
-  // シュバッ！と収まるイージング (Cubic Out)
   const easeT = 1 - Math.pow(1 - t, 3);
   
-  // 圧縮時のターゲットスケール・オフセット（頭部 Y=1.1 や胴体と干渉しないよう背中側 -0.48m に維持）
   const targetScaleX = 0.45, targetScaleY = 0.20, targetScaleZ = 0.45;
   const targetOffsetY = 0.65, targetOffsetZ = -0.48;
   const targetRotX = -0.05;
@@ -372,7 +352,6 @@ export function packCharacterLuggage(char, packProgress) {
   char.meshObj.stackGroup.rotation.x = curRotX;
 }
 
-// （後方互換用：ダミー処理）
 export function setStackGhostMode(char, isGhost) {
   char.isGhostStacked = false;
 }
@@ -382,7 +361,6 @@ export function applySkydivePose(char, dirX, rollAngle) {
   char.meshObj.root.rotation.order = 'YXZ';
   char.meshObj.root.rotation.set(1.1, Math.PI, rollAngle);
 
-  // 両腕を後方（体側）へ流し大気抵抗をカット
   char.meshObj.leftArm.position.set(-0.40, 0.46, -0.32);
   char.meshObj.rightArm.position.set(0.40, 0.46, -0.32);
   char.meshObj.leftArm.rotation.set(-1.42, 0, 0.18);
@@ -397,15 +375,13 @@ export function applySkydivePose(char, dirX, rollAngle) {
   char.meshObj.head.position.y = 1.10;
 }
 
-// ★ トラップドア専用ポーズ：コミカルな必死の空中ジタバタあがきアニメーション
+// トラップドア専用ポーズ：コミカルな必死の空中ジタバタあがきアニメーション
 export function applyTrapdoorPose(char, dirX, timeSec) {
   char.meshObj.root.rotation.order = 'XYZ';
   
-  // 落ちながら必死にあがいて体が細かく揺れる
   const bodyShake = Math.sin(timeSec * 32) * 0.08;
   char.meshObj.root.rotation.set(0.08 + bodyShake, Math.PI, -dirX * 0.15 + Math.cos(timeSec * 28) * 0.06);
 
-  // 両腕を必死にジタバタ・バタバタと空を掻くように大きく動かす
   const armFlapL = Math.sin(timeSec * 30) * 0.65;
   const armFlapR = Math.cos(timeSec * 30) * 0.65;
   char.meshObj.leftArm.position.set(-0.54, 0.78 + Math.sin(timeSec * 28) * 0.08, 0.05);
@@ -413,7 +389,6 @@ export function applyTrapdoorPose(char, dirX, timeSec) {
   char.meshObj.leftArm.rotation.set(armFlapL, 0.2, -0.55 + armFlapR * 0.4);
   char.meshObj.rightArm.rotation.set(-armFlapR, -0.2, 0.55 - armFlapL * 0.4);
 
-  // 両足を空中で激しくバタバタ・ジタバタキック
   const legKickL = Math.sin(timeSec * 34) * 0.75;
   const legKickR = Math.sin(timeSec * 34 + Math.PI) * 0.75;
   char.meshObj.leftLeg.rotation.set(legKickL, 0, -0.12);
@@ -470,7 +445,7 @@ export function setupCharacters(scene, STAGES) {
   pMesh.root.rotation.set(0, Math.PI, 0);
   scene.add(pMesh.root);
 
-  const pNameplate = createNameplateSprite(playerName, TEAMS.BLUE.hex, true);
+  const pNameplate = createNameplateSprite(playerName, true);
   scene.add(pNameplate);
 
   player = {
@@ -539,7 +514,7 @@ export function setupCharacters(scene, STAGES) {
   b1Mesh.root.rotation.set(0, Math.PI, 0);
   scene.add(b1Mesh.root);
 
-  const b1Nameplate = createNameplateSprite('CPU 1', TEAMS.RED.hex, false);
+  const b1Nameplate = createNameplateSprite('CPU 1', false);
   scene.add(b1Nameplate);
 
   const bot1 = {
@@ -616,7 +591,7 @@ export function setupCharacters(scene, STAGES) {
   b2Mesh.root.rotation.set(0, Math.PI, 0);
   scene.add(b2Mesh.root);
 
-  const b2Nameplate = createNameplateSprite('CPU 2', TEAMS.YELLOW.hex, false);
+  const b2Nameplate = createNameplateSprite('CPU 2', false);
   scene.add(b2Nameplate);
 
   const bot2 = {
