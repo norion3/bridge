@@ -1,4 +1,4 @@
-// メインエントリポイント：Three.js初期化・ダイナミックロックオン並走カメラ・メインループ
+// メインエントリポイント：Three.js初期化・ダイナミックロックオン並走カメラ・メインループ・ネームプレート連動
 import { SoundEngine } from './audio.js';
 import {
   TEAMS,
@@ -20,7 +20,8 @@ import {
   setupCharacters,
   resetCharacters,
   setCharacterCallbacks,
-  addBrickToCharacter
+  addBrickToCharacter,
+  updateNameplatePosition
 } from './character.js';
 
 import {
@@ -233,13 +234,10 @@ export function setupControls() {
 
       const isMuted = sound.toggleMute();
       if (!isMuted) {
-        // ★ 提案内容：ミュート解除（ONにする）時は、古いコンテキストを捨てて完全新規生成！
         sound.rebuild();
-        // テスト発音（ポッと鳴らして物理DACスピーカー接続を即座に開通・確認）
         sound.playCollect(1.0);
       }
 
-      // UIアイコン切り替え
       if (iconSoundOff && iconSoundOn) {
         if (isMuted) {
           iconSoundOff.classList.remove('hidden');
@@ -365,6 +363,8 @@ export function animate(currentTime) {
           c.meshObj.stackGroup.scale.set(1.0, 1.0, 1.0);
         }
       }
+      // ★ Phase 1: 各キャラクターのネームプレートを頭上・スタックタワー連動で更新
+      updateNameplatePosition(c);
     }
     handleTackles(scene);
 
@@ -426,7 +426,6 @@ export function animate(currentTime) {
         p.targetPos.copy(p.target.pos);
         p.targetPos.y += 1.0;
 
-        // ★ 標的の足元にロックオン照準レティクルを追従 ＆ パルスアニメーション
         if (p.reticle) {
           p.reticle.position.set(p.target.pos.x, p.target.pos.y + 0.08, p.target.pos.z);
           const pulseScale = 1.0 + Math.sin(timeSec * 22) * 0.25;
@@ -436,7 +435,6 @@ export function animate(currentTime) {
 
       const t = Math.min(1.0, p.progress);
       _tempVec3A.lerpVectors(p.startPos, p.targetPos, t);
-      // ★ 誰でも目で追える高く美しい山なり放物線弾道（最大高度 +8.5m）
       _tempVec3A.y += Math.sin(t * Math.PI) * 8.5;
       p.group.position.copy(_tempVec3A);
 
@@ -469,14 +467,11 @@ export function animate(currentTime) {
       if (p.progress >= 1.0) {
         sound.playAttackHit();
 
-        // 1. 強烈な二重衝撃波（赤紫の特大リング 4.5m）
         triggerLandingShockwave(p.targetPos.x, p.targetPos.y - 0.8, p.targetPos.z, 4.5, 0xf43f5e);
 
-        // 2. 照準マーカーの非表示
         if (p.reticle) p.reticle.visible = false;
 
         if (p.target) {
-          // 3. 敵キャラが物理的によろめく（一瞬のノックバック衝撃）
           p.target.stunTimer = 1.4;
           p.target.meshObj.root.rotation.x = 0.55;
           scatterBricks(scene, p.target, 3);
@@ -493,7 +488,6 @@ export function animate(currentTime) {
               db.progress = 0;
               db.duration = 0.80;
 
-              // 奪ったブロックの色を自分のチームカラー（青）に変化させてリソース獲得を直感化
               if (p.shooter && p.shooter.team && p.shooter.team.id === 'blue') {
                 db.mesh.material = sharedMats.blockBlue;
               } else if (p.shooter && p.shooter.team && p.shooter.team.id === 'red') {
@@ -528,7 +522,6 @@ export function animate(currentTime) {
       }
     }
 
-    // ★ サンダー専用有弾道更新ループ（アタック弾と同等の 1.35秒 ＆ 山なり放物線 +8.5m ＆ 二重リング自転 ＆ 照準パルス連動 ＆ ドレインブロック連動）
     for (let i = 0; i < thunderProjectilePool.length; i++) {
       const tp = thunderProjectilePool[i];
       if (!tp.active) continue;
@@ -539,7 +532,6 @@ export function animate(currentTime) {
         tp.targetPos.copy(tp.target.pos);
         tp.targetPos.y += 1.0;
 
-        // ★ 標的の足元に黄色ロックオン照準レティクルを追従 ＆ パルスアニメーション
         if (tp.reticle) {
           tp.reticle.position.set(tp.target.pos.x, tp.target.pos.y + 0.08, tp.target.pos.z);
           const pulseScale = 1.0 + Math.sin(timeSec * 22) * 0.25;
@@ -549,7 +541,6 @@ export function animate(currentTime) {
 
       const t = Math.min(1.0, tp.progress);
       _tempVec3A.lerpVectors(tp.startPos, tp.targetPos, t);
-      // ★ アタック弾と同じく背中ブロックに遮られない誰でも追える山なり放物線（高度 +8.5m）
       _tempVec3A.y += Math.sin(t * Math.PI) * 8.5;
       tp.group.position.copy(_tempVec3A);
 
@@ -579,17 +570,13 @@ export function animate(currentTime) {
         }
       }
 
-      // ★ 直撃の瞬間：照準消去 ＆ 落雷柱 ＆ ちびキャラ化 ＆ ブロック強奪（ドレイン）連動
       if (tp.progress >= 1.0) {
         sound.playThunderStrike();
 
-        // 1. 電撃イエロー衝撃波 (3.2m)
         triggerLandingShockwave(tp.targetPos.x, tp.targetPos.y - 0.8, tp.targetPos.z, 3.2, 0xfacc15);
 
-        // 2. 照準マーカーの非表示
         if (tp.reticle) tp.reticle.visible = false;
 
-        // 3. 天空からの落雷閃光ピラー
         const boltMesh = new THREE.Mesh(lightningPillarGeo, sharedMats.lightningBolt);
         boltMesh.position.set(tp.targetPos.x, tp.targetPos.y + 13.0, tp.targetPos.z);
         scene.add(boltMesh);
@@ -598,13 +585,11 @@ export function animate(currentTime) {
         }, 130);
 
         if (tp.target) {
-          // 4. 敵に縮小・超鈍足デバフ (5.5秒) & ノックバックよろめき
           tp.target.shrinkTimer = 5.5;
           tp.target.stunTimer = 1.0;
           tp.target.meshObj.root.rotation.x = 0.45;
           scatterBricks(scene, tp.target, 2);
 
-          // 5. アタック弾と同等のブロック強奪（相手から4個のブロックが自分へ飛来）
           const drainCount = 4;
           let spawned = 0;
           for (let d = 0; d < drainBlockPool.length && spawned < drainCount; d++) {
@@ -617,7 +602,6 @@ export function animate(currentTime) {
               db.progress = 0;
               db.duration = 0.80;
 
-              // 奪ったブロックの色を自分のチームカラー（青）に変化させてリソース獲得を直感化
               if (tp.shooter && tp.shooter.team && tp.shooter.team.id === 'blue') {
                 db.mesh.material = sharedMats.blockBlue;
               } else if (tp.shooter && tp.shooter.team && tp.shooter.team.id === 'red') {
@@ -773,7 +757,6 @@ export function animate(currentTime) {
       }
     });
 
-    // ★ スカイダイブ空中ボーナスブロックのきらめき自転＆微小浮遊アニメーション
     skydiveBonusBlocks.forEach(blk => {
       if (!blk.collected && blk.mesh) {
         if (Math.abs(blk.mesh.position.z - playerZ) > 95) return;
@@ -782,7 +765,6 @@ export function animate(currentTime) {
       }
     });
 
-    // ★ 直線スライダー滑走ボーナスブロックのきらめき自転アニメーション
     slideBonusBlocks.forEach(blk => {
       if (!blk.collected && blk.mesh) {
         if (Math.abs(blk.mesh.position.z - playerZ) > 95) return;
@@ -828,7 +810,6 @@ export function animate(currentTime) {
     const isSkydive = player.onSkydive;
     const isTrapdoor = (player.onTrapdoor || player.onFreefall);
 
-    // フリーフォール終了の瞬間を検知して着地リカバリータイマーを発火
     if (wasTrapdoorLastFrame && !isTrapdoor) {
       trapdoorLandingRecoveryTimer = 1.2;
     }
@@ -838,7 +819,6 @@ export function animate(currentTime) {
       trapdoorLandingRecoveryTimer = Math.max(0, trapdoorLandingRecoveryTimer - dt);
     }
 
-    // 落ちる直前のスカイウォーク歩行時判定（手前島エッジからハッチ前まで）
     const isApproachingTrapdoor = (() => {
       if (isTrapdoor) return null;
       const localTrapB = bridges.find(b => b.isTrapdoor && b.stageIdx === player.currentStage);
@@ -920,18 +900,16 @@ export function animate(currentTime) {
       targetLookAheadZ = player.pos.z - 12.0;
       targetFOV = 64;
     } else if (isSkydive) {
-      // スカイダイブ：板に隠れず跳ね上がったキャラをしっかり視野中心に追従
       const airX = player.skydiveX || player.pos.x;
       const camCfg = SKYDIVE_CONFIG.CAMERA;
       targetCamX = airX * 0.40;
-      targetCamY = player.pos.y + camCfg.offsetY; // +4.5m
-      targetCamZ = player.pos.z + camCfg.offsetZ; // +8.5m
+      targetCamY = player.pos.y + camCfg.offsetY;
+      targetCamZ = player.pos.z + camCfg.offsetZ;
       targetLookX = airX * 0.20;
       targetLookY = player.pos.y - 0.8;
-      targetLookAheadZ = player.pos.z + camCfg.lookAheadZ; // -28.0m (奥の水平線パノラマ)
-      targetFOV = camCfg.fovDrop; // 78
+      targetLookAheadZ = player.pos.z + camCfg.lookAheadZ;
+      targetFOV = camCfg.fovDrop;
     } else if (isApproachingTrapdoor) {
-      // 落ちる直前（スカイウォーク歩行中）：ステージ上ではなく「脇（サイドビュー）」から捉えて高低差とガラス通路を際立たせる
       targetCamX = player.pos.x + 7.5;
       targetCamY = player.pos.y + 4.2;
       targetCamZ = player.pos.z + 3.0;
@@ -940,24 +918,19 @@ export function animate(currentTime) {
       targetLookAheadZ = player.pos.z - 2.5;
       targetFOV = 64;
     } else if (isTrapdoor) {
-      // フリーフォール：突き抜けラグ ➜ FOV 82 ウルトラワイド急追走 ➜ 先行ランディング
       const b = player.activeTrapdoor || player.activeFreefall;
       const prog = player.trapdoorProgress || player.freefallProgress || 0;
       const camCfg = TRAPDOOR_CONFIG.CAMERA;
 
       if (b && prog < 0.22) {
-        // 【第1段階：見下ろし導入】ハッチ開口部直上から直下を捉え、キャラが足元から真下へ吸い込まれる様子をしっかり見せる
         targetCamX = 0;
         targetCamY = b.startY + 11.5;
         targetCamZ = b.startZ;
         targetLookX = 0;
         targetLookY = player.pos.y;
         targetLookAheadZ = b.startZ;
-        targetFOV = camCfg.fovStart; // 62
+        targetFOV = camCfg.fovStart;
       } else if (b && prog < 0.80) {
-        // 【第2段階：急降下猛チェイス】
-        // 移行直後（0.22〜0.42）は意図的な追従ラグでキャラが画面下方へ突き抜けて落ちていく勢いを表現
-        // その後カメラが背後斜め上へ急接近し、FOV 82 のウルトラワイド画角で周囲の島や雲が爆速で飛び去る！
         const chaseBlend = THREE.MathUtils.smoothstep(prog, 0.22, 0.42);
 
         const fromCamX = 0;
@@ -982,7 +955,6 @@ export function animate(currentTime) {
         targetLookAheadZ = THREE.MathUtils.lerp(fromLookZ, toLookZ, chaseBlend);
         targetFOV = THREE.MathUtils.lerp(camCfg.fovStart, camCfg.fovDrop, chaseBlend);
       } else if (b) {
-        // 【第3段階：先行ランディング】着地フロアへ先行して視線を合わせ、両足でスマートに着地
         const landRatio = (prog - 0.80) / 0.20;
         targetCamX = THREE.MathUtils.lerp(player.pos.x * 0.35 + camCfg.offsetX * 0.4, 0, landRatio);
         targetCamY = THREE.MathUtils.lerp(player.pos.y + camCfg.offsetY, b.endY + 7.5, landRatio);
@@ -994,7 +966,6 @@ export function animate(currentTime) {
       }
     }
 
-    // フリーフォール着地後のスムーズ復帰リカバリーカメラ
     if (trapdoorLandingRecoveryTimer > 0) {
       const recRatio = trapdoorLandingRecoveryTimer / 1.2;
       const recCamY = player.pos.y + 9.5;
@@ -1009,7 +980,6 @@ export function animate(currentTime) {
       targetFOV = THREE.MathUtils.lerp(targetFOV, 62, recRatio);
     }
 
-    // 自由落下・高速滑空時にキャラを見失わない強固な追従LERP
     const prog = player.trapdoorProgress || player.freefallProgress || 0;
     const trapdoorLerp = isTrapdoor
       ? (prog < 0.22 ? 0.32 : (prog < 0.42 ? TRAPDOOR_CONFIG.CAMERA.lerpFactorLead : TRAPDOOR_CONFIG.CAMERA.lerpFactorChase))

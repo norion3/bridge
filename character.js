@@ -1,4 +1,4 @@
-// 3Dキャラクター外観構築・手足メッシュ・スタックプール・トロリー・ホバー展望リフト・スカイダイブ＆トラップドア姿勢管理
+// 3Dキャラクター外観構築・手足メッシュ・スタックプール・トロリー・ホバー展望リフト・スカイダイブ＆トラップドア姿勢管理・スマートネームプレート
 import {
   TEAMS,
   MAX_VISUAL_STACK,
@@ -27,6 +27,84 @@ let updateHUDRef = null;
 export function setCharacterCallbacks(sound, updateHUD) {
   soundRef = sound;
   updateHUDRef = updateHUD;
+}
+
+// ★ Phase 1: 長文対応＆自動フォントスケール（Auto Font-Fit）付きスマートネームプレートスプライト生成
+export function createNameplateSprite(nameText, teamColorHex, isLocalPlayer = false) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 128;
+  const ctx = canvas.getContext('2d');
+
+  // 1. 背景カプセル（ローカルプレイヤーはシアン寄りダーク、他はスレートダーク）
+  ctx.fillStyle = isLocalPlayer ? 'rgba(2, 132, 199, 0.88)' : 'rgba(15, 23, 42, 0.82)';
+  ctx.beginPath();
+  if (ctx.roundRect) {
+    ctx.roundRect(16, 20, 480, 88, 44);
+  } else {
+    // 古い環境向けの角丸フォールバック
+    const rx = 16, ry = 20, rw = 480, rh = 88, radius = 44;
+    ctx.moveTo(rx + radius, ry);
+    ctx.lineTo(rx + rw - radius, ry);
+    ctx.quadraticCurveTo(rx + rw, ry, rx + rw, ry + radius);
+    ctx.lineTo(rx + rw, ry + rh - radius);
+    ctx.quadraticCurveTo(rx + rw, ry + rh, rx + rw - radius, ry + rh);
+    ctx.lineTo(rx + radius, ry + rh);
+    ctx.quadraticCurveTo(rx, ry + rh, rx, ry + rh - radius);
+    ctx.lineTo(rx, ry + radius);
+    ctx.quadraticCurveTo(rx, ry, rx + radius, ry);
+    ctx.closePath();
+  }
+  ctx.fill();
+
+  // 2. チームカラー枠線
+  const hexStr = `#${(teamColorHex || 0xffffff).toString(16).padStart(6, '0')}`;
+  ctx.strokeStyle = hexStr;
+  ctx.lineWidth = 6;
+  ctx.stroke();
+
+  // 3. 長文ネームに合わせたフォントサイズ自動調整（Auto Font-Fit）
+  const maxTextWidth = 430;
+  let fontSize = 42;
+  ctx.font = `bold ${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+
+  let textWidth = ctx.measureText(nameText).width;
+  while (textWidth > maxTextWidth && fontSize > 20) {
+    fontSize -= 2;
+    ctx.font = `bold ${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
+    textWidth = ctx.measureText(nameText).width;
+  }
+
+  // 4. テキスト描画（シャドウ付きで視認性最大化）
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.9)';
+  ctx.shadowBlur = 8;
+  ctx.shadowOffsetY = 3;
+  ctx.fillStyle = '#ffffff';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(nameText, 256, 64);
+
+  // 5. Three.js テクスチャ & スプライト
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.minFilter = THREE.LinearFilter;
+  const mat = new THREE.SpriteMaterial({
+    map: texture,
+    transparent: true,
+    depthTest: false
+  });
+
+  const sprite = new THREE.Sprite(mat);
+  sprite.scale.set(3.2, 0.8, 1.0);
+  return sprite;
+}
+
+// ネームプレートの頭上・スタックタワー連動リフトアップ追従
+export function updateNameplatePosition(char) {
+  if (!char || !char.nameplateSprite) return;
+  // Y = char.pos.y + 1.85m + min(stackCount * 0.22m, 5.5m)
+  const stackLift = Math.min((char.stackCount || 0) * 0.22, 5.5);
+  const targetY = char.pos.y + 1.85 + stackLift;
+  char.nameplateSprite.position.set(char.pos.x, targetY, char.pos.z);
 }
 
 export function createZiplineTrolleyMesh() {
@@ -364,6 +442,7 @@ export function resetCharacterPose(char) {
 export function addBrickToCharacter(char, team, count = 1, sound = null, updateHUD = null) {
   char.stackCount += count;
   refreshCharacterStackVisuals(char);
+  updateNameplatePosition(char);
   const s = sound || soundRef;
   const hud = updateHUD || updateHUDRef;
   if (char.isPlayer) {
@@ -376,6 +455,7 @@ export function removeBrickFromCharacter(char, updateHUD = null) {
   if (char.stackCount <= 0) return null;
   char.stackCount--;
   refreshCharacterStackVisuals(char);
+  updateNameplatePosition(char);
   const hud = updateHUD || updateHUDRef;
   if (char.isPlayer && hud) hud();
   return true;
@@ -383,11 +463,20 @@ export function removeBrickFromCharacter(char, updateHUD = null) {
 
 export function setupCharacters(scene, STAGES) {
   characters.length = 0;
+
+  // 1. ローカルプレイヤーの生成（名前解決: window.GRAVITY_USER_NAME があれば優先、なければ 'YOU'）
+  const playerName = (typeof window !== 'undefined' && window.GRAVITY_USER_NAME) ? String(window.GRAVITY_USER_NAME) : 'YOU';
   const pMesh = createCharacterMesh(TEAMS.BLUE);
   pMesh.root.rotation.set(0, Math.PI, 0);
   scene.add(pMesh.root);
+
+  const pNameplate = createNameplateSprite(playerName, TEAMS.BLUE.hex, true);
+  scene.add(pNameplate);
+
   player = {
     isPlayer: true,
+    name: playerName,
+    nameplateSprite: pNameplate,
     team: TEAMS.BLUE,
     meshObj: pMesh,
     pos: new THREE.Vector3(0, STAGES[0].y, STAGES[0].z + 4),
@@ -395,7 +484,7 @@ export function setupCharacters(scene, STAGES) {
     stackCount: 0,
     currentStage: 0,
     stunTimer: 0,
-    shrinkTimer: 0, // ★ サンダーによる縮小デバフタイマー
+    shrinkTimer: 0,
     invulnerableTimer: 0,
     walkCycle: 0,
     isJumping: false,
@@ -442,13 +531,21 @@ export function setupCharacters(scene, STAGES) {
     magnetTimer: 0
   };
   pMesh.root.position.copy(player.pos);
+  updateNameplatePosition(player);
   characters.push(player);
 
+  // 2. 赤Bot（CPU 1）の生成
   const b1Mesh = createCharacterMesh(TEAMS.RED);
   b1Mesh.root.rotation.set(0, Math.PI, 0);
   scene.add(b1Mesh.root);
+
+  const b1Nameplate = createNameplateSprite('CPU 1', TEAMS.RED.hex, false);
+  scene.add(b1Nameplate);
+
   const bot1 = {
     isPlayer: false,
+    name: 'CPU 1',
+    nameplateSprite: b1Nameplate,
     team: TEAMS.RED,
     meshObj: b1Mesh,
     pos: new THREE.Vector3(-4.0, STAGES[0].y, STAGES[0].z + 4),
@@ -458,7 +555,7 @@ export function setupCharacters(scene, STAGES) {
     aiState: 'COLLECT',
     aiCapacityGoal: 15,
     stunTimer: 0,
-    shrinkTimer: 0, // ★ サンダーによる縮小デバフタイマー
+    shrinkTimer: 0,
     invulnerableTimer: 0,
     walkCycle: 0,
     isJumping: false,
@@ -511,13 +608,21 @@ export function setupCharacters(scene, STAGES) {
     targetBlock: null
   };
   b1Mesh.root.position.copy(bot1.pos);
+  updateNameplatePosition(bot1);
   characters.push(bot1);
 
+  // 3. 黄Bot（CPU 2）の生成
   const b2Mesh = createCharacterMesh(TEAMS.YELLOW);
   b2Mesh.root.rotation.set(0, Math.PI, 0);
   scene.add(b2Mesh.root);
+
+  const b2Nameplate = createNameplateSprite('CPU 2', TEAMS.YELLOW.hex, false);
+  scene.add(b2Nameplate);
+
   const bot2 = {
     isPlayer: false,
+    name: 'CPU 2',
+    nameplateSprite: b2Nameplate,
     team: TEAMS.YELLOW,
     meshObj: b2Mesh,
     pos: new THREE.Vector3(4.0, STAGES[0].y, STAGES[0].z + 4),
@@ -527,7 +632,7 @@ export function setupCharacters(scene, STAGES) {
     aiState: 'COLLECT',
     aiCapacityGoal: 17,
     stunTimer: 0,
-    shrinkTimer: 0, // ★ サンダーによる縮小デバフタイマー
+    shrinkTimer: 0,
     invulnerableTimer: 0,
     walkCycle: 0,
     isJumping: false,
@@ -580,6 +685,7 @@ export function setupCharacters(scene, STAGES) {
     targetBlock: null
   };
   b2Mesh.root.position.copy(bot2.pos);
+  updateNameplatePosition(bot2);
   characters.push(bot2);
 
   return { player, characters };
@@ -590,8 +696,8 @@ export function resetCharacters(STAGES) {
     c.stackCount = 0;
     refreshCharacterStackVisuals(c);
     c.stunTimer = 0;
-    c.shrinkTimer = 0; // ★ リセット時に縮小タイマーをクリア
-    c.meshObj.root.scale.set(1.0, 1.0, 1.0); // ★ スケールを通常サイズへ復帰
+    c.shrinkTimer = 0;
+    c.meshObj.root.scale.set(1.0, 1.0, 1.0);
     c.invulnerableTimer = 0;
     c.currentStage = 0;
     c.isJumping = false;
@@ -656,13 +762,16 @@ export function resetCharacters(STAGES) {
   if (player && STAGES[0]) {
     player.pos.set(0, STAGES[0].y, STAGES[0].z + 4);
     player.meshObj.root.position.copy(player.pos);
+    updateNameplatePosition(player);
   }
   if (characters[1] && STAGES[0]) {
     characters[1].pos.set(-4.0, STAGES[0].y, STAGES[0].z + 4);
     characters[1].meshObj.root.position.copy(characters[1].pos);
+    updateNameplatePosition(characters[1]);
   }
   if (characters[2] && STAGES[0]) {
     characters[2].pos.set(4.0, STAGES[0].y, STAGES[0].z + 4);
     characters[2].meshObj.root.position.copy(characters[2].pos);
+    updateNameplatePosition(characters[2]);
   }
 }
