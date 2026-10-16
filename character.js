@@ -146,7 +146,7 @@ export function createZiplineTrolleyMesh() {
 export function createElevatorCageMesh() {
   const lift = new THREE.Group();
 
-  const floorMesh = new THREE.Mesh(elevatorPlatformFloorFloorGeo || elevatorPlatformFloorGeo, sharedMats.elevatorDeckPlate);
+  const floorMesh = new THREE.Mesh(elevatorPlatformFloorGeo, sharedMats.elevatorDeckPlate);
   floorMesh.position.y = -0.08;
   floorMesh.castShadow = true;
   floorMesh.receiveShadow = true;
