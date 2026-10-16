@@ -29,27 +29,27 @@ export function setCharacterCallbacks(sound, updateHUD) {
   updateHUDRef = updateHUD;
 }
 
-// 画面の世界観（南国リゾート感）を邪魔しない「超極薄ガラスフロスト調」ネームプレート
+// 背景の濃さを適正化し、白い島でも水色階段でも文字が100%際立つ洗練フロスト調ネームプレート
 export function createNameplateSprite(nameText, isLocalPlayer = false) {
   const canvas = document.createElement('canvas');
   canvas.width = 384;
   canvas.height = 96;
   const ctx = canvas.getContext('2d');
 
-  // 背景：空や海を美しく透かす極薄フロストカプセル（濃い黒を排し、さりげないトーンへ）
-  ctx.fillStyle = isLocalPlayer ? 'rgba(15, 23, 42, 0.22)' : 'rgba(15, 23, 42, 0.16)';
+  // 背景：濃すぎず薄すぎないダークフロスト（透過度約40%で白島でも文字を埋もれさせない）
+  ctx.fillStyle = isLocalPlayer ? 'rgba(15, 23, 42, 0.45)' : 'rgba(15, 23, 42, 0.38)';
   ctx.beginPath();
   ctx.roundRect(16, 16, 352, 64, 32);
   ctx.fill();
 
-  // 枠線：自キャラのみごく淡いシアン（他キャラは枠なしで溶け込ませる）
+  // 枠線：自キャラのみ上品なシアン枠
   if (isLocalPlayer) {
-    ctx.strokeStyle = 'rgba(56, 189, 248, 0.35)';
-    ctx.lineWidth = 1.8;
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.55)';
+    ctx.lineWidth = 2.0;
     ctx.stroke();
   }
 
-  // 文字描画（やわらかな白・繊細な文字シャドウで視認性を確保）
+  // 文字描画（純白・くっきりシャドウで遠近問わず視認性を最大化）
   const maxTextWidth = 320;
   let fontSize = 34;
   ctx.font = `bold ${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
@@ -61,11 +61,11 @@ export function createNameplateSprite(nameText, isLocalPlayer = false) {
     textWidth = ctx.measureText(nameText).width;
   }
 
-  ctx.shadowColor = 'rgba(0, 0, 0, 0.65)';
-  ctx.shadowBlur = 6;
-  ctx.shadowOffsetY = 1.5;
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.90)';
+  ctx.shadowBlur = 8;
+  ctx.shadowOffsetY = 2;
 
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.90)';
+  ctx.fillStyle = '#ffffff';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(nameText, 192, 48);
@@ -83,7 +83,7 @@ export function createNameplateSprite(nameText, isLocalPlayer = false) {
   return sprite;
 }
 
-// ちびキャラ化・全アクション姿勢・ギミック完全同期の追従幾何学
+// 見下ろしカメラ視角に合わせた高さクリアランス拡大 ＆ 全アクション姿勢完全同期
 export function updateNameplatePosition(char) {
   if (!char || !char.nameplateSprite) return;
 
@@ -94,41 +94,37 @@ export function updateNameplatePosition(char) {
   const visibleStacks = Math.min(char.stackCount || 0, MAX_VISUAL_STACK);
   const isShrunk = (char.shrinkTimer > 0);
 
-  // ★ ちびキャラ化（shrinkTimer > 0）時のスケール連動
+  // ちびキャラ化（shrinkTimer > 0）時のスケール連動
   if (isShrunk) {
-    // スプライト自体を可愛いミニサイズ（約0.55倍）に縮小
     char.nameplateSprite.scale.set(1.2, 0.30, 1.0);
   } else {
-    // 通常サイズへ復帰
     char.nameplateSprite.scale.set(2.2, 0.55, 1.0);
   }
 
   if (isShrunk) {
-    // ちびキャラ時：体型（スケール0.42）に合わせて頭上直上に密着配置
-    targetY = char.pos.y + 0.65;
+    // ちびキャラ時：ミニ頭部（Y=0.6m）のすぐ上にジャスト追従
+    targetY = char.pos.y + 0.95;
   } else if (char.onZipline) {
-    // ジップライン中（画像7の解消）：トロリーにぶら下がり中。頭頂部 + 滑車バー付近
-    targetY = char.pos.y + 1.65;
+    // ジップライン中（画像8の解消）：滑車バーの上空へしっかり引き上げ
+    targetY = char.pos.y + 2.35;
   } else if (char.onSkydive) {
-    // スカイダイブ中：前傾うつ伏せダイブ姿勢。タワーはリュック収納済み
-    targetY = char.pos.y + 0.85;
-    targetZ = char.pos.z - 0.20;
+    targetY = char.pos.y + 1.15;
+    targetZ = char.pos.z - 0.25;
   } else if (char.onTrapdoor || char.onFreefall) {
-    // ドロップタワー中：直立あがき姿勢。タワーはリュック収納済み
-    targetY = char.pos.y + 1.25 + 0.42;
+    targetY = char.pos.y + 1.85;
   } else if (char.onElevator) {
-    // エレベーター中：デッキ上で直立。タワー実高に追従
     const stackH = visibleStacks * 0.44;
-    targetY = char.pos.y + (visibleStacks > 0 ? (0.65 + stackH + 0.45) : 1.70);
+    targetY = char.pos.y + (visibleStacks > 0 ? (0.65 + stackH + 0.85) : 1.95);
   } else if (char.stunTimer > 0) {
-    // タックル被弾・転倒中：散乱でブロックが減り、体が揺れる。頭頂部基準で追従
-    targetY = char.pos.y + 1.25 + 0.35;
+    targetY = char.pos.y + 1.85;
   } else {
     // 通常時（地上走行・階段建設）
     if (visibleStacks === 0) {
-      targetY = char.pos.y + 1.25 + 0.42;
+      // ブロック0個時（画像10の解消）：頭部（Y=1.25m）から頭1個分しっかり離す
+      targetY = char.pos.y + 1.95;
     } else {
-      targetY = char.pos.y + 0.65 + (visibleStacks * 0.44) + 0.48;
+      // ブロック積載時（画像9の解消）：最上段ブロック天面から +0.85m 上空に配置
+      targetY = char.pos.y + 0.65 + (visibleStacks * 0.44) + 0.85;
     }
   }
 
