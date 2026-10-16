@@ -29,43 +29,46 @@ export function setCharacterCallbacks(sound, updateHUD) {
   updateHUDRef = updateHUD;
 }
 
-// 洗練された極薄ダーク半透明カプセル（どんな背景でも白文字を100%際立たせる）
+// 画面の世界観（南国リゾート感）を邪魔しない「超極薄ガラスフロスト調」ネームプレート
 export function createNameplateSprite(nameText, isLocalPlayer = false) {
   const canvas = document.createElement('canvas');
-  canvas.width = 512;
-  canvas.height = 128;
+  canvas.width = 384;
+  canvas.height = 96;
   const ctx = canvas.getContext('2d');
 
-  // 1. さりげなく上品な極薄ダーク半透明カプセル（UIと同じダークスレート）
-  ctx.fillStyle = isLocalPlayer ? 'rgba(15, 23, 42, 0.62)' : 'rgba(15, 23, 42, 0.50)';
+  // 背景：空や海を美しく透かす極薄フロストカプセル（濃い黒を排し、さりげないトーンへ）
+  ctx.fillStyle = isLocalPlayer ? 'rgba(15, 23, 42, 0.22)' : 'rgba(15, 23, 42, 0.16)';
   ctx.beginPath();
-  ctx.roundRect(32, 24, 448, 80, 40);
+  ctx.roundRect(16, 16, 352, 64, 32);
   ctx.fill();
 
-  // 2. 自キャラのみ極細シアンハイライト枠（他キャラは枠なしで極めてシンプル）
+  // 枠線：自キャラのみごく淡いシアン（他キャラは枠なしで溶け込ませる）
   if (isLocalPlayer) {
-    ctx.strokeStyle = 'rgba(56, 189, 248, 0.65)';
-    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.35)';
+    ctx.lineWidth = 1.8;
     ctx.stroke();
   }
 
-  // 3. テキスト自動スケール（Auto Font-Fit）
-  const maxTextWidth = 400;
-  let fontSize = 44;
+  // 文字描画（やわらかな白・繊細な文字シャドウで視認性を確保）
+  const maxTextWidth = 320;
+  let fontSize = 34;
   ctx.font = `bold ${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
 
   let textWidth = ctx.measureText(nameText).width;
-  while (textWidth > maxTextWidth && fontSize > 20) {
+  while (textWidth > maxTextWidth && fontSize > 16) {
     fontSize -= 2;
     ctx.font = `bold ${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
     textWidth = ctx.measureText(nameText).width;
   }
 
-  // 4. クッキリした純白文字描画
-  ctx.fillStyle = '#ffffff';
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.65)';
+  ctx.shadowBlur = 6;
+  ctx.shadowOffsetY = 1.5;
+
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.90)';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(nameText, 256, 64);
+  ctx.fillText(nameText, 192, 48);
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.minFilter = THREE.LinearFilter;
@@ -76,25 +79,60 @@ export function createNameplateSprite(nameText, isLocalPlayer = false) {
   });
 
   const sprite = new THREE.Sprite(mat);
-  // 見下ろしカメラからでも自然に読める適正サイズへ調整
-  sprite.scale.set(2.6, 0.65, 1.0);
+  sprite.scale.set(2.2, 0.55, 1.0);
   return sprite;
 }
 
-// ブロックタワーの天面を正確に追従するリフト幾何学
+// ちびキャラ化・全アクション姿勢・ギミック完全同期の追従幾何学
 export function updateNameplatePosition(char) {
   if (!char || !char.nameplateSprite) return;
-  // 現在表示されているブロック段数を取得（最大20段）
+
+  let targetX = char.pos.x;
+  let targetY = char.pos.y;
+  let targetZ = char.pos.z;
+
   const visibleStacks = Math.min(char.stackCount || 0, MAX_VISUAL_STACK);
-  let targetY;
-  if (visibleStacks === 0) {
-    // ブロック0個：頭頂部（Y=1.25）のすぐ上 +0.45m
-    targetY = char.pos.y + 1.25 + 0.45;
+  const isShrunk = (char.shrinkTimer > 0);
+
+  // ★ ちびキャラ化（shrinkTimer > 0）時のスケール連動
+  if (isShrunk) {
+    // スプライト自体を可愛いミニサイズ（約0.55倍）に縮小
+    char.nameplateSprite.scale.set(1.2, 0.30, 1.0);
   } else {
-    // ブロック積載時：スタックのベース高さ(Y=0.65) + 表示段数実高(段数 x 0.44m) + クリアランス(+0.50m)
-    targetY = char.pos.y + 0.65 + (visibleStacks * 0.44) + 0.50;
+    // 通常サイズへ復帰
+    char.nameplateSprite.scale.set(2.2, 0.55, 1.0);
   }
-  char.nameplateSprite.position.set(char.pos.x, targetY, char.pos.z);
+
+  if (isShrunk) {
+    // ちびキャラ時：体型（スケール0.42）に合わせて頭上直上に密着配置
+    targetY = char.pos.y + 0.65;
+  } else if (char.onZipline) {
+    // ジップライン中（画像7の解消）：トロリーにぶら下がり中。頭頂部 + 滑車バー付近
+    targetY = char.pos.y + 1.65;
+  } else if (char.onSkydive) {
+    // スカイダイブ中：前傾うつ伏せダイブ姿勢。タワーはリュック収納済み
+    targetY = char.pos.y + 0.85;
+    targetZ = char.pos.z - 0.20;
+  } else if (char.onTrapdoor || char.onFreefall) {
+    // ドロップタワー中：直立あがき姿勢。タワーはリュック収納済み
+    targetY = char.pos.y + 1.25 + 0.42;
+  } else if (char.onElevator) {
+    // エレベーター中：デッキ上で直立。タワー実高に追従
+    const stackH = visibleStacks * 0.44;
+    targetY = char.pos.y + (visibleStacks > 0 ? (0.65 + stackH + 0.45) : 1.70);
+  } else if (char.stunTimer > 0) {
+    // タックル被弾・転倒中：散乱でブロックが減り、体が揺れる。頭頂部基準で追従
+    targetY = char.pos.y + 1.25 + 0.35;
+  } else {
+    // 通常時（地上走行・階段建設）
+    if (visibleStacks === 0) {
+      targetY = char.pos.y + 1.25 + 0.42;
+    } else {
+      targetY = char.pos.y + 0.65 + (visibleStacks * 0.44) + 0.48;
+    }
+  }
+
+  char.nameplateSprite.position.set(targetX, targetY, targetZ);
 }
 
 export function createZiplineTrolleyMesh() {
