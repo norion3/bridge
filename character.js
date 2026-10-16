@@ -1,4 +1,4 @@
-// 3Dキャラクター外観構築・手足メッシュ・スタックプール・トロリー・ホバー展望リフト・スカイダイブ＆トラップドア姿勢管理・スマートネームプレート
+// 3Dキャラクター外観構築・手足メッシュ・スタックプール・トロリー・ホバー展望リフト・スカイダイブ＆トラップドア姿勢管理・足元フロスト投影ネームバッジ
 import {
   TEAMS,
   MAX_VISUAL_STACK,
@@ -29,39 +29,39 @@ export function setCharacterCallbacks(sound, updateHUD) {
   updateHUDRef = updateHUD;
 }
 
-// 背景の濃さを適正化し、白い島でも水色階段でも文字が100%際立つ洗練フロスト調ネームプレート
-export function createNameplateSprite(nameText, isLocalPlayer = false) {
+// ★ 上空の看板スプライトを完全撤廃！足元（接地点）に水平に敷かれる洗練フロストネームバッジ
+export function createNameplateMesh(nameText, isLocalPlayer = false) {
   const canvas = document.createElement('canvas');
   canvas.width = 384;
   canvas.height = 96;
   const ctx = canvas.getContext('2d');
 
-  // 背景：濃すぎず薄すぎないダークフロスト（透過度約40%で白島でも文字を埋もれさせない）
-  ctx.fillStyle = isLocalPlayer ? 'rgba(15, 23, 42, 0.45)' : 'rgba(15, 23, 42, 0.38)';
+  // 背景：足元に自然に馴染むフロストオーラ調カプセル（濃すぎない半透明ダークスレート）
+  ctx.fillStyle = isLocalPlayer ? 'rgba(15, 23, 42, 0.55)' : 'rgba(15, 23, 42, 0.42)';
   ctx.beginPath();
   ctx.roundRect(16, 16, 352, 64, 32);
   ctx.fill();
 
-  // 枠線：自キャラのみ上品なシアン枠
+  // 枠線：自キャラのみ鮮やかなシアンハイライト枠
   if (isLocalPlayer) {
-    ctx.strokeStyle = 'rgba(56, 189, 248, 0.55)';
-    ctx.lineWidth = 2.0;
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.75)';
+    ctx.lineWidth = 3.0;
     ctx.stroke();
   }
 
   // 文字描画（純白・くっきりシャドウで遠近問わず視認性を最大化）
   const maxTextWidth = 320;
-  let fontSize = 34;
+  let fontSize = 36;
   ctx.font = `bold ${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
 
   let textWidth = ctx.measureText(nameText).width;
-  while (textWidth > maxTextWidth && fontSize > 16) {
+  while (textWidth > maxTextWidth && fontSize > 18) {
     fontSize -= 2;
     ctx.font = `bold ${fontSize}px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif`;
     textWidth = ctx.measureText(nameText).width;
   }
 
-  ctx.shadowColor = 'rgba(0, 0, 0, 0.90)';
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.95)';
   ctx.shadowBlur = 8;
   ctx.shadowOffsetY = 2;
 
@@ -72,61 +72,42 @@ export function createNameplateSprite(nameText, isLocalPlayer = false) {
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.minFilter = THREE.LinearFilter;
-  const mat = new THREE.SpriteMaterial({
+
+  // 地面に水平に敷く PlaneGeometry
+  const planeGeo = new THREE.PlaneGeometry(1.9, 0.48);
+  planeGeo.rotateX(-Math.PI / 2); // 水平（床面と平行）に回転
+
+  const mat = new THREE.MeshBasicMaterial({
     map: texture,
     transparent: true,
-    depthTest: false
+    depthWrite: false
   });
 
-  const sprite = new THREE.Sprite(mat);
-  sprite.scale.set(2.2, 0.55, 1.0);
-  return sprite;
+  const mesh = new THREE.Mesh(planeGeo, mat);
+  mesh.renderOrder = 3;
+  return mesh;
 }
 
-// 見下ろしカメラ視角に合わせた高さクリアランス拡大 ＆ 全アクション姿勢完全同期
+// 後方互換用エイリアス
+export const createNameplateSprite = createNameplateMesh;
+
+// ★ タワー天面追従を完全廃止！常にキャラクターの「足元接地点」にピタッと吸着
 export function updateNameplatePosition(char) {
   if (!char || !char.nameplateSprite) return;
 
-  let targetX = char.pos.x;
-  let targetY = char.pos.y;
-  let targetZ = char.pos.z;
-
-  const visibleStacks = Math.min(char.stackCount || 0, MAX_VISUAL_STACK);
   const isShrunk = (char.shrinkTimer > 0);
 
   // ちびキャラ化（shrinkTimer > 0）時のスケール連動
   if (isShrunk) {
-    char.nameplateSprite.scale.set(1.2, 0.30, 1.0);
+    char.nameplateSprite.scale.set(0.55, 0.55, 0.55);
   } else {
-    char.nameplateSprite.scale.set(2.2, 0.55, 1.0);
+    char.nameplateSprite.scale.set(1.0, 1.0, 1.0);
   }
 
-  if (isShrunk) {
-    // ちびキャラ時：ミニ頭部（Y=0.6m）のすぐ上にジャスト追従
-    targetY = char.pos.y + 0.95;
-  } else if (char.onZipline) {
-    // ジップライン中（画像8の解消）：滑車バーの上空へしっかり引き上げ
-    targetY = char.pos.y + 2.35;
-  } else if (char.onSkydive) {
-    targetY = char.pos.y + 1.15;
-    targetZ = char.pos.z - 0.25;
-  } else if (char.onTrapdoor || char.onFreefall) {
-    targetY = char.pos.y + 1.85;
-  } else if (char.onElevator) {
-    const stackH = visibleStacks * 0.44;
-    targetY = char.pos.y + (visibleStacks > 0 ? (0.65 + stackH + 0.85) : 1.95);
-  } else if (char.stunTimer > 0) {
-    targetY = char.pos.y + 1.85;
-  } else {
-    // 通常時（地上走行・階段建設）
-    if (visibleStacks === 0) {
-      // ブロック0個時（画像10の解消）：頭部（Y=1.25m）から頭1個分しっかり離す
-      targetY = char.pos.y + 1.95;
-    } else {
-      // ブロック積載時（画像9の解消）：最上段ブロック天面から +0.85m 上空に配置
-      targetY = char.pos.y + 0.65 + (visibleStacks * 0.44) + 0.85;
-    }
-  }
+  // 床面（Y = pos.y + 0.04m）に吸着。タワーが何段伸びようが上空へ飛ばない！
+  const targetX = char.pos.x;
+  const targetY = char.pos.y + 0.04;
+  const targetZ = char.pos.z;
 
   char.nameplateSprite.position.set(targetX, targetY, targetZ);
 }
@@ -485,7 +466,8 @@ export function setupCharacters(scene, STAGES) {
   pMesh.root.rotation.set(0, Math.PI, 0);
   scene.add(pMesh.root);
 
-  const pNameplate = createNameplateSprite(playerName, true);
+  // ★ 足元に水平投影されるフロストネームバッジ
+  const pNameplate = createNameplateMesh(playerName, true);
   scene.add(pNameplate);
 
   player = {
@@ -554,7 +536,7 @@ export function setupCharacters(scene, STAGES) {
   b1Mesh.root.rotation.set(0, Math.PI, 0);
   scene.add(b1Mesh.root);
 
-  const b1Nameplate = createNameplateSprite('CPU 1', false);
+  const b1Nameplate = createNameplateMesh('CPU 1', false);
   scene.add(b1Nameplate);
 
   const bot1 = {
@@ -631,7 +613,7 @@ export function setupCharacters(scene, STAGES) {
   b2Mesh.root.rotation.set(0, Math.PI, 0);
   scene.add(b2Mesh.root);
 
-  const b2Nameplate = createNameplateSprite('CPU 2', false);
+  const b2Nameplate = createNameplateMesh('CPU 2', false);
   scene.add(b2Nameplate);
 
   const bot2 = {
