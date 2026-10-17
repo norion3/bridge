@@ -1,4 +1,4 @@
-// 物理移動判定・スカイウォーク歩行開放・ハッチ進入同期・リュック収納アニメーション連動・シームレス風音連携・スカイダイブ＆スライダーボーナス回収・左右分岐＆合流（Phase 3）
+// 物理移動判定・スカイウォーク歩行開放・ハッチ進入同期・リュック収納アニメーション連動・シームレス風音連携・スカイダイブ＆スライダーボーナス回収・平行直進ルート完全整合
 import {
   TEAMS,
   TRAMPOLINE_TIERS,
@@ -320,6 +320,7 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
   const isForwardIntent = !isMovingDownwardOrBackward && (inputDirZ < -0.05);
 
   const curStageObj = STAGES[char.currentStage];
+  const centerX = curStageObj ? (curStageObj.x || 0.0) : 0.0;
 
   const isFarFromBridges = curStageObj &&
     char.lastPlankIdx < 0 &&
@@ -336,10 +337,11 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
   }
 
   if (!isFarFromBridges) {
+    // 1. スカイダイブ進入判定
     const skyB = localBridges.find(b => b.isSkydive && b.stageIdx === char.currentStage);
     if (skyB && char.slideCooldown <= 0) {
-      const launchPointX = skyB.launchPoint ? skyB.launchPoint.x : 0;
-      const distToCatapult = Math.hypot(nextX - launchPointX, nextZ - skyB.startZ);
+      const launchX = skyB.launchPoint ? skyB.launchPoint.x : centerX;
+      const distToCatapult = Math.hypot(nextX - launchX, nextZ - skyB.startZ);
       if (distToCatapult < 2.8 && isForwardIntent) {
         char.onSkydive = true;
         char.skydiveProgress = 0;
@@ -355,22 +357,24 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
       }
     }
 
+    // 2. ドロップタワー進入判定
     const trapB = localBridges.find(b => b.isTrapdoor && b.stageIdx === char.currentStage);
     if (trapB && char.slideCooldown <= 0) {
       const approachStart = trapB.approachStartZ !== undefined ? trapB.approachStartZ : (trapB.startZ + 14.0);
       const hatchCenterZ = trapB.startZ;
+      const hatchX = trapB.hatchCenter ? trapB.hatchCenter.x : centerX;
 
-      const inSkywalkX = Math.abs(nextX) <= 1.7;
+      const inSkywalkX = Math.abs(nextX - hatchX) <= 1.7;
       const inSkywalkZ = (nextZ <= approachStart + 0.6) && (nextZ >= hatchCenterZ - 1.8);
 
       if (inSkywalkX && inSkywalkZ) {
-        const distToHatch = Math.hypot(nextX, nextZ - hatchCenterZ);
+        const distToHatch = Math.hypot(nextX - hatchX, nextZ - hatchCenterZ);
         if (distToHatch < 2.0 && isForwardIntent) {
           char.onTrapdoor = true;
           char.trapdoorProgress = 0;
           char.activeTrapdoor = trapB;
           char.trapdoorX = 0;
-          char.pos.x = 0;
+          char.pos.x = hatchX;
           trapB.isHatchOpen = true;
 
           if (char.isPlayer && soundRef) {
@@ -380,7 +384,7 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
           return;
         }
 
-        char.pos.x = Math.max(-1.5, Math.min(1.5, nextX));
+        char.pos.x = Math.max(hatchX - 1.5, Math.min(hatchX + 1.5, nextX));
         char.pos.z = nextZ;
         char.pos.y = trapB.startY;
         char.lastPlankIdx = -1;
@@ -389,9 +393,10 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
       }
     }
 
+    // 3. ジップライン進入判定
     const zipB = localBridges.find(b => b.isZipline && b.stageIdx === char.currentStage);
     if (zipB && char.slideCooldown <= 0) {
-      const startPtX = zipB.startPt ? zipB.startPt.x : 0;
+      const startPtX = zipB.startPt ? zipB.startPt.x : centerX;
       const distToStart = Math.hypot(nextX - startPtX, nextZ - zipB.startZ);
       if (distToStart < 3.2 && isForwardIntent) {
         char.onZipline = true;
@@ -401,13 +406,14 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
       }
     }
 
+    // 4. S字カーブスライダー進入判定
     const curvedB = localBridges.find(b => b.isCurvedSlide && b.stageIdx === char.currentStage);
     if (curvedB && char.slideCooldown <= 0) {
-      const distToStart = Math.hypot(nextX, nextZ - curvedB.startZ);
+      const distToStart = Math.hypot(nextX - centerX, nextZ - curvedB.startZ);
       if (distToStart < 3.2 && isForwardIntent) {
         char.onCurvedSlide = true;
         char.curvedSlideProgress = 0;
-        char.curvedSlideOffset = Math.max(-1.5, Math.min(1.5, nextX));
+        char.curvedSlideOffset = Math.max(-1.5, Math.min(1.5, nextX - centerX));
         char.activeCurvedBridge = curvedB;
         if (!char.isPlayer) {
           char.botSlideOffsetTarget = (Math.random() - 0.5) * 1.5;
@@ -416,13 +422,14 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
       }
     }
 
+    // 5. エレベーター進入判定
     const eleB = localBridges.find(b => b.isElevator && b.stageIdx === char.currentStage);
     if (eleB && char.slideCooldown <= 0 && !char.elevatorExiting) {
       let onLane = false;
       let closestLane = 0;
       let minDist = 999;
       for (let i = 0; i < 3; i++) {
-        const d = Math.abs(nextX - LANES[i]);
+        const d = Math.abs(nextX - (centerX + LANES[i]));
         if (d < 1.6) onLane = true;
         if (d < minDist) { minDist = d; closestLane = i; }
       }
@@ -439,20 +446,16 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
       }
     }
 
+    // 6. 通常階段・直線スライダー・ジャンプ台（完全直進・平行レーン判定）
     let onBridge = null;
     for (let b of localBridges) {
       if (b.isCurvedSlide || b.isZipline || b.isElevator || b.isSkydive || b.isTrapdoor) continue;
-
       if (char.currentStage !== b.stageIdx && char.currentStage !== b.nextStageIdx) continue;
 
-      // ★ Phase 3: 斜め架橋におけるレーン中心 X 座標の線形補間計算
-      const prevStage = STAGES[b.stageIdx];
-      const nextStage = STAGES[b.nextStageIdx];
-      const pStartX = (prevStage ? (prevStage.x || 0.0) : 0.0) + LANES[b.laneIdx];
-      const pEndX = (nextStage ? (nextStage.x || 0.0) : 0.0) + LANES[b.laneIdx];
-
-      const bridgeProgZ = Math.min(Math.max((b.startZ - nextZ) / Math.max(0.001, b.startZ - b.endZ), 0), 1);
-      const expectedLaneX = THREE.MathUtils.lerp(pStartX, pEndX, bridgeProgZ);
+      // 始点島・終点島の X 座標を取得（まっすぐ直進）
+      const fromStg = STAGES[b.stageIdx];
+      const bCenterX = fromStg ? (fromStg.x || 0.0) : 0.0;
+      const expectedLaneX = bCenterX + LANES[b.laneIdx];
 
       if (Math.abs(nextX - expectedLaneX) > 1.95) continue;
       if (nextZ > b.startZ + 0.15 || nextZ < b.endZ - 0.8) continue;
@@ -471,10 +474,9 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
     }
 
     if (onBridge) {
-      const prevStage = STAGES[onBridge.stageIdx];
-      const nextStage = STAGES[onBridge.nextStageIdx];
-      const pStartX = (prevStage ? (prevStage.x || 0.0) : 0.0) + LANES[onBridge.laneIdx];
-      const pEndX = (nextStage ? (nextStage.x || 0.0) : 0.0) + LANES[onBridge.laneIdx];
+      const fromStg = STAGES[onBridge.stageIdx];
+      const bCenterX = fromStg ? (fromStg.x || 0.0) : 0.0;
+      const currentLaneX = bCenterX + LANES[onBridge.laneIdx];
 
       if (char.currentStage === onBridge.nextStageIdx) {
         const isBridgeOpen = onBridge.isSlide || onBridge.isJump || onBridge.planks.every(p => p.teamId !== null);
@@ -492,20 +494,23 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
         }
       }
 
+      // 終点島への上陸
       if (nextZ <= onBridge.endZ - 0.1) {
         const lastPlank = onBridge.planks[onBridge.planks.length - 1];
         const canPassEnd = onBridge.isSlide || onBridge.isJump || (lastPlank && lastPlank.teamId === char.team.id);
         if (canPassEnd) {
           char.currentStage = onBridge.nextStageIdx;
+          const toStg = STAGES[onBridge.nextStageIdx];
+          const destCenterX = toStg ? (toStg.x || 0.0) : 0.0;
+
           if (onBridge.isSlide) {
-            const maxR = STAGES[onBridge.nextStageIdx].r - 1.5;
-            const destCenterX = nextStage ? (nextStage.x || 0.0) : 0.0;
+            const maxR = toStg.r - 1.5;
             char.pos.x = Math.max(destCenterX - maxR, Math.min(destCenterX + maxR, nextX));
           } else {
-            char.pos.x = pEndX;
+            char.pos.x = currentLaneX;
           }
           char.pos.z = nextZ;
-          char.pos.y = STAGES[onBridge.nextStageIdx].y;
+          char.pos.y = toStg.y;
           char.lastPlankIdx = -1;
           char.onSlide = false;
 
@@ -518,9 +523,10 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
         }
       }
 
+      // 始点島への引き返し
       if (nextZ >= onBridge.startZ) {
         char.currentStage = onBridge.stageIdx;
-        char.pos.x = pStartX;
+        char.pos.x = currentLaneX;
         char.pos.z = nextZ;
         char.pos.y = STAGES[onBridge.stageIdx].y;
         char.lastPlankIdx = -1;
@@ -529,7 +535,6 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
       }
 
       const progress = Math.min(Math.max((onBridge.startZ - nextZ) / (onBridge.startZ - onBridge.endZ), 0), 0.999);
-      const currentLaneX = THREE.MathUtils.lerp(pStartX, pEndX, progress);
       const plankIdx = Math.floor(progress * onBridge.planks.length);
 
       if (plankIdx >= 0 && plankIdx < onBridge.planks.length) {
@@ -543,7 +548,7 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
             char.jumpStartY = char.pos.y;
             char.jumpStartZ = char.pos.z;
             char.jumpTargetStage = onBridge.nextStageIdx;
-            char.jumpTargetX = pEndX;
+            char.jumpTargetX = currentLaneX;
             char.lastPlankIdx = -1;
             char.activeJumpTier = plank.jumpTier || TRAMPOLINE_TIERS.normal;
 
@@ -603,8 +608,7 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
             if (pIndex > 0 && onBridge.planks[pIndex - 1].teamId === null) {
               blocked = true;
               const blockedZ = onBridge.startZ - ((pIndex - 1) / onBridge.planks.length) * (onBridge.startZ - onBridge.endZ);
-              const blockedProg = Math.min(Math.max((onBridge.startZ - blockedZ) / (onBridge.startZ - onBridge.endZ), 0), 1);
-              char.pos.x = THREE.MathUtils.lerp(pStartX, pEndX, blockedProg);
+              char.pos.x = currentLaneX;
               char.pos.z = blockedZ + 0.12;
               char.pos.y = onBridge.planks[pIndex - 1].y;
               if (!char.isPlayer) {
@@ -620,8 +624,7 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
                 currentP.teamId = char.team.id;
 
                 if (onBridge.solidMesh && onBridge.ghostMesh) {
-                  const pX = THREE.MathUtils.lerp(pStartX, pEndX, (pIndex + 0.5) / onBridge.planks.length);
-                  dummyPlankObj.position.set(pX, currentP.y, currentP.z);
+                  dummyPlankObj.position.set(currentLaneX, currentP.y, currentP.z);
                   dummyPlankObj.rotation.set(0, 0, 0);
                   dummyPlankObj.scale.set(0, 0, 0);
                   dummyPlankObj.updateMatrix();
@@ -650,8 +653,7 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
               } else {
                 blocked = true;
                 const blockedZ = onBridge.startZ - (pIndex / onBridge.planks.length) * (onBridge.startZ - onBridge.endZ);
-                const blockedProg = Math.min(Math.max((onBridge.startZ - blockedZ) / (onBridge.startZ - onBridge.endZ), 0), 1);
-                char.pos.x = THREE.MathUtils.lerp(pStartX, pEndX, blockedProg);
+                char.pos.x = currentLaneX;
                 char.pos.z = blockedZ + 0.12;
                 char.pos.y = currentP.y;
                 if (!char.isPlayer) {
@@ -680,35 +682,17 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
     }
   }
 
-  // ★ Phase 3: 左右中継島（subIslands）および X 座標オフセットに対応した島内判定
+  // 7. 島内滞在判定（各ステージの中心 X 座標に完全整合）
   let onStage = null;
   for (let i = Math.max(0, char.currentStage - 1); i < STAGES.length; i++) {
     const stage = STAGES[i];
-    if (stage.subIslands) {
-      // 左右中継島ステージの場合：左中継島と右中継島の両方を判定
-      const leftSub = stage.subIslands.left;
-      const rightSub = stage.subIslands.right;
-      const inLeft = ((nextX - leftSub.x) ** 2 + (nextZ - leftSub.z) ** 2) < ((leftSub.r + 1.0) ** 2);
-      const inRight = ((nextX - rightSub.x) ** 2 + (nextZ - rightSub.z) ** 2) < ((rightSub.r + 1.0) ** 2);
-      if (inLeft || inRight) {
-        onStage = i;
-        char.pos.x = nextX;
-        char.pos.z = nextZ;
-        char.pos.y = inLeft ? leftSub.y : rightSub.y;
-        char.currentStage = onStage;
-        char.lastPlankIdx = -1;
-        char.onSlide = false;
-        return;
-      }
-    } else {
-      const centerX = stage.x || 0.0;
-      const dx = nextX - centerX;
-      const dz = nextZ - stage.z;
-      const inCircle = (dx * dx + dz * dz) < ((stage.r + 1.0) * (stage.r + 1.0));
-      if (inCircle) {
-        onStage = i;
-        break;
-      }
+    const stgCenterX = stage.x || 0.0;
+    const dx = nextX - stgCenterX;
+    const dz = nextZ - stage.z;
+    const inCircle = (dx * dx + dz * dz) < ((stage.r + 1.0) * (stage.r + 1.0));
+    if (inCircle) {
+      onStage = i;
+      break;
     }
   }
 
@@ -722,49 +706,35 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
     return;
   }
 
+  // 8. AI外周クランプ（各島の中心 X 座標に完全整合）
   if (!char.isPlayer) {
     const curStage = STAGES[char.currentStage];
     if (curStage) {
       const stageBridges = bridgesByStage.get(char.currentStage) || [];
-      const centerX = curStage.x || 0.0;
+      const stgCenterX = curStage.x || 0.0;
 
       const isApproachingAnyBridge = (nextZ < curStage.z) && stageBridges.some(b => {
         if (b.isSkydive || b.isTrapdoor || b.isCurvedSlide || b.isZipline || b.isFreefall) {
-          const lX = b.launchPoint ? b.launchPoint.x : centerX;
+          const lX = b.launchPoint ? b.launchPoint.x : stgCenterX;
           return Math.abs(nextX - lX) < 2.0;
         } else if (b.isElevator) {
-          return ELEVATOR_CONFIG.LANES.some(cfg => Math.abs(nextX - (centerX + LANES[cfg.laneIdx])) < 1.7);
+          return ELEVATOR_CONFIG.LANES.some(cfg => Math.abs(nextX - (stgCenterX + LANES[cfg.laneIdx])) < 1.7);
         } else {
-          return Math.abs(nextX - (centerX + LANES[b.laneIdx])) < 2.2;
+          return Math.abs(nextX - (stgCenterX + LANES[b.laneIdx])) < 2.0;
         }
       });
 
       if (!isApproachingAnyBridge) {
-        if (curStage.subIslands) {
-          const sub = (nextX < 0) ? curStage.subIslands.left : curStage.subIslands.right;
-          const dx = nextX - sub.x;
-          const dz = nextZ - sub.z;
-          const dist = Math.hypot(dx, dz);
-          const safeR = sub.r - 0.45;
-          if (dist > safeR && dist > 0.001) {
-            char.pos.x = sub.x + (dx / dist) * safeR;
-            char.pos.z = sub.z + (dz / dist) * safeR;
-            char.pos.y = sub.y;
-            char.lastPlankIdx = -1;
-            char.onSlide = false;
-          }
-        } else {
-          const dx = nextX - centerX;
-          const dz = nextZ - curStage.z;
-          const dist = Math.hypot(dx, dz);
-          const safeR = curStage.r - 0.45;
-          if (dist > safeR && dist > 0.001) {
-            char.pos.x = centerX + (dx / dist) * safeR;
-            char.pos.z = curStage.z + (dz / dist) * safeR;
-            char.pos.y = curStage.y;
-            char.lastPlankIdx = -1;
-            char.onSlide = false;
-          }
+        const dx = nextX - stgCenterX;
+        const dz = nextZ - curStage.z;
+        const dist = Math.hypot(dx, dz);
+        const safeR = curStage.r - 0.45;
+        if (dist > safeR && dist > 0.001) {
+          char.pos.x = stgCenterX + (dx / dist) * safeR;
+          char.pos.z = curStage.z + (dz / dist) * safeR;
+          char.pos.y = curStage.y;
+          char.lastPlankIdx = -1;
+          char.onSlide = false;
         }
       } else {
         char.pos.x = nextX;
@@ -905,13 +875,8 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
 
       const airSpeed = SKYDIVE_CONFIG.PHYSICS.horizontalAirControlSpeed;
       const maxAirX = SKYDIVE_CONFIG.PHYSICS.maxAirOffsetX;
-      const prevStage = STAGES[b.stageIdx];
-      const nextStage = STAGES[b.nextStageIdx];
-      const pStartX = (prevStage ? (prevStage.x || 0.0) : 0.0);
-      const pEndX = (nextStage ? (nextStage.x || 0.0) : 0.0);
-
-      const centerAirX = THREE.MathUtils.lerp(pStartX, pEndX, t);
-      char.skydiveX = Math.max(centerAirX - maxAirX, Math.min(centerAirX + maxAirX, char.skydiveX + dirX * airSpeed * dt));
+      const launchX = b.launchPoint ? b.launchPoint.x : 0;
+      char.skydiveX = Math.max(launchX - maxAirX, Math.min(launchX + maxAirX, char.skydiveX + dirX * airSpeed * dt));
 
       const targetRoll = -dirX * SKYDIVE_CONFIG.PHYSICS.maxRollAngle;
       char.skydiveRoll = THREE.MathUtils.lerp(char.skydiveRoll || 0, targetRoll, 0.25);
@@ -983,10 +948,11 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
 
       const airSpeed = TRAPDOOR_CONFIG.PHYSICS.horizontalAirControlSpeed;
       const maxAirX = TRAPDOOR_CONFIG.PHYSICS.maxAirOffsetX;
+      const hatchX = b.hatchCenter ? b.hatchCenter.x : 0;
       if (t < 0.28) {
-        char.trapdoorX = 0;
+        char.trapdoorX = hatchX;
       } else {
-        char.trapdoorX = Math.max(-maxAirX, Math.min(maxAirX, (char.trapdoorX || 0) + dirX * airSpeed * dt));
+        char.trapdoorX = Math.max(hatchX - maxAirX, Math.min(hatchX + maxAirX, (char.trapdoorX || hatchX) + dirX * airSpeed * dt));
       }
 
       const pZ = b.startZ;
@@ -1013,6 +979,8 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
   if (char.onElevator && char.activeElevator) {
     const b = char.activeElevator;
     const laneData = b.elevators.find(e => e.laneIdx === char.elevatorLane) || b.elevators[0];
+    const curStg = STAGES[b.stageIdx];
+    const bCenterX = curStg ? (curStg.x || 0.0) : 0.0;
 
     if (char.elevatorExiting) {
       char.elevatorExitTimer -= dt;
@@ -1036,7 +1004,8 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
         char.elevatorExiting = false;
         char.currentStage = b.nextStageIdx;
         const nextStageObj = STAGES[b.nextStageIdx];
-        char.pos.set(LANES[char.elevatorLane] * 0.6, nextStageObj.y, nextStageObj.z + nextStageObj.r * 0.4);
+        const destCenterX = nextStageObj ? (nextStageObj.x || 0.0) : 0.0;
+        char.pos.set(destCenterX + LANES[char.elevatorLane] * 0.6, nextStageObj.y, nextStageObj.z + nextStageObj.r * 0.4);
         char.slideCooldown = 0.5;
         char.lastPlankIdx = -1;
         char.activeElevator = null;
@@ -1061,7 +1030,7 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     if (char.elevatorProgress >= 1.0) {
       char.elevatorExiting = true;
       char.elevatorExitTimer = ELEVATOR_CONFIG.EASING.exitDelay;
-      char.pos.set(LANES[char.elevatorLane], b.endY + 0.10, b.endZ - 1.0);
+      char.pos.set(bCenterX + LANES[char.elevatorLane], b.endY + 0.10, b.endZ - 1.0);
 
       triggerLandingShockwave(char.pos.x, b.endY, b.endZ - 1.0, 1.8);
       if (char.isPlayer && soundRef) soundRef.playElevatorArrival();
@@ -1080,7 +1049,7 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
         pY += Math.sin(bouncePhase * Math.PI) * ELEVATOR_CONFIG.EASING.arrivalBounceHeight;
       }
 
-      char.pos.set(LANES[char.elevatorLane], pY + 0.10, pZ);
+      char.pos.set(bCenterX + LANES[char.elevatorLane], pY + 0.10, pZ);
 
       char.meshObj.root.rotation.set(0, Math.PI, 0);
       char.meshObj.leftLeg.rotation.set(0, 0, 0);
@@ -1518,34 +1487,25 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     const curStage = STAGES[char.currentStage];
     if (curStage) {
       const stageBridges = bridgesByStage.get(char.currentStage) || [];
-      const centerX = curStage.x || 0.0;
+      const stgCenterX = curStage.x || 0.0;
+      const distFromIsland = Math.hypot(char.pos.x - stgCenterX, char.pos.z - curStage.z);
 
       const isProtectedInTransit = stageBridges.some(b => {
         if (b.isTrapdoor || b.isFreefall) {
           const approachStart = b.approachStartZ !== undefined ? b.approachStartZ : (b.startZ + 16.0);
-          return Math.abs(char.pos.x - centerX) < 2.5 && (char.pos.z <= approachStart + 2.0 && char.pos.z >= b.startZ - 2.5);
+          return Math.abs(char.pos.x - stgCenterX) < 2.5 && (char.pos.z <= approachStart + 2.0 && char.pos.z >= b.startZ - 2.5);
         }
         if (b.isSkydive) {
-          const lX = b.launchPoint ? b.launchPoint.x : centerX;
+          const lX = b.launchPoint ? b.launchPoint.x : stgCenterX;
           return Math.abs(char.pos.x - lX) < 2.5 && (char.pos.z <= b.startZ + 3.0 && char.pos.z >= b.startZ - 4.0);
         }
-        const laneX = (b.isCurvedSlide || b.isZipline) ? centerX : (centerX + LANES[b.laneIdx]);
+        const laneX = (b.isCurvedSlide || b.isZipline) ? stgCenterX : (stgCenterX + LANES[b.laneIdx]);
         return Math.abs(char.pos.x - laneX) < 2.2 && (char.pos.z <= b.startZ + 2.5 && char.pos.z >= b.endZ - 1.0);
       });
 
-      if (curStage.subIslands) {
-        const sub = (char.pos.x < 0) ? curStage.subIslands.left : curStage.subIslands.right;
-        const distFromSub = Math.hypot(char.pos.x - sub.x, char.pos.z - sub.z);
-        if (distFromSub > sub.r + 2.0 && char.lastPlankIdx < 0 && !isProtectedInTransit) {
-          char.pos.set(sub.x, sub.y, sub.z);
-          char.lastPlankIdx = -1;
-        }
-      } else {
-        const distFromIsland = Math.hypot(char.pos.x - centerX, char.pos.z - curStage.z);
-        if (distFromIsland > curStage.r + 2.0 && char.lastPlankIdx < 0 && !isProtectedInTransit) {
-          char.pos.set(centerX, curStage.y, curStage.z);
-          char.lastPlankIdx = -1;
-        }
+      if (distFromIsland > curStage.r + 2.0 && char.lastPlankIdx < 0 && !isProtectedInTransit) {
+        char.pos.set(stgCenterX, curStage.y, curStage.z);
+        char.lastPlankIdx = -1;
       }
     }
   }
@@ -1559,9 +1519,8 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
 
   if (!char.isJumping && !char.onCurvedSlide && !char.onZipline && !char.onElevator && !char.onSkydive && !char.onTrapdoor && char.pos.y < lowestAllowedY) {
     if (currentStageObj) {
-      const resetX = currentStageObj.subIslands ? ((char.pos.x < 0) ? currentStageObj.subIslands.left.x : currentStageObj.subIslands.right.x) : (currentStageObj.x || 0.0);
-      const resetY = currentStageObj.subIslands ? ((char.pos.x < 0) ? currentStageObj.subIslands.left.y : currentStageObj.subIslands.right.y) : currentStageObj.y;
-      char.pos.set(resetX, resetY, currentStageObj.z);
+      const resetX = currentStageObj.x || 0.0;
+      char.pos.set(resetX, currentStageObj.y, currentStageObj.z);
       char.onSlide = false;
       char.invulnerableTimer = 1.0;
     }
@@ -1580,18 +1539,9 @@ export function handleTackles(scene) {
       const stage = STAGES[c1.currentStage];
       if (!stage) continue;
 
-      let onIsland1 = false, onIsland2 = false;
-      if (stage.subIslands) {
-        const sub1 = (c1.pos.x < 0) ? stage.subIslands.left : stage.subIslands.right;
-        const sub2 = (c2.pos.x < 0) ? stage.subIslands.left : stage.subIslands.right;
-        onIsland1 = ((c1.pos.x - sub1.x) ** 2 + (c1.pos.z - sub1.z) ** 2) < (sub1.r * sub1.r);
-        onIsland2 = ((c2.pos.x - sub2.x) ** 2 + (c2.pos.z - sub2.z) ** 2) < (sub2.r * sub2.r);
-        if (sub1 !== sub2) continue;
-      } else {
-        const centerX = stage.x || 0.0;
-        onIsland1 = ((c1.pos.x - centerX) ** 2 + (c1.pos.z - stage.z) ** 2) < (stage.r * stage.r);
-        onIsland2 = ((c2.pos.x - centerX) ** 2 + (c2.pos.z - stage.z) ** 2) < (stage.r * stage.r);
-      }
+      const centerX = stage.x || 0.0;
+      const onIsland1 = ((c1.pos.x - centerX) ** 2 + (c1.pos.z - stage.z) ** 2) < (stage.r * stage.r);
+      const onIsland2 = ((c2.pos.x - centerX) ** 2 + (c2.pos.z - stage.z) ** 2) < (stage.r * stage.r);
       if (!onIsland1 || !onIsland2) continue;
 
       const tdx = c1.pos.x - c2.pos.x;
@@ -1616,16 +1566,15 @@ export function tackleKnockout(scene, winner, loser) {
   const pushZ = (kz / mag) * 2.0;
   const stage = STAGES[loser.currentStage];
   if (stage) {
-    const centerX = stage.subIslands ? ((loser.pos.x < 0) ? stage.subIslands.left.x : stage.subIslands.right.x) : (stage.x || 0.0);
-    const centerR = stage.subIslands ? ((loser.pos.x < 0) ? stage.subIslands.left.r : stage.subIslands.right.r) : stage.r;
+    const centerX = stage.x || 0.0;
     const nextX = loser.pos.x + pushX;
     const nextZ = loser.pos.z + pushZ;
     const distToCenter = Math.hypot(nextX - centerX, nextZ - stage.z);
-    if (distToCenter > centerR) {
+    if (distToCenter > stage.r) {
       const normX = (nextX - centerX) / distToCenter;
       const normZ = (nextZ - stage.z) / distToCenter;
-      loser.pos.x = centerX + normX * (centerR - 0.5);
-      loser.pos.z = stage.z + normZ * (centerR - 0.5);
+      loser.pos.x = centerX + normX * (stage.r - 0.5);
+      loser.pos.z = stage.z + normZ * (stage.r - 0.5);
     } else {
       loser.pos.x = nextX;
       loser.pos.z = nextZ;

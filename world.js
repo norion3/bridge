@@ -1,4 +1,4 @@
-// コース伸長・浮島・橋・スライド・ジップライン・エレベーター・スカイダイブ・ドロップタワー施設・二股分岐＆合流（Phase 3）・全走者生存保証GC
+// コース伸長・浮島・橋・スライド・ジップライン・エレベーター・スカイダイブ・ドロップタワー施設・二股分岐＆合流（選択B：平行直進ルート）
 import {
   BLOCK_TYPES,
   TRAMPOLINE_TIERS,
@@ -175,6 +175,7 @@ export function createModifierGate(scene, stageIdx, posX, posZ, posY, opType, va
   modifierGates.push(gateData);
 }
 
+// 分岐島（Stage 6）中央の誘導ネオンアーチ
 export function createForkGuideSign(scene, stageIdx, posX, posY, posZ) {
   const group = new THREE.Group();
 
@@ -207,7 +208,7 @@ export function createForkGuideSign(scene, stageIdx, posX, posY, posZ) {
   ctxL.lineWidth = 8;
   ctxL.strokeRect(4, 4, 248, 120);
   ctxL.fillStyle = '#00f0ff';
-  ctxL.font = 'bold 36px -apple-system, sans-serif';
+  ctxL.font = 'bold 34px -apple-system, sans-serif';
   ctxL.textAlign = 'center';
   ctxL.textBaseline = 'middle';
   ctxL.fillText('⚡ SHORTCUT', 128, 64);
@@ -233,7 +234,7 @@ export function createForkGuideSign(scene, stageIdx, posX, posY, posZ) {
   ctxR.lineWidth = 8;
   ctxR.strokeRect(4, 4, 248, 120);
   ctxR.fillStyle = '#facc15';
-  ctxR.font = 'bold 36px -apple-system, sans-serif';
+  ctxR.font = 'bold 34px -apple-system, sans-serif';
   ctxR.textAlign = 'center';
   ctxR.textBaseline = 'middle';
   ctxR.fillText('💎 RICH', 128, 64);
@@ -251,7 +252,6 @@ export function createForkGuideSign(scene, stageIdx, posX, posY, posZ) {
 
   group.position.set(posX, posY, posZ);
   scene.add(group);
-
   stageMeshes.push({ meshGroup: group, stageIdx: stageIdx });
   return group;
 }
@@ -616,6 +616,7 @@ export function createOceanIsletMesh(scale = 1.0, type = 'tropical') {
   return group;
 }
 
+// 浮島メッシュ（中心 X 座標サポート）
 export function createIslandMesh(r, y, z, x = 0.0) {
   const group = new THREE.Group();
   const plat = new THREE.Mesh(islandGeo, sharedMats.island);
@@ -773,12 +774,13 @@ export function spawnGatesOnIsland(scene, stageIdx, islandZ, islandY, islandX = 
   createModifierGate(scene, stageIdx, islandX + 3.2, gateZ, islandY, p.right.op, p.right.val, p.right.label);
 }
 
-export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, nextIslandZ, prevR, nextR, startY, endY, type, prevIslandX = 0.0, nextIslandX = 0.0) {
+// ★ 完全直進・平行架橋（斜め架橋を撤廃し、交差バグ・虚空突き刺さりを100%根絶）
+export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, nextIslandZ, prevR, nextR, startY, endY, type, islandCenterX = 0.0) {
   if (type === 'skydive') {
     const startZ = prevIslandZ - prevR + 1.2;
     const endZ = nextIslandZ + nextR - 1.2;
 
-    const catapult = createSkydiveCatapultStructure(scene, prevIslandX, startY, startZ);
+    const catapult = createSkydiveCatapultStructure(scene, islandCenterX, startY, startZ);
 
     const skydiveBridge = {
       stageIdx, nextStageIdx, laneIdx: 1, planks: [],
@@ -797,7 +799,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       const fallPower = SKYDIVE_CONFIG.PHYSICS.gravityPower || 2.0;
       const hop = Math.sin(t * Math.PI) * (SKYDIVE_CONFIG.PHYSICS.hopHeight || 3.5);
       const bY = startY + (endY - startY) * Math.pow(t, fallPower) + hop + 0.35;
-      const bX = THREE.MathUtils.lerp(prevIslandX, nextIslandX, t) + Math.sin(si * 1.5) * 2.4;
+      const bX = islandCenterX + Math.sin(si * 1.5) * 2.4;
 
       const bMesh = new THREE.Mesh(blockGeometry, sharedMats.blockNeutral);
       bMesh.position.set(bX, bY, bZ);
@@ -826,19 +828,19 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     const approachStartZ = prevIslandZ - prevR + 1.2;
     const targetDropZ = nextIslandZ + nextR - 1.2;
 
-    const hatch = createTrapdoorHatchStructure(scene, prevIslandX, startY, targetDropZ, approachStartZ);
+    const hatch = createTrapdoorHatchStructure(scene, islandCenterX, startY, targetDropZ, approachStartZ);
 
     const landingPad = new THREE.Group();
     const landingRimGeo = new THREE.TorusGeometry(2.4, 0.08, 8, 32);
     landingRimGeo.rotateX(Math.PI / 2);
     const landingRim = new THREE.Mesh(landingRimGeo, sharedMats.dropPylonSteel);
-    landingRim.position.set(nextIslandX, endY + 0.08, targetDropZ);
+    landingRim.position.set(islandCenterX, endY + 0.08, targetDropZ);
     landingPad.add(landingRim);
 
     const landingRingGeo = new THREE.RingGeometry(1.6, 2.2, 32);
     landingRingGeo.rotateX(-Math.PI / 2);
     const landingRing = new THREE.Mesh(landingRingGeo, sharedMats.dropIndicatorNeon);
-    landingRing.position.set(nextIslandX, endY + 0.09, targetDropZ);
+    landingRing.position.set(islandCenterX, endY + 0.09, targetDropZ);
     landingPad.add(landingRing);
 
     scene.add(landingPad);
@@ -892,7 +894,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     }
 
     shuffledLanes.forEach(cfg => {
-      const laneX = prevIslandX + LANES[cfg.laneIdx];
+      const laneX = islandCenterX + LANES[cfg.laneIdx];
       const stationMesh = createElevatorStationStructure(scene, laneX, startY, startZ, endY, endZ, cfg);
       elevatorBridge.visualMeshes.push(stationMesh);
 
@@ -916,13 +918,13 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     const departureTopY = startY + 5.5;
     const arrivalTopY = endY + 4.5;
 
-    const depPylon = createZiplinePylonMesh(prevIslandX, startY, startZ, departureTopY, true);
+    const depPylon = createZiplinePylonMesh(islandCenterX, startY, startZ, departureTopY, true);
     scene.add(depPylon);
-    const arrPylon = createZiplinePylonMesh(nextIslandX, endY, endZ, arrivalTopY, false);
+    const arrPylon = createZiplinePylonMesh(islandCenterX, endY, endZ, arrivalTopY, false);
     scene.add(arrPylon);
 
-    const startPt = new THREE.Vector3(prevIslandX, departureTopY - 0.2, startZ);
-    const endPt = new THREE.Vector3(nextIslandX, arrivalTopY - 0.2, endZ);
+    const startPt = new THREE.Vector3(islandCenterX, departureTopY - 0.2, startZ);
+    const endPt = new THREE.Vector3(islandCenterX, arrivalTopY - 0.2, endZ);
     const cableVec = new THREE.Vector3().subVectors(endPt, startPt);
     const cableLen = cableVec.length();
 
@@ -982,10 +984,10 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     const dropY = startY - endY;
     const sDir = (stageIdx % 2 === 0 ? 1 : -1);
 
-    const p0 = new THREE.Vector3(prevIslandX, startY + 0.28, startZ);
-    const p1 = new THREE.Vector3(prevIslandX + sDir * 7.5, startY - dropY * 0.28, startZ - distZ * 0.28);
-    const p2 = new THREE.Vector3(nextIslandX - sDir * 5.8, startY - dropY * 0.72, startZ - distZ * 0.72);
-    const p3 = new THREE.Vector3(nextIslandX, endY + 0.28, endZ);
+    const p0 = new THREE.Vector3(islandCenterX, startY + 0.28, startZ);
+    const p1 = new THREE.Vector3(islandCenterX + sDir * 7.5, startY - dropY * 0.28, startZ - distZ * 0.28);
+    const p2 = new THREE.Vector3(islandCenterX - sDir * 5.8, startY - dropY * 0.72, startZ - distZ * 0.72);
+    const p3 = new THREE.Vector3(islandCenterX, endY + 0.28, endZ);
     const spline = new THREE.CatmullRomCurve3([p0, p1, p2, p3]);
 
     const steps = 55;
@@ -1136,10 +1138,9 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     const endZ = nextIslandZ + nextInsetZ + stairsEndOffset;
     const distZ = startZ - endZ;
 
-    const startX = prevIslandX + laneOffset;
-    const endX = nextIslandX + laneOffset;
+    const startX = islandCenterX + laneOffset;
 
-    const dist3D = Math.hypot(Math.hypot(distZ, endX - startX), endY - startY);
+    const dist3D = Math.hypot(distZ, endY - startY);
     const numPlanks = isJump ? 1 : Math.max(12, Math.floor(dist3D / (PLANK_LENGTH * 0.75)));
 
     const bridge = {
@@ -1157,20 +1158,15 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       const slopeOverlap = 0.45;
       const slopeDistZ = (sStartZ - sEndZ) + slopeOverlap * 2;
       const slopeDistY = endY - startY;
-      const slopeDistX = endX - startX;
       const slopeLength = Math.hypot(slopeDistZ, slopeDistY);
       const slopeGeo = new THREE.BoxGeometry(3.6, 0.22, slopeLength);
       const slopeMesh = new THREE.Mesh(slopeGeo, sharedMats.slideSurface);
 
       const midZ = (sStartZ + sEndZ) / 2;
       const midY = (startY + endY) / 2 + 0.10;
-      const midX = (startX + endX) / 2;
-      slopeMesh.position.set(midX, midY, midZ);
+      slopeMesh.position.set(startX, midY, midZ);
       const angleX = Math.atan2(slopeDistY, slopeDistZ);
       slopeMesh.rotation.x = angleX;
-      if (Math.abs(slopeDistX) > 0.001) {
-        slopeMesh.rotation.y = Math.atan2(slopeDistX, slopeDistZ);
-      }
       slopeMesh.receiveShadow = true;
       scene.add(slopeMesh);
       bridge.visualMeshes.push(slopeMesh);
@@ -1180,17 +1176,16 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
         const prog = 0.22 + (sbi / (numSlideBlocks - 1)) * 0.58;
         const bZ = sStartZ - prog * (sStartZ - sEndZ);
         const bY = startY + prog * (endY - startY) + 0.34;
-        const bX = startX + prog * (endX - startX);
 
         const bMesh = new THREE.Mesh(blockGeometry, sharedMats.blockNeutral);
-        bMesh.position.set(bX, bY, bZ);
+        bMesh.position.set(startX, bY, bZ);
         bMesh.rotation.x = angleX;
         scene.add(bMesh);
 
         const bonusData = {
           mesh: bMesh,
           laneIdx: laneIdx,
-          laneX: bX,
+          laneX: startX,
           prog: prog,
           z: bZ,
           baseY: bY,
@@ -1206,7 +1201,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
         const railOffsets = [-1.85, 1.85];
         railOffsets.forEach(rOff => {
           const rP1 = new THREE.Vector3(startX + rOff, startY + 0.28, sStartZ + 0.35);
-          const rP2 = new THREE.Vector3(endX + rOff, endY + 0.28, sEndZ - 0.35);
+          const rP2 = new THREE.Vector3(startX + rOff, endY + 0.28, sEndZ - 0.35);
 
           const railVec = new THREE.Vector3().subVectors(rP2, rP1);
           const railLen = railVec.length();
@@ -1258,7 +1253,6 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       for (let i = 0; i < numPlanks; i++) {
         const progress = (i + 0.5) / numPlanks;
         let pZ = startZ - progress * distZ;
-        let pX = startX + progress * (endX - startX);
 
         let pY = startY + progress * (endY - startY);
         if (isStepBridge) {
@@ -1268,11 +1262,10 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
             const topOffset = (laneIdx === 1) ? -0.25 : +0.18;
             pZ = nextIslandZ + nextInsetZ + topOffset;
             pY = endY + plankCenterOffsetY;
-            pX = endX;
           }
         }
 
-        dummyPlankObj.position.set(pX, pY, pZ);
+        dummyPlankObj.position.set(startX, pY, pZ);
         dummyPlankObj.rotation.set(0, 0, 0);
         dummyPlankObj.scale.set(1, 1, 1);
         dummyPlankObj.updateMatrix();
@@ -1303,13 +1296,15 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
   }
 }
 
-export function extendCourseForkPatternA(scene) {
+// ★ 選択B：平行・直進2ルート方式（交差ゼロ・破綻ゼロの黄金レイアウト）
+export function extendCourseForkPatternB(scene) {
   const forkIdx = STAGES.length;
   const prev = STAGES[forkIdx - 1];
 
-  const forkDistZ = 36.0;
+  // 1. 分岐アイランド（Stage 6: ワイド幅 R=13m）
+  const forkDistZ = 34.0;
   const forkZ = prev.z - forkDistZ;
-  const forkY = Math.max(5.0, prev.y + 6.0);
+  const forkY = prev.y + 6.0;
   const forkR = 13.0;
 
   const forkStage = {
@@ -1327,89 +1322,74 @@ export function extendCourseForkPatternA(scene) {
   stageMeshes.push({ meshGroup: forkMeshGroup, stageIdx: forkIdx });
 
   CONNECTIONS.push({ from: forkIdx - 1, to: forkIdx, type: 'bridge' });
-  createBridgeLinks(scene, forkIdx - 1, forkIdx, prev.z, forkZ, prev.r, forkR, prev.y, forkY, 'bridge', prev.x || 0.0, 0.0);
+  createBridgeLinks(scene, forkIdx - 1, forkIdx, prev.z, forkZ, prev.r, forkR, prev.y, forkY, 'bridge', 0.0);
 
+  // 分岐案内ネオンサイン（Stage 6 の中央手前）
   createForkGuideSign(scene, forkIdx, 0.0, forkY, forkZ - forkR * 0.45);
 
-  const midDistZ = 36.0;
-  const midZ = forkZ - midDistZ;
-
+  // 2. 左中継島（Stage 7: ショートカット $X = -6.0m$、直進配置）
+  const leftMidDistZ = 32.0;
+  const leftMidZ = forkZ - leftMidDistZ;
   const leftMidY = forkY + 5.0;
   const leftMidR = 9.5;
-  const leftMidX = -17.5;
+  const leftMidX = -6.0;
 
-  const rightMidY = forkY + 3.0;
-  const rightMidR = 11.5;
-  const rightMidX = 17.5;
-
-  const midStageIdx = STAGES.length;
-  const midStage = {
-    z: midZ,
-    y: (leftMidY + rightMidY) / 2,
-    x: 0.0,
-    r: 12.0,
-    type: 'fork_branch',
-    isBranch: true,
-    subIslands: {
-      left: { x: leftMidX, y: leftMidY, z: midZ, r: leftMidR, role: 'shortcut' },
-      right: { x: rightMidX, y: rightMidY, z: midZ, r: rightMidR, role: 'rich' }
-    }
+  const leftStageIdx = STAGES.length;
+  const leftStage = {
+    z: leftMidZ,
+    y: leftMidY,
+    x: leftMidX,
+    r: leftMidR,
+    type: 'fork_left',
+    branchRole: 'shortcut'
   };
-  STAGES.push(midStage);
+  STAGES.push(leftStage);
 
-  const leftMidMesh = createIslandMesh(leftMidR, leftMidY, midZ, leftMidX);
-  scene.add(leftMidMesh);
-  stageMeshes.push({ meshGroup: leftMidMesh, stageIdx: midStageIdx, subRole: 'left' });
+  const leftMesh = createIslandMesh(leftMidR, leftMidY, leftMidZ, leftMidX);
+  scene.add(leftMesh);
+  stageMeshes.push({ meshGroup: leftMesh, stageIdx: leftStageIdx });
 
-  const rightMidMesh = createIslandMesh(rightMidR, rightMidY, midZ, rightMidX);
-  scene.add(rightMidMesh);
-  stageMeshes.push({ meshGroup: rightMidMesh, stageIdx: midStageIdx, subRole: 'right' });
+  // 分岐島から左島へ向かう「完全直進・平行階段」（X = -6.0m）
+  CONNECTIONS.push({ from: forkIdx, to: leftStageIdx, type: 'bridge', branch: 'left' });
+  createBridgeLinks(scene, forkIdx, leftStageIdx, forkZ, leftMidZ, forkR, leftMidR, forkY, leftMidY, 'bridge', leftMidX);
 
-  CONNECTIONS.push({ from: forkIdx, to: midStageIdx, type: 'fork_left_connect', branch: 'left' });
-  createBridgeLinks(scene, forkIdx, midStageIdx, forkZ, midZ, forkR, leftMidR, forkY, leftMidY, 'bridge', 0.0, leftMidX);
+  // 3. 右中継島（Stage 8: リッチ資材 $X = +6.0m$、直進配置）
+  const rightMidDistZ = 34.0;
+  const rightMidZ = forkZ - rightMidDistZ;
+  const rightMidY = forkY + 4.0;
+  const rightMidR = 11.5;
+  const rightMidX = 6.0;
 
-  CONNECTIONS.push({ from: forkIdx, to: midStageIdx, type: 'fork_right_connect', branch: 'right' });
-  createBridgeLinks(scene, forkIdx, midStageIdx, forkZ, midZ, forkR, rightMidR, forkY, rightMidY, 'bridge', 0.0, rightMidX);
+  const rightStageIdx = STAGES.length;
+  const rightStage = {
+    z: rightMidZ,
+    y: rightMidY,
+    x: rightMidX,
+    r: rightMidR,
+    type: 'fork_right',
+    branchRole: 'rich'
+  };
+  STAGES.push(rightStage);
+
+  const rightMesh = createIslandMesh(rightMidR, rightMidY, rightMidZ, rightMidX);
+  scene.add(rightMesh);
+  stageMeshes.push({ meshGroup: rightMesh, stageIdx: rightStageIdx });
+
+  // 分岐島から右島へ向かう「完全直進・平行階段」（X = +6.0m）
+  CONNECTIONS.push({ from: forkIdx, to: rightStageIdx, type: 'bridge', branch: 'right' });
+  createBridgeLinks(scene, forkIdx, rightStageIdx, forkZ, rightMidZ, forkR, rightMidR, forkY, rightMidY, 'bridge', rightMidX);
+
+  // 右島：リッチ確定アイテム（サンダー or マグネット）＆ボーナスゲート
+  createModifierGate(scene, rightStageIdx, rightMidX - 2.8, rightMidZ - 0.8, rightMidY, 'add', 8, '+8');
+  createModifierGate(scene, rightStageIdx, rightMidX + 2.8, rightMidZ - 0.8, rightMidY, 'multiply', 2, '×2');
 
   const richItemType = (Math.random() < 0.5 ? 'thunder' : 'magnet');
-  STAGES[midStageIdx] = midStage;
+  spawnItem(scene, rightStageIdx, richItemType);
 
-  createModifierGate(scene, midStageIdx, rightMidX - 2.8, midZ - 0.8, rightMidY, 'add', 8, '+8');
-  createModifierGate(scene, midStageIdx, rightMidX + 2.8, midZ - 0.8, rightMidY, 'multiply', 2, '×2');
-
-  const richItemGroup = new THREE.Group();
-  const crystalMat = (richItemType === 'thunder') ? sharedMats.itemThunderCrystal : sharedMats.itemMagnetCrystal;
-  const ringMat = (richItemType === 'thunder') ? sharedMats.itemThunderBeaconRing : sharedMats.itemMagnetBeaconRing;
-  const crystalGeo = (richItemType === 'thunder') ? itemThunderGeo : itemMagnetGeo;
-
-  const crystal = new THREE.Mesh(crystalGeo, crystalMat);
-  crystal.position.y = 1.35;
-  if (richItemType === 'magnet') crystal.rotation.x = -Math.PI / 2;
-  crystal.castShadow = true;
-  richItemGroup.add(crystal);
-
-  const beaconRing = new THREE.Mesh(itemBeaconRingGeo, ringMat);
-  beaconRing.position.y = 0.04;
-  richItemGroup.add(beaconRing);
-
-  richItemGroup.position.set(rightMidX, rightMidY, midZ + 1.2);
-  scene.add(richItemGroup);
-
-  floorItems.push({
-    group: richItemGroup,
-    crystal: crystal,
-    beaconRing: beaconRing,
-    mesh: richItemGroup,
-    type: richItemType,
-    pos: richItemGroup.position,
-    active: true,
-    stageIdx: midStageIdx,
-    baseY: rightMidY
-  });
-
-  const mergeDistZ = 42.0;
-  const mergeZ = midZ - mergeDistZ;
-  const mergeY = Math.max(5.0, forkY - 4.0);
+  // 4. 合流アイランド（Stage 9: $X = 0.0m$）
+  const mergeDistZ = 46.0;
+  const mergeZ = Math.min(leftMidZ, rightMidZ) - mergeDistZ;
+  const mergeY = Math.max(5.0, forkY - 6.0);
   const mergeR = 13.0;
 
   const mergeStageIdx = STAGES.length;
@@ -1427,11 +1407,13 @@ export function extendCourseForkPatternA(scene) {
   scene.add(mergeMeshGroup);
   stageMeshes.push({ meshGroup: mergeMeshGroup, stageIdx: mergeStageIdx });
 
-  CONNECTIONS.push({ from: midStageIdx, to: mergeStageIdx, type: 'merge_left_connect', branch: 'left' });
-  createBridgeLinks(scene, midStageIdx, mergeStageIdx, midZ, mergeZ, leftMidR, mergeR, leftMidY, mergeY, 'skydive', leftMidX, 0.0);
+  // 左島からは「特大スカイダイブ」（X = -6.0m から合流島へ一直線ダイブ！）
+  CONNECTIONS.push({ from: leftStageIdx, to: mergeStageIdx, type: 'skydive', branch: 'left' });
+  createBridgeLinks(scene, leftStageIdx, mergeStageIdx, leftMidZ, mergeZ, leftMidR, mergeR, leftMidY, mergeY, 'skydive', leftMidX);
 
-  CONNECTIONS.push({ from: midStageIdx, to: mergeStageIdx, type: 'merge_right_connect', branch: 'right' });
-  createBridgeLinks(scene, midStageIdx, mergeStageIdx, midZ, mergeZ, rightMidR, mergeR, rightMidY, mergeY, 'slide', rightMidX, 0.0);
+  // 右島からは「高速直線ウォータースライダー」（X = +6.0m から合流島へ一直線滑走！）
+  CONNECTIONS.push({ from: rightStageIdx, to: mergeStageIdx, type: 'slide', branch: 'right' });
+  createBridgeLinks(scene, rightStageIdx, mergeStageIdx, rightMidZ, mergeZ, rightMidR, mergeR, rightMidY, mergeY, 'slide', rightMidX);
 
   spawnGatesOnIsland(scene, mergeStageIdx, mergeZ, mergeY, 0.0);
   spawnItem(scene, mergeStageIdx, getNextBagItem());
@@ -1443,8 +1425,9 @@ export function extendCourse(scene) {
   const idx = STAGES.length;
   const prev = STAGES[idx - 1];
 
+  // Stage 6 到達時に「選択B：平行直進の二股分岐＆合流」を安全生成
   if (idx === 6) {
-    extendCourseForkPatternA(scene);
+    extendCourseForkPatternB(scene);
     return;
   }
 
@@ -1534,18 +1517,19 @@ export function extendCourse(scene) {
 
   nextY = Math.max(5.0, nextY);
   const nextZ = prev.z - distZ;
-  const stageInfo = { z: nextZ, y: nextY, x: 0.0, r: r, type: type };
+  const currentIslandX = prev.x || 0.0;
+  const stageInfo = { z: nextZ, y: nextY, x: currentIslandX, r: r, type: type };
   STAGES.push(stageInfo);
 
-  const islandMeshGroup = createIslandMesh(r, nextY, nextZ, 0.0);
+  const islandMeshGroup = createIslandMesh(r, nextY, nextZ, currentIslandX);
   scene.add(islandMeshGroup);
   stageMeshes.push({ meshGroup: islandMeshGroup, stageIdx: idx });
 
   CONNECTIONS.push({ from: idx - 1, to: idx, type: type });
-  createBridgeLinks(scene, idx - 1, idx, prev.z, nextZ, prev.r, r, prev.y, nextY, type, prev.x || 0.0, 0.0);
+  createBridgeLinks(scene, idx - 1, idx, prev.z, nextZ, prev.r, r, prev.y, nextY, type, currentIslandX);
 
   if (idx >= 1) {
-    spawnGatesOnIsland(scene, idx, nextZ, nextY, 0.0);
+    spawnGatesOnIsland(scene, idx, nextZ, nextY, currentIslandX);
 
     if (idx % 2 === 1) {
       const typeToSpawn = getNextBagItem();
@@ -1556,7 +1540,7 @@ export function extendCourse(scene) {
   if (idx % 2 === 0) {
     const cloudSide = (idx % 4 === 0) ? 1 : -1;
     const cloudMesh = createCloudMesh();
-    const cloudX = cloudSide * (16 + Math.random() * 8);
+    const cloudX = currentIslandX + cloudSide * (16 + Math.random() * 8);
     const cloudY = (prev.y + nextY) / 2 + (Math.random() * 4 - 2);
     const cloudZ = (prev.z + nextZ) / 2;
     cloudMesh.position.set(cloudX, cloudY, cloudZ);
@@ -1570,7 +1554,7 @@ export function extendCourse(scene) {
         0.8 + Math.random() * 0.7,
         Math.random() < 0.6 ? 'tropical' : 'rocky'
       );
-      const isletX = side * (26 + Math.random() * 16);
+      const isletX = currentIslandX + side * (26 + Math.random() * 16);
       const isletZ = nextZ + (Math.random() * 14 - 7);
       isletMesh.position.set(isletX, -42, isletZ);
       scene.add(isletMesh);
@@ -1710,8 +1694,7 @@ export function buildWorld(scene) {
   for (let i = 0; i < 6; i++) extendCourse(scene);
 }
 
-// ★ Phase 3: 全走者生存保証クリーンアップ（Multi-Safe GC）
-// プレイヤーだけでなく、後続の走者が左右中継島（Stage N+1）に残っている間は古い足場を破棄しない安全保護
+// 全走者生存保証クリーンアップ
 export function cleanupOldData(scene) {
   if (!player) return;
 
@@ -1872,7 +1855,7 @@ export function spawnSingleBlock(scene, stageIdx, targetTeam = null) {
     const candZ = stageInfo.z + Math.sin(theta) * r;
 
     if (skydiveB) {
-      const dSkySq = (candX - (skydiveB.startPt ? skydiveB.startPt.x : centerX)) ** 2 + (candZ - skydiveB.startZ) ** 2;
+      const dSkySq = (candX - (skydiveB.launchPoint ? skydiveB.launchPoint.x : centerX)) ** 2 + (candZ - skydiveB.startZ) ** 2;
       if (dSkySq < (SKYDIVE_CONFIG.CATAPULT.exclusionRadius * SKYDIVE_CONFIG.CATAPULT.exclusionRadius)) {
         attempts++;
         continue;

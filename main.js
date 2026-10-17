@@ -1,4 +1,4 @@
-// メインエントリポイント：Three.js初期化・ダイナミックロックオン並走カメラ（左右分岐追従対応）・メインループ・ネームプレート連動
+// メインエントリポイント：Three.js初期化・ダイナミックロックオン並走カメラ（左右ルート完全整合追従）・メインループ・ネームプレート連動
 import { SoundEngine } from './audio.js';
 import {
   TEAMS,
@@ -143,7 +143,6 @@ export function setupControls() {
   const zone = document.getElementById('touch-control-layer');
   let touchId = null, startX = 0, startY = 0;
 
-  // iOS (iPhone / Safari / WebView) 特有ジェスチャー・デフォルト動作の完全ガード
   const preventDefaultHandler = (e) => {
     if (e.cancelable) e.preventDefault();
   };
@@ -819,7 +818,8 @@ export function animate(currentTime) {
       const localTrapB = bridges.find(b => b.isTrapdoor && b.stageIdx === player.currentStage);
       if (localTrapB) {
         const approachStart = localTrapB.approachStartZ !== undefined ? localTrapB.approachStartZ : (localTrapB.startZ + 14.0);
-        if (player.pos.z <= approachStart + 0.8 && player.pos.z >= localTrapB.startZ - 1.8 && Math.abs(player.pos.x) < 2.5) {
+        const hatchX = localTrapB.hatchCenter ? localTrapB.hatchCenter.x : (currentStageObj ? (currentStageObj.x || 0.0) : 0.0);
+        if (player.pos.z <= approachStart + 0.8 && player.pos.z >= localTrapB.startZ - 1.8 && Math.abs(player.pos.x - hatchX) < 2.5) {
           return localTrapB;
         }
       }
@@ -828,12 +828,12 @@ export function animate(currentTime) {
 
     const stackLift = Math.min((player.stackCount || 0) * 0.08, 3.2);
 
-    // ★ Phase 3: 左右分岐ルート（X 座標が ±17.5m 寄りへシフト）に滑らかに追従するカメラパン設計
-    const isOffCenterRoute = Math.abs(player.pos.x) > 3.0;
-    let targetCamX = isOffCenterRoute ? (player.pos.x * 0.82) : (player.pos.x * 0.2);
+    // 左右ルート（X = ±6.0m）に滑らかに追従するカメラオフセット
+    const isOffCenterRoute = Math.abs(player.pos.x) > 2.0;
+    let targetCamX = isOffCenterRoute ? (player.pos.x * 0.85) : (player.pos.x * 0.2);
     let targetCamY = player.pos.y + 24 + stackLift;
     let targetCamZ = player.pos.z + 12 + (stackLift * 0.6);
-    let targetLookX = isOffCenterRoute ? (player.pos.x * 0.72) : (player.pos.x * 0.1);
+    let targetLookX = isOffCenterRoute ? (player.pos.x * 0.75) : (player.pos.x * 0.1);
     let targetLookY = player.pos.y + (stackLift * 0.3);
     let targetLookAheadZ = player.pos.z - 5;
     let targetFOV = player.speedBoostActive ? 65 : 60;
@@ -884,7 +884,6 @@ export function animate(currentTime) {
       targetLookY = player.pos.y - 1.2;
       targetFOV = 67;
     } else if (isSlideRiding) {
-      // 左右中継島からのスライダーでも横方向を自然に追従
       targetCamX = player.pos.x * 0.85;
       targetCamY = player.pos.y + 18;
       targetCamZ = player.pos.z + 9;
@@ -921,22 +920,23 @@ export function animate(currentTime) {
       const b = player.activeTrapdoor || player.activeFreefall;
       const prog = player.trapdoorProgress || player.freefallProgress || 0;
       const camCfg = TRAPDOOR_CONFIG.CAMERA;
+      const hatchX = b.hatchCenter ? b.hatchCenter.x : 0;
 
       if (b && prog < 0.22) {
-        targetCamX = 0;
+        targetCamX = hatchX;
         targetCamY = b.startY + 11.5;
         targetCamZ = b.startZ;
-        targetLookX = 0;
+        targetLookX = hatchX;
         targetLookY = player.pos.y;
         targetLookAheadZ = b.startZ;
         targetFOV = camCfg.fovStart;
       } else if (b && prog < 0.80) {
         const chaseBlend = THREE.MathUtils.smoothstep(prog, 0.22, 0.42);
 
-        const fromCamX = 0;
+        const fromCamX = hatchX;
         const fromCamY = b.startY + 11.5;
         const fromCamZ = b.startZ;
-        const fromLookX = 0;
+        const fromLookX = hatchX;
         const fromLookY = player.pos.y;
         const fromLookZ = b.startZ;
 
@@ -956,10 +956,10 @@ export function animate(currentTime) {
         targetFOV = THREE.MathUtils.lerp(camCfg.fovStart, camCfg.fovDrop, chaseBlend);
       } else if (b) {
         const landRatio = (prog - 0.80) / 0.20;
-        targetCamX = THREE.MathUtils.lerp(player.pos.x * 0.35 + camCfg.offsetX * 0.4, 0, landRatio);
+        targetCamX = THREE.MathUtils.lerp(player.pos.x * 0.35 + camCfg.offsetX * 0.4, hatchX, landRatio);
         targetCamY = THREE.MathUtils.lerp(player.pos.y + camCfg.offsetY, b.endY + 7.5, landRatio);
         targetCamZ = THREE.MathUtils.lerp(player.pos.z + camCfg.offsetZ, b.endZ + 11.5, landRatio);
-        targetLookX = 0;
+        targetLookX = hatchX;
         targetLookY = b.endY + 1.0;
         targetLookAheadZ = b.endZ - 5.0;
         targetFOV = THREE.MathUtils.lerp(camCfg.fovDrop, 62, landRatio);

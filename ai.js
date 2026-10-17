@@ -1,4 +1,4 @@
-// Bot AI自律思考ロジック・レーン評価・左右分岐選択（Phase 4）・スカイダイブ＆ドロップタワー進入・空中姿勢同期・AIワープ追いつき復活・スタック回避・進入アライメント誘導・オーガニックスムージング
+// Bot AI自律思考ロジック・レーン評価・左右分岐選択（選択B完全整合）・スカイダイブ＆ドロップタワー進入・空中姿勢同期・AIワープ追いつき復活・スタック回避・進入アライメント誘導・オーガニックスムージング
 import {
   LANES,
   ELEVATOR_CONFIG,
@@ -111,7 +111,7 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
     bot.currentStage = player.currentStage;
     const stage = STAGES[bot.currentStage];
     if (stage) {
-      const centerX = stage.subIslands ? ((bot.pos.x < 0) ? stage.subIslands.left.x : stage.subIslands.right.x) : (stage.x || 0.0);
+      const centerX = stage.x || 0.0;
       bot.pos.x = centerX + (Math.random() - 0.5) * 6;
       bot.pos.z = stage.z + stage.r * 0.85;
       bot.pos.y = stage.y;
@@ -132,7 +132,6 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
     return;
   }
 
-  // ★ 動的ラバーバンド（ゴム紐）加速：1ステージ差の時に走破速度を自然にブースト
   const stageDiff = (player && bot.currentStage < player.currentStage) ? (player.currentStage - bot.currentStage) : 0;
   const isLaggingBehind = stageDiff > 0;
   const speedMultiplier = isLaggingBehind ? 1.35 : 1.0;
@@ -167,14 +166,12 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
     return;
   }
 
-  // ★ Unstuck回避ステップ実行中の処理（障害物や引っかかりから即時脱出）
   if (bot.unstuckTimer > 0) {
     bot.unstuckTimer -= effectiveDt;
     updateSingleCharacter(scene, bot, bot.unstuckDirX, bot.unstuckDirZ, effectiveDt, spawnPuffCloud, spawnSpeedStepRing);
     return;
   }
 
-  // ★ AIスタック（棒立ち・停止）検知ルーチン（0.3秒で0.18m未満しか進めていない場合に発動）
   if (!bot.lastPosCheck) {
     bot.lastPosCheck = new THREE.Vector3().copy(bot.pos);
     bot.stuckCheckTimer = 0;
@@ -205,7 +202,7 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
   if (!stage) return;
 
   const stageBridges = bridgesByStage.get(bot.currentStage) || [];
-  const currentCenterX = stage.subIslands ? ((bot.pos.x < 0) ? stage.subIslands.left.x : stage.subIslands.right.x) : (stage.x || 0.0);
+  const currentCenterX = stage.x || 0.0;
 
   const activeBridge = stageBridges.find(b =>
     !b.isCurvedSlide &&
@@ -222,13 +219,12 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
   const nextConn = CONNECTIONS.find(c => c.from === bot.currentStage);
   const isVerticalNext = (nextConn && nextConn.type === 'vertical');
 
-  // ★ Phase 4: 分岐島（isFork）での自律判断・ルート選択
+  // ★ 分岐島（isFork: Stage 6）での自律判断・ルート選択
   if (stage.isFork && bot.forkBranchChoice === undefined) {
     const stackRatio = bot.stackCount / Math.max(1, bot.aiCapacityGoal || 15);
-    // ブロックが潤沢（または先行時）は近道（left: shortcut）を選びやすい、不足時はリッチ（right: rich）
-    const shortcutWeight = 0.35 + (stackRatio > 0.8 ? 0.35 : 0.0) + (isLaggingBehind ? -0.15 : 0.15);
+    const shortcutWeight = 0.40 + (stackRatio > 0.8 ? 0.35 : 0.0) + (isLaggingBehind ? -0.20 : 0.15);
     bot.forkBranchChoice = (Math.random() < shortcutWeight) ? 'left' : 'right';
-  } else if (!stage.isFork && !stage.isBranch) {
+  } else if (!stage.isFork && stage.type !== 'fork_left' && stage.type !== 'fork_right') {
     bot.forkBranchChoice = undefined;
   }
 
@@ -337,7 +333,6 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
       const toBlockZ = bot.targetBlock.pos.z - bot.pos.z;
       const distToBlock = Math.hypot(toBlockX, toBlockZ);
 
-      // ★ オーガニック・カーブアプローチ
       if (distToBlock > 1.2) {
         const curveSign = (bot.team.id === 'red') ? 1.0 : -1.0;
         const curveFactor = Math.min(0.24, distToBlock * 0.035) * curveSign;
@@ -384,15 +379,13 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
       return;
     }
 
-    // ★ Phase 4: 分岐島では選択したブランチ（left: -17.5m / right: +17.5m）へ向かう橋を特定
+    // 分岐島では選択したルート（左: stage.x = -6.0m / 右: stage.x = +6.0m）の直進橋を特定
     let b = null;
     if (stage.isFork && bot.forkBranchChoice) {
-      const targetSubX = (bot.forkBranchChoice === 'left') ? -17.5 : 17.5;
+      const targetBranchX = (bot.forkBranchChoice === 'left') ? -6.0 : 6.0;
       b = stageBridges.find(br => {
         const nextStg = STAGES[br.nextStageIdx];
-        if (!nextStg || !nextStg.subIslands) return false;
-        const sub = (bot.forkBranchChoice === 'left') ? nextStg.subIslands.left : nextStg.subIslands.right;
-        return sub && Math.abs(sub.x - targetSubX) < 1.0 && (br.laneIdx === bot.targetLane || br.laneIdx === 1);
+        return nextStg && Math.abs((nextStg.x || 0.0) - targetBranchX) < 1.0 && (br.laneIdx === bot.targetLane || br.laneIdx === 1);
       }) || stageBridges.find(br => br.laneIdx === bot.targetLane);
     } else {
       b = stageBridges.find(
@@ -408,10 +401,12 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
     }
 
     if (b) {
-      let targetX = currentCenterX + LANES[bot.targetLane];
+      const nextStg = STAGES[b.nextStageIdx];
+      const targetCenterX = (stage.isFork && nextStg) ? (nextStg.x || 0.0) : currentCenterX;
+      let targetX = targetCenterX + LANES[bot.targetLane];
 
       if (b.isSkydive || b.isTrapdoor || b.isCurvedSlide || b.isZipline || b.isFreefall) {
-        targetX = b.launchPoint ? b.launchPoint.x : currentCenterX;
+        targetX = b.launchPoint ? b.launchPoint.x : targetCenterX;
       } else if (b.isElevator) {
         if (bot.elevatorChoice === undefined) {
           if (Math.random() < 0.25) {
@@ -428,7 +423,7 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
             bot.elevatorChoice = bestLaneIdx;
           }
         }
-        targetX = currentCenterX + LANES[bot.elevatorChoice];
+        targetX = targetCenterX + LANES[bot.elevatorChoice];
       }
 
       const targetZ = b.isTrapdoor ? (b.startZ - 0.2) : (bot.pos.z < b.startZ ? bot.pos.z - 2 : b.startZ - 0.5);
