@@ -1,4 +1,4 @@
-// コース伸長・浮島・橋・スライド・ジップライン・エレベーター・スカイダイブ・ドロップタワー施設・二股分岐＆合流（超高低差立体レイアウト ＆ 各ルート橋1本化 ＆ 隙間ゼロ完全接合）
+// コース伸長・浮島・橋・スライド・ジップライン・エレベーター・スカイダイブ・ドロップタワー施設・二股分岐＆合流（通常ステージ3レーン完全復元 ＆ 分岐ステージ厳格隔離）
 import {
   BLOCK_TYPES,
   TRAMPOLINE_TIERS,
@@ -693,7 +693,7 @@ export function spawnGatesOnIsland(scene, stageIdx, islandZ, islandY, islandX = 
   createModifierGate(scene, stageIdx, islandX + 3.2, gateZ, islandY, p.right.op, p.right.val, p.right.label);
 }
 
-// 架橋生成（singleLaneOnly: true の場合は中央の1本のみ架設）
+// 架橋生成（通常ステージは厳格に3レーン、singleLaneOnly: true の分岐ステージのみ中央の1本）
 export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, nextIslandZ, prevR, nextR, startY, endY, type, islandCenterX = 0.0, singleLaneOnly = false) {
   if (type === 'skydive') {
     const startZ = prevIslandZ - prevR + 1.2;
@@ -1047,24 +1047,28 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     }
   }
 
-  // 分岐する島へは橋をそれぞれ「1本だけ（中央レーン幅）」にする。通常ステージは厳格に3本 [0, 1, 2]
+  // ★ 通常ステージ（singleLaneOnly === false）は本来の3本 [0, 1, 2] を厳格に保証！
+  // ★ 分岐ステージ（singleLaneOnly === true）の時のみ [1]（中央1本のみ）
   const laneIndices = singleLaneOnly ? [1] : [0, 1, 2];
 
   for (let lIdx = 0; lIdx < laneIndices.length; lIdx++) {
     const laneIdx = laneIndices[lIdx];
-    const laneOffset = singleLaneOnly ? 0.0 : LANES[laneIdx];
-    const actualBridgeX = singleLaneOnly ? islandCenterX : (islandCenterX + laneOffset);
 
-    // 始点島（prevIslandZ）の中心 X は fromStage.x。
+    // 通常ステージは島中心（0.0m）からのオフセット LANES[laneIdx] = [-4.0, 0, +4.0]
+    // 分岐単独橋の時のみ islandCenterX (±6.5m)
+    const laneX = singleLaneOnly ? 0.0 : LANES[laneIdx];
+    const actualBridgeX = singleLaneOnly ? islandCenterX : (islandCenterX + laneX);
+
+    // 始点島からの切り欠き：通常ステージは各レーンの laneX、分岐ステージは実際の横位置
     const fromStageObj = STAGES[stageIdx];
     const fromStageCenterX = fromStageObj ? (fromStageObj.x || 0.0) : 0.0;
-    const relFromX = singleLaneOnly ? (actualBridgeX - fromStageCenterX) : laneOffset;
+    const relFromX = singleLaneOnly ? (actualBridgeX - fromStageCenterX) : laneX;
 
     const prevInsetZ = Math.sqrt(Math.max(1, prevR * prevR - relFromX * relFromX));
-    const nextInsetZ = Math.sqrt(Math.max(1, nextR * nextR - laneOffset * laneOffset));
+    const nextInsetZ = Math.sqrt(Math.max(1, nextR * nextR - laneX * laneX));
 
+    // 通常ステージの前後オフセットは本来のマスター値へ完全復元
     const stairsEndOffset = isStepBridge ? (laneIdx === 1 ? -0.4 : +0.03) : -1.2;
-    // 始点を島の内側に約0.35m踏み込ませて隙間をゼロ化
     const startZ = prevIslandZ - prevInsetZ + (isStepBridge ? 0.35 : 1.2);
     const endZ = nextIslandZ + nextInsetZ + stairsEndOffset;
     const distZ = startZ - endZ;
@@ -1255,6 +1259,7 @@ export function extendCourseForkPatternB(scene) {
   scene.add(forkMeshGroup);
   stageMeshes.push({ meshGroup: forkMeshGroup, stageIdx: forkIdx });
 
+  // 分岐島への階段は通常の3レーン
   CONNECTIONS.push({ from: forkIdx - 1, to: forkIdx, type: 'bridge' });
   createBridgeLinks(scene, forkIdx - 1, forkIdx, prev.z, forkZ, prev.r, forkR, prev.y, forkY, 'bridge', 0.0, false);
 
