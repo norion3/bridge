@@ -401,8 +401,8 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
     if (b) {
       const nextStg = STAGES[b.nextStageIdx];
       const targetCenterX = (stage.isFork && nextStg) ? (nextStg.x || 0.0) : currentCenterX;
-      let targetX = (b.visualMeshes && b.visualMeshes[0] && b.visualMeshes[0].position)
-        ? b.visualMeshes[0].position.x
+      let targetX = (b.actualBridgeX !== undefined)
+        ? b.actualBridgeX
         : (targetCenterX + LANES[bot.targetLane]);
 
       if (b.isSkydive || b.isTrapdoor || b.isCurvedSlide || b.isZipline || b.isFreefall) {

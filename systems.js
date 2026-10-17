@@ -1,4 +1,4 @@
-// 物理移動判定・スカイウォーク歩行開放・ハッチ進入同期・リュック収納アニメーション連動・シームレス風音連携・スカイダイブ＆スライダーボーナス回収・平行直進ルート完全整合（レーンX座標判定正常化＆インスタンス同期完全独立版）
+// 物理移動判定・スカイウォーク歩行開放・ハッチ進入同期・リュック収納アニメーション連動・シームレス風音連携・スカイダイブ＆スライダーボーナス回収・合流島安全着地完全整合
 import {
   TEAMS,
   TRAMPOLINE_TIERS,
@@ -446,7 +446,7 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
       }
     }
 
-    // 6. 通常階段・直線スライダー・ジャンプ台（★ 欠陥ロジック完全撤廃：b.visualMeshes[0].position.x 参照を排し、厳密な laneX を直接判定）
+    // 6. 通常階段・直線スライダー・ジャンプ台
     let onBridge = null;
     for (let b of localBridges) {
       if (b.isCurvedSlide || b.isZipline || b.isElevator || b.isSkydive || b.isTrapdoor) continue;
@@ -454,7 +454,6 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
 
       const fromStg = STAGES[b.stageIdx];
       const bCenterX = fromStg ? (fromStg.x || 0.0) : 0.0;
-      // 単独分岐橋ならそのX座標、通常3レーンなら bCenterX + LANES[b.laneIdx]
       const expectedLaneX = (b.actualBridgeX !== undefined)
         ? b.actualBridgeX
         : (bCenterX + LANES[b.laneIdx]);
@@ -498,7 +497,7 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
         }
       }
 
-      // 終点島への上陸
+      // ★ 終点島への上陸（合流スライダー降車判定完全整合：終点島の円周内に安全着地）
       if (nextZ <= onBridge.endZ - 0.1) {
         const lastPlank = onBridge.planks[onBridge.planks.length - 1];
         const canPassEnd = onBridge.isSlide || onBridge.isJump || (lastPlank && lastPlank.teamId === char.team.id);
@@ -508,15 +507,18 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
           const destCenterX = toStg ? (toStg.x || 0.0) : 0.0;
 
           if (onBridge.isSlide) {
+            // 合流島（destCenterX=0.0）または通常島の円周安全圏内に着地
             const maxR = toStg.r - 1.5;
             char.pos.x = Math.max(destCenterX - maxR, Math.min(destCenterX + maxR, nextX));
+            char.pos.z = Math.min(nextZ, toStg.z + toStg.r - 0.5);
           } else {
             char.pos.x = currentLaneX;
+            char.pos.z = nextZ;
           }
-          char.pos.z = nextZ;
           char.pos.y = toStg.y;
           char.lastPlankIdx = -1;
           char.onSlide = false;
+          char.slideCooldown = 0.4;
 
           if (!char.isPlayer) {
             char.aiState = 'COLLECT';
@@ -627,7 +629,6 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
                 removeBrickFromCharacter(char, updateHUDRef);
                 currentP.teamId = char.team.id;
 
-                // ★ 他レーン巻き込み消失の完全根絶：自身のレーン（onBridge）のメッシュのみを厳密に更新
                 if (onBridge.solidMesh && onBridge.ghostMesh) {
                   dummyPlankObj.position.set(currentLaneX, currentP.y, currentP.z);
                   dummyPlankObj.rotation.set(0, 0, 0);

@@ -1,4 +1,4 @@
-// コース伸長・浮島・橋・スライド・ジップライン・エレベーター・スカイダイブ・ドロップタワー施設・二股分岐＆合流（通常3レーン完全復元＆クリーンアップ誤消去防止）
+// コース伸長・浮島・橋・スライド・ジップライン・エレベーター・スカイダイブ・ドロップタワー施設・二股分岐＆合流（通常3レーン完全復元＆合流スライダー幾何学密着化）
 import {
   BLOCK_TYPES,
   TRAMPOLINE_TIERS,
@@ -1059,12 +1059,18 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
 
     const fromStageObj = STAGES[stageIdx];
     const fromStageCenterX = fromStageObj ? (fromStageObj.x || 0.0) : 0.0;
-    const relFromX = singleLaneOnly ? (actualBridgeX - fromStageCenterX) : laneX;
+    const toStageObj = STAGES[nextStageIdx];
+    const toStageCenterX = toStageObj ? (toStageObj.x || 0.0) : 0.0;
+
+    const relFromX = actualBridgeX - fromStageCenterX;
+    const relToX = actualBridgeX - toStageCenterX;
 
     const prevInsetZ = Math.sqrt(Math.max(1, prevR * prevR - relFromX * relFromX));
-    const nextInsetZ = Math.sqrt(Math.max(1, nextR * nextR - laneX * laneX));
+    const nextInsetZ = Math.sqrt(Math.max(1, nextR * nextR - relToX * relToX));
 
-    const stairsEndOffset = isStepBridge ? (laneIdx === 1 ? -0.4 : +0.03) : -1.2;
+    // ★ スライダー接合の幾何学修正：合流島（toStageCenterX=0.0）へのスライダー（actualBridgeX=+6.5）の場合、
+    // 終点エッジを島の円弧フロア内に +0.5m しっかり食い込ませて隙間ゼロ化
+    const stairsEndOffset = isStepBridge ? (laneIdx === 1 ? -0.4 : +0.03) : (isSlide && singleLaneOnly ? -0.5 : -1.2);
     const startZ = prevIslandZ - prevInsetZ + (isStepBridge ? 0.35 : 1.2);
     const endZ = nextIslandZ + nextInsetZ + stairsEndOffset;
     const distZ = startZ - endZ;
@@ -1084,8 +1090,9 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     };
 
     if (isSlide) {
+      // 始点と終点の円弧深さをそれぞれの島中心からのオフセットで厳密計算
       const sStartZ = prevIslandZ - prevInsetZ;
-      const sEndZ = nextIslandZ + nextInsetZ;
+      const sEndZ = nextIslandZ + nextInsetZ - (singleLaneOnly ? 0.5 : 0.0);
 
       const slopeOverlap = 0.45;
       const slopeDistZ = (sStartZ - sEndZ) + slopeOverlap * 2;
@@ -1131,9 +1138,11 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
 
       const railOffsets = singleLaneOnly ? [-1.85, 1.85] : (laneIdx === 0 ? [-5.85, -2.0, 2.0, 5.85] : []);
       railOffsets.forEach(rOff => {
-        const rActualX = singleLaneOnly ? (startX + rOff) : (islandCenterX + rOff);
-        const rPrevInset = Math.sqrt(Math.max(1, prevR * prevR - (rOff * rOff)));
-        const rNextInset = Math.sqrt(Math.max(1, nextR * nextR - (rOff * rOff)));
+        const rActualX = startX + rOff;
+        const rRelFromX = rActualX - fromStageCenterX;
+        const rRelToX = rActualX - toStageCenterX;
+        const rPrevInset = Math.sqrt(Math.max(1, prevR * prevR - (rRelFromX * rRelFromX)));
+        const rNextInset = Math.sqrt(Math.max(1, nextR * nextR - (rRelToX * rRelToX)));
 
         const rP1 = new THREE.Vector3(rActualX, startY + 0.28, prevIslandZ - rPrevInset + 0.35);
         const rP2 = new THREE.Vector3(rActualX, endY + 0.28, nextIslandZ + rNextInset - 0.35);
@@ -1343,7 +1352,7 @@ export function extendCourseForkPatternB(scene) {
   CONNECTIONS.push({ from: leftStageIdx, to: mergeStageIdx, type: 'skydive', branch: 'left' });
   createBridgeLinks(scene, leftStageIdx, mergeStageIdx, leftMidZ, mergeZ, leftMidR, mergeR, leftMidY, mergeY, 'skydive', leftMidX, true);
 
-  // 右の低空島（Y=16m）からはウォータースライダーで合流
+  // 右の低空島（Y=16m）からはウォータースライダーで合流（終点島中心 X=0.0m との相対オフセットを厳密計算）
   CONNECTIONS.push({ from: rightStageIdx, to: mergeStageIdx, type: 'slide', branch: 'right' });
   createBridgeLinks(scene, rightStageIdx, mergeStageIdx, rightMidZ, mergeZ, rightMidR, mergeR, rightMidY, mergeY, 'slide', rightMidX, true);
 
@@ -1635,7 +1644,6 @@ export function cleanupOldData(scene) {
       minActiveStage = characters[i].currentStage;
     }
   }
-  // 現在走行中の島、およびその直前の島は絶対に破棄しない（最低2ステージ前の安全マージン）
   const safeStage = Math.max(0, minActiveStage - 2);
 
   for (let i = activeMagnetBlocks.length - 1; i >= 0; i--) {
@@ -1659,7 +1667,6 @@ export function cleanupOldData(scene) {
     }
   }
 
-  // ★ 橋の消去ガード：stageIdx が safeStage 未満のものだけを破棄
   for (let i = bridges.length - 1; i >= 0; i--) {
     if (bridges[i].stageIdx < safeStage) {
       bridges[i].visualMeshes.forEach(vm => {
