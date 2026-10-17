@@ -1133,12 +1133,12 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
           stageIdx: stageIdx
         };
         bridge.bonusBlocks.push(bonusData);
-        slideBonusBlocks.push(bonusData);
-      }
-
+      // スライダーの仕切りパイプレール
       const railOffsets = singleLaneOnly ? [-1.85, 1.85] : (laneIdx === 0 ? [-5.85, -2.0, 2.0, 5.85] : []);
       railOffsets.forEach(rOff => {
-        const rActualX = startX + rOff;
+        // ★ 修正：通常ステージ（3レーン）のレールは島中心（islandCenterX = 0.0m）基準で左右対称配置！
+        // 分岐ステージ（singleLaneOnly = true）の単独レールのみ、スライダー中心（startX = ±6.5m）基準でオフセット
+        const rActualX = singleLaneOnly ? (startX + rOff) : (islandCenterX + rOff);
         const rRelFromX = rActualX - fromStageCenterX;
         const rRelToX = rActualX - toStageCenterX;
         const rPrevInset = Math.sqrt(Math.max(1, prevR * prevR - (rRelFromX * rRelFromX)));
