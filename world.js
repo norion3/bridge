@@ -1158,7 +1158,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
         const pY = startY + progress * (endY - startY);
         bridge.planks.push({ teamId: 'slide_free', index: i, y: pY, z: pZ });
       }
-    } else if (isJump) {
+    if (isJump) {
       let jumpTier = jumpTiers[laneIdx];
 
       const tramp = createTrampolineMesh(startX, startY, startZ - 1.8, jumpTier);
@@ -1195,7 +1195,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
           pY = (startY + plankCenterOffsetY) + progress * (endY - startY);
 
           if (i === numPlanks - 1) {
-            const topOffset = (laneIdx === 1) ? -0.25 : +0.18;
+            const topOffset = (singleLaneOnly ? -0.25 : ((laneIdx === 1) ? -0.25 : +0.18));
             pZ = nextIslandZ + nextInsetZ + topOffset;
             pY = endY + plankCenterOffsetY;
           }
@@ -1267,7 +1267,7 @@ export function extendCourseForkPatternB(scene) {
   const leftMidZ = forkZ - leftMidDistZ;
   const leftMidY = forkY + 26.0; // Y = 36.0m
   const leftMidR = 8.5;
-  const leftMidX = -6.5; // 横位置を最適スパン（±6.5m）へ調整
+  const leftMidX = -6.5;
 
   const leftStageIdx = STAGES.length;
   const leftStage = {
@@ -1293,7 +1293,7 @@ export function extendCourseForkPatternB(scene) {
   const rightMidZ = forkZ - rightMidDistZ;
   const rightMidY = forkY + 6.0; // Y = 16.0m
   const rightMidR = 8.5;
-  const rightMidX = 6.5; // 横位置を最適スパン（±6.5m）へ調整
+  const rightMidX = 6.5;
 
   const rightStageIdx = STAGES.length;
   const rightStage = {

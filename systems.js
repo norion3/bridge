@@ -446,7 +446,7 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
       }
     }
 
-    // 6. 通常階段・直線スライダー・ジャンプ台（完全直進・単独橋または3レーン橋判定）
+    // 6. 通常階段・直線スライダー・ジャンプ台（通常3レーン完全復元 ＆ 分岐単独橋整合）
     let onBridge = null;
     for (let b of localBridges) {
       if (b.isCurvedSlide || b.isZipline || b.isElevator || b.isSkydive || b.isTrapdoor) continue;
