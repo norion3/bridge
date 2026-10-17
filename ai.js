@@ -106,7 +106,6 @@ export function avoidGateObstacles(bot, dirX, dirZ) {
 }
 
 export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStepRing) {
-  // AIワープ追いつき完全復活：プレイヤーから2ステージ以上離された瞬間に即時テレポート
   if (player && bot.currentStage < player.currentStage - 1) {
     bot.currentStage = player.currentStage;
     const stage = STAGES[bot.currentStage];
@@ -219,7 +218,7 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
   const nextConn = CONNECTIONS.find(c => c.from === bot.currentStage);
   const isVerticalNext = (nextConn && nextConn.type === 'vertical');
 
-  // 分岐島（isFork: Stage 6）での自律判断・ルート選択
+  // 分岐島での自律判断・ルート選択
   if (stage.isFork && bot.forkBranchChoice === undefined) {
     const stackRatio = bot.stackCount / Math.max(1, bot.aiCapacityGoal || 15);
     const shortcutWeight = 0.40 + (stackRatio > 0.8 ? 0.35 : 0.0) + (isLaggingBehind ? -0.20 : 0.15);
@@ -379,14 +378,13 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
       return;
     }
 
-    // 分岐島では選択したルート（左: stage.x = -14.0m / 右: stage.x = +14.0m）の直進橋を特定
     let b = null;
     if (stage.isFork && bot.forkBranchChoice) {
-      const targetBranchX = (bot.forkBranchChoice === 'left') ? -14.0 : 14.0;
+      const targetBranchX = (bot.forkBranchChoice === 'left') ? -6.5 : 6.5;
       b = stageBridges.find(br => {
         const nextStg = STAGES[br.nextStageIdx];
-        return nextStg && Math.abs((nextStg.x || 0.0) - targetBranchX) < 1.0 && (br.laneIdx === bot.targetLane || br.laneIdx === 1);
-      }) || stageBridges.find(br => br.laneIdx === bot.targetLane);
+        return nextStg && Math.abs((nextStg.x || 0.0) - targetBranchX) < 1.0;
+      }) || stageBridges[0];
     } else {
       b = stageBridges.find(
         br =>
@@ -403,7 +401,9 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
     if (b) {
       const nextStg = STAGES[b.nextStageIdx];
       const targetCenterX = (stage.isFork && nextStg) ? (nextStg.x || 0.0) : currentCenterX;
-      let targetX = targetCenterX + LANES[bot.targetLane];
+      let targetX = (b.visualMeshes && b.visualMeshes[0] && b.visualMeshes[0].position)
+        ? b.visualMeshes[0].position.x
+        : (targetCenterX + LANES[bot.targetLane]);
 
       if (b.isSkydive || b.isTrapdoor || b.isCurvedSlide || b.isZipline || b.isFreefall) {
         targetX = b.launchPoint ? b.launchPoint.x : targetCenterX;

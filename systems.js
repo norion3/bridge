@@ -446,16 +446,17 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
       }
     }
 
-    // 6. 通常階段・直線スライダー・ジャンプ台（完全直進・平行レーン判定）
+    // 6. 通常階段・直線スライダー・ジャンプ台（完全直進・単独橋または3レーン橋判定）
     let onBridge = null;
     for (let b of localBridges) {
       if (b.isCurvedSlide || b.isZipline || b.isElevator || b.isSkydive || b.isTrapdoor) continue;
       if (char.currentStage !== b.stageIdx && char.currentStage !== b.nextStageIdx) continue;
 
-      // 始点島・終点島の X 座標を取得（まっすぐ直進）
       const fromStg = STAGES[b.stageIdx];
       const bCenterX = fromStg ? (fromStg.x || 0.0) : 0.0;
-      const expectedLaneX = bCenterX + LANES[b.laneIdx];
+      const expectedLaneX = (b.visualMeshes && b.visualMeshes[0] && b.visualMeshes[0].position)
+        ? b.visualMeshes[0].position.x
+        : (bCenterX + LANES[b.laneIdx]);
 
       if (Math.abs(nextX - expectedLaneX) > 1.95) continue;
       if (nextZ > b.startZ + 0.15 || nextZ < b.endZ - 0.8) continue;
@@ -476,7 +477,9 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
     if (onBridge) {
       const fromStg = STAGES[onBridge.stageIdx];
       const bCenterX = fromStg ? (fromStg.x || 0.0) : 0.0;
-      const currentLaneX = bCenterX + LANES[onBridge.laneIdx];
+      const currentLaneX = (onBridge.visualMeshes && onBridge.visualMeshes[0] && onBridge.visualMeshes[0].position)
+        ? onBridge.visualMeshes[0].position.x
+        : (bCenterX + LANES[onBridge.laneIdx]);
 
       if (char.currentStage === onBridge.nextStageIdx) {
         const isBridgeOpen = onBridge.isSlide || onBridge.isJump || onBridge.planks.every(p => p.teamId !== null);
@@ -720,7 +723,10 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
         } else if (b.isElevator) {
           return ELEVATOR_CONFIG.LANES.some(cfg => Math.abs(nextX - (stgCenterX + LANES[cfg.laneIdx])) < 1.7);
         } else {
-          return Math.abs(nextX - (stgCenterX + LANES[b.laneIdx])) < 2.0;
+          const bX = (b.visualMeshes && b.visualMeshes[0] && b.visualMeshes[0].position)
+            ? b.visualMeshes[0].position.x
+            : (stgCenterX + LANES[b.laneIdx]);
+          return Math.abs(nextX - bX) < 2.0;
         }
       });
 
