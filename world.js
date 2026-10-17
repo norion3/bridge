@@ -175,8 +175,6 @@ export function createModifierGate(scene, stageIdx, posX, posZ, posY, opType, va
   modifierGates.push(gateData);
 }
 
-// 分岐看板（createForkGuideSign）はご指示通り完全撤去
-
 export function createTrampolineMesh(x, y, z, tier) {
   const group = new THREE.Group();
 
@@ -1049,24 +1047,24 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     }
   }
 
-  // 分岐する島へは橋をそれぞれ「1本だけ（中央レーン幅）」にする
+  // 分岐する島へは橋をそれぞれ「1本だけ（中央レーン幅）」にする。通常ステージは厳格に3本 [0, 1, 2]
   const laneIndices = singleLaneOnly ? [1] : [0, 1, 2];
 
   for (let lIdx = 0; lIdx < laneIndices.length; lIdx++) {
     const laneIdx = laneIndices[lIdx];
     const laneOffset = singleLaneOnly ? 0.0 : LANES[laneIdx];
-    const actualBridgeX = islandCenterX + laneOffset;
+    const actualBridgeX = singleLaneOnly ? islandCenterX : (islandCenterX + laneOffset);
 
-    // 始点島（prevIslandZ）の中心 X は fromStage.x。実際の橋のX位置に基づいて正確な円周切り欠きを計算
+    // 始点島（prevIslandZ）の中心 X は fromStage.x。
     const fromStageObj = STAGES[stageIdx];
     const fromStageCenterX = fromStageObj ? (fromStageObj.x || 0.0) : 0.0;
-    const relFromX = actualBridgeX - fromStageCenterX;
+    const relFromX = singleLaneOnly ? (actualBridgeX - fromStageCenterX) : laneOffset;
 
     const prevInsetZ = Math.sqrt(Math.max(1, prevR * prevR - relFromX * relFromX));
     const nextInsetZ = Math.sqrt(Math.max(1, nextR * nextR - laneOffset * laneOffset));
 
     const stairsEndOffset = isStepBridge ? (laneIdx === 1 ? -0.4 : +0.03) : -1.2;
-    // 始点を島の内側に約0.35m踏み込ませて完全に隙間をゼロ化し、スムーズに登れるように密着接合
+    // 始点を島の内側に約0.35m踏み込ませて隙間をゼロ化
     const startZ = prevIslandZ - prevInsetZ + (isStepBridge ? 0.35 : 1.2);
     const endZ = nextIslandZ + nextInsetZ + stairsEndOffset;
     const distZ = startZ - endZ;
@@ -1158,7 +1156,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
         const pY = startY + progress * (endY - startY);
         bridge.planks.push({ teamId: 'slide_free', index: i, y: pY, z: pZ });
       }
-    if (isJump) {
+    } else if (isJump) {
       let jumpTier = jumpTiers[laneIdx];
 
       const tramp = createTrampolineMesh(startX, startY, startZ - 1.8, jumpTier);
@@ -1259,8 +1257,6 @@ export function extendCourseForkPatternB(scene) {
 
   CONNECTIONS.push({ from: forkIdx - 1, to: forkIdx, type: 'bridge' });
   createBridgeLinks(scene, forkIdx - 1, forkIdx, prev.z, forkZ, prev.r, forkR, prev.y, forkY, 'bridge', 0.0, false);
-
-  // ご指示通り、中央の看板（SHORTCUT / RICH）は完全撤去
 
   // 2. 左中継島（Stage 7: 【超高層 天上島】通常の2倍高！ Y = 36.0m, X = -6.5m, R = 8.5m）
   const leftMidDistZ = 38.0;
