@@ -1,4 +1,4 @@
-// Bot AI自律思考ロジック・レーン評価・左右分岐選択（テーマ認識型＆状況適応自律ルート選択）・スカイダイブ＆ドロップタワー進入・空中姿勢同期・AIワープ追いつき復活・スタック回避
+// Bot AI自律思考ロジック・レーン評価・左右分岐選択（テーマ認識型＆状況適応自律ルート選択）・スカイダイブ＆ドロップタワー進入・空中姿勢同期・AIワープ追いつき復活・スタック回避（Phase 3: 中継島単独レーン認識＆分岐考慮型ワープ完全整合版）
 import {
   LANES,
   ELEVATOR_CONFIG,
@@ -106,7 +106,29 @@ export function avoidGateObstacles(bot, dirX, dirZ) {
 }
 
 export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStepRing) {
-  if (player && bot.currentStage < player.currentStage - 1) {
+  const currentStageInfo = STAGES[bot.currentStage];
+  const playerStageInfo = player ? STAGES[player.currentStage] : null;
+
+  // ★ 分岐考慮型ワープ判定：並列中継島（fork_left と fork_right）のステージ番号差による誤ワープを防止
+  let shouldWarp = false;
+  if (player && playerStageInfo && currentStageInfo) {
+    const isPlayerInFork = (playerStageInfo.isFork || playerStageInfo.type === 'fork_left' || playerStageInfo.type === 'fork_right' || playerStageInfo.isMerge);
+    const isBotInFork = (currentStageInfo.isFork || currentStageInfo.type === 'fork_left' || currentStageInfo.type === 'fork_right' || currentStageInfo.isMerge);
+
+    if (isPlayerInFork && isBotInFork) {
+      // 双方とも同一分岐区間内にいる場合、実距離（Z座標差）が55m以上離れた時のみ追いつきワープ
+      if (bot.pos.z - player.pos.z > 55.0) {
+        shouldWarp = true;
+      }
+    } else {
+      // 通常区間、または分岐区間を完全に抜けて2ステージ以上差がついた場合
+      if (bot.currentStage < player.currentStage - 1) {
+        shouldWarp = true;
+      }
+    }
+  }
+
+  if (shouldWarp) {
     bot.currentStage = player.currentStage;
     const stage = STAGES[bot.currentStage];
     if (stage) {
@@ -215,7 +237,7 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
     Math.abs(bot.pos.x - (currentCenterX + LANES[b.laneIdx])) < 2.5
   );
 
-  // ■ テーマ認識型 分岐自律選択ロジック (Phase 3)
+  // ■ テーマ認識型 分岐自律選択ロジック
   if (stage.isFork && bot.forkBranchChoice === undefined) {
     let leftRole = 'shortcut';
     let rightRole = 'rich';
@@ -236,17 +258,16 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
       rightRole = STAGES[rightBridge.nextStageIdx].branchRole || rightRole;
     }
 
-    // 所持ブロック数に応じた意思決定
     let preferShortcutWeight = 0.50;
     if (bot.stackCount >= 14) {
-      preferShortcutWeight = 0.72; // ブロック潤沢 ➜ 近道/テクニカルで一気に先行
+      preferShortcutWeight = 0.72;
     } else if (bot.stackCount < 8) {
-      preferShortcutWeight = 0.25; // ブロック不足 ➜ リッチ島で資材・アイテム回収
+      preferShortcutWeight = 0.25;
     }
 
     if (isLaggingBehind) {
-      if (bot.stackCount >= 10) preferShortcutWeight += 0.15; // 逆転ダイブ狙い
-      else preferShortcutWeight -= 0.15; // サンダーなどの逆転アイテム回収狙い
+      if (bot.stackCount >= 10) preferShortcutWeight += 0.15;
+      else preferShortcutWeight -= 0.15;
     }
 
     const wantsShortcut = (Math.random() < preferShortcutWeight);
@@ -258,7 +279,6 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
     bot.forkBranchChoice = undefined;
   }
 
-  // 分岐選択を考慮したアクティブ接続の取得
   let activeConn = null;
   if (stage.isFork && bot.forkBranchChoice) {
     activeConn = CONNECTIONS.find(c => c.from === bot.currentStage && c.branch === bot.forkBranchChoice);
@@ -267,11 +287,17 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
     activeConn = CONNECTIONS.find(c => c.from === bot.currentStage);
   }
   const isVerticalNext = (activeConn && activeConn.type === 'vertical');
+  const isBranchRelayIsland = (stage.type === 'fork_left' || stage.type === 'fork_right');
 
   if (activeConn) {
     if (activeConn.type === 'slide') {
       bot.aiState = 'BUILD';
-      if (bot.targetLane === undefined) bot.targetLane = Math.floor(Math.random() * 3);
+      // ★ 中継島からの単独スライダー（singleLaneOnly）時は必ず laneIdx: 1 を選択し痙攣停止を根絶！
+      if (isBranchRelayIsland) {
+        bot.targetLane = 1;
+      } else if (bot.targetLane === undefined) {
+        bot.targetLane = Math.floor(Math.random() * 3);
+      }
     } else if (
       activeConn.type === 'skydive' ||
       activeConn.type === 'trapdoor' ||
@@ -285,9 +311,14 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
       bot.aiCapacityGoal = 0;
     } else if (activeConn.type === 'jump') {
       bot.aiState = 'BUILD';
-      if (bot.targetLane === undefined) bot.targetLane = stage.isFork ? 1 : Math.floor(Math.random() * 3);
+      if (isBranchRelayIsland) {
+        bot.targetLane = 1;
+      } else if (bot.targetLane === undefined) {
+        bot.targetLane = stage.isFork ? 1 : Math.floor(Math.random() * 3);
+      }
       bot.aiCapacityGoal = 0;
     } else if (isVerticalNext) {
+      if (isBranchRelayIsland) bot.targetLane = 1;
       if (bot.aiCapacityGoal < 18) bot.aiCapacityGoal = 18 + Math.floor(Math.random() * 4);
     }
   }
@@ -311,7 +342,7 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
 
     if (bot.stackCount >= threshold) {
       bot.aiState = 'BUILD';
-      bot.targetLane = evaluateBestLaneForBot(bot);
+      bot.targetLane = isBranchRelayIsland ? 1 : evaluateBestLaneForBot(bot);
       bot.targetBlock = null;
       bot.elevatorChoice = undefined;
       return;
@@ -426,6 +457,9 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
         const nextStg = STAGES[br.nextStageIdx];
         return nextStg && Math.abs((nextStg.x || 0.0) - targetBranchX) < 1.0;
       }) || stageBridges[0];
+    } else if (isBranchRelayIsland) {
+      // 中継島から合流島への橋は単独1本（laneIdx: 1）
+      b = stageBridges[0];
     } else {
       b = stageBridges.find(
         br =>
@@ -444,7 +478,7 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
       const targetCenterX = (stage.isFork && nextStg) ? (nextStg.x || 0.0) : currentCenterX;
       let targetX = (b.actualBridgeX !== undefined)
         ? b.actualBridgeX
-        : (targetCenterX + LANES[bot.targetLane]);
+        : (targetCenterX + LANES[isBranchRelayIsland ? 1 : bot.targetLane]);
 
       if (b.isSkydive || b.isTrapdoor || b.isCurvedSlide || b.isZipline || b.isFreefall) {
         targetX = b.launchPoint ? b.launchPoint.x : targetCenterX;
@@ -506,7 +540,7 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
           bot.aiCapacityGoal = isVerticalNext
             ? 20 + Math.floor(Math.random() * 4)
             : 14 + Math.floor(Math.random() * 5);
-          bot.targetLane = evaluateBestLaneForBot(bot);
+          bot.targetLane = isBranchRelayIsland ? 1 : evaluateBestLaneForBot(bot);
           bot.targetBlock = null;
           bot.elevatorChoice = undefined;
           bot.searchCooldown = (bot.team.id === 'red') ? 0 : 0.06;

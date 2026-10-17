@@ -1,4 +1,4 @@
-// 物理移動判定・スカイウォーク歩行開放・ハッチ進入同期・リュック収納アニメーション連動・シームレス風音連携・スカイダイブ＆スライダーボーナス回収・合流島安全着地完全整合
+// 物理移動判定・スカイウォーク歩行開放・ハッチ進入同期・リュック収納アニメーション連動・シームレス風音連携・スカイダイブ＆スライダーボーナス回収・合流島安全着地完全整合（Phase 1: スライダー降車吸い戻しガード＆無限ループ完全根絶版）
 import {
   TEAMS,
   TRAMPOLINE_TIERS,
@@ -332,7 +332,8 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
   if (bridgesByStage.has(char.currentStage)) {
     localBridges.push(...bridgesByStage.get(char.currentStage));
   }
-  if (char.currentStage > 0 && bridgesByStage.has(char.currentStage - 1)) {
+  // ★ クールダウン中（降車直後）は直前ステージの橋を走査に含めない
+  if (char.slideCooldown <= 0 && char.currentStage > 0 && bridgesByStage.has(char.currentStage - 1)) {
     localBridges.push(...bridgesByStage.get(char.currentStage - 1));
   }
 
@@ -452,6 +453,9 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
       if (b.isCurvedSlide || b.isZipline || b.isElevator || b.isSkydive || b.isTrapdoor) continue;
       if (char.currentStage !== b.stageIdx && char.currentStage !== b.nextStageIdx) continue;
 
+      // ★ 降車直後ガード：直前ステージから降りてきたスライダー橋（b.nextStageIdx === currentStage）は再判定・吸い戻しを完全拒絶！
+      if (b.isSlide && char.currentStage === b.nextStageIdx && char.slideCooldown > 0) continue;
+
       const fromStg = STAGES[b.stageIdx];
       const bCenterX = fromStg ? (fromStg.x || 0.0) : 0.0;
       const expectedLaneX = (b.actualBridgeX !== undefined)
@@ -497,7 +501,7 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
         }
       }
 
-      // ★ 終点島への上陸（合流スライダー降車判定完全整合：終点島の円周内に安全着地）
+      // ★ 終点島への上陸（合流スライダー降車判定完全整合：終点島の円周内に安全着地＆吸い戻し完全根絶）
       if (nextZ <= onBridge.endZ - 0.1) {
         const lastPlank = onBridge.planks[onBridge.planks.length - 1];
         const canPassEnd = onBridge.isSlide || onBridge.isJump || (lastPlank && lastPlank.teamId === char.team.id);
@@ -507,18 +511,21 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
           const destCenterX = toStg ? (toStg.x || 0.0) : 0.0;
 
           if (onBridge.isSlide) {
-            // 合流島（destCenterX=0.0）または通常島の円周安全圏内に着地
-            const maxR = toStg.r - 1.5;
-            char.pos.x = Math.max(destCenterX - maxR, Math.min(destCenterX + maxR, nextX));
-            char.pos.z = Math.min(nextZ, toStg.z + toStg.r - 0.5);
+            // 合流島（destCenterX=0.0）または通常島の円周安全圏内に深く着地（島中心へ+2.0m踏み込み）
+            const maxR = toStg.r - 2.5;
+            char.pos.x = THREE.MathUtils.lerp(nextX, destCenterX, 0.45);
+            char.pos.x = Math.max(destCenterX - maxR, Math.min(destCenterX + maxR, char.pos.x));
+            // スライダー終端コライダーの完全外側（島の中心、-Z方向へ深く踏み込ませる）
+            char.pos.z = Math.min(nextZ, onBridge.endZ - 2.0);
+            char.slideCooldown = 0.65; // ★ 0.65秒間の再搭乗完全無効ガード
           } else {
             char.pos.x = currentLaneX;
             char.pos.z = nextZ;
+            char.slideCooldown = 0.4;
           }
           char.pos.y = toStg.y;
           char.lastPlankIdx = -1;
           char.onSlide = false;
-          char.slideCooldown = 0.4;
 
           if (!char.isPlayer) {
             char.aiState = 'COLLECT';
