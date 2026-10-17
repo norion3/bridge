@@ -1,4 +1,4 @@
-// メインエントリポイント：Three.js初期化・ダイナミックロックオン並走カメラ・メインループ・ネームプレート連動
+// メインエントリポイント：Three.js初期化・ダイナミックロックオン並走カメラ（左右分岐追従対応）・メインループ・ネームプレート連動
 import { SoundEngine } from './audio.js';
 import {
   TEAMS,
@@ -143,20 +143,17 @@ export function setupControls() {
   const zone = document.getElementById('touch-control-layer');
   let touchId = null, startX = 0, startY = 0;
 
-  // ★ iOS (iPhone / Safari / WebView) 特有ジェスチャー・デフォルト動作の完全ガード
+  // iOS (iPhone / Safari / WebView) 特有ジェスチャー・デフォルト動作の完全ガード
   const preventDefaultHandler = (e) => {
     if (e.cancelable) e.preventDefault();
   };
 
-  // 1. iOS Safari 特有の 2本指ピンチズームイベントを根本遮断
   document.addEventListener('gesturestart', preventDefaultHandler, { passive: false });
   document.addEventListener('gesturechange', preventDefaultHandler, { passive: false });
   document.addEventListener('gestureend', preventDefaultHandler, { passive: false });
 
-  // 2. 画面長押し時のコンテキストメニュー（コピー・共有・虫眼鏡）を完全抑止
   window.addEventListener('contextmenu', preventDefaultHandler, { passive: false });
 
-  // 3. 300ms以内の連続タップによる「ダブルタップ自動ズーム」を数学的ブロック
   let lastTouchEndTime = 0;
   document.addEventListener('touchend', (e) => {
     const now = Date.now();
@@ -339,7 +336,6 @@ export function animate(currentTime) {
 
   const timeSec = currentTime * 0.001;
 
-  // 動的UVドリフト（穏やかに呼吸する生きた海）
   if (seaTexture) {
     seaTexture.offset.y += dt * 0.012;
     seaTexture.offset.x += Math.sin(timeSec * 0.4) * 0.0003;
@@ -363,7 +359,6 @@ export function animate(currentTime) {
           c.meshObj.stackGroup.scale.set(1.0, 1.0, 1.0);
         }
       }
-      // ★ Phase 1: 各キャラクターのネームプレートを頭上・スタックタワー連動で更新
       updateNameplatePosition(c);
     }
     handleTackles(scene);
@@ -833,10 +828,12 @@ export function animate(currentTime) {
 
     const stackLift = Math.min((player.stackCount || 0) * 0.08, 3.2);
 
-    let targetCamX = player.pos.x * 0.2;
+    // ★ Phase 3: 左右分岐ルート（X 座標が ±17.5m 寄りへシフト）に滑らかに追従するカメラパン設計
+    const isOffCenterRoute = Math.abs(player.pos.x) > 3.0;
+    let targetCamX = isOffCenterRoute ? (player.pos.x * 0.82) : (player.pos.x * 0.2);
     let targetCamY = player.pos.y + 24 + stackLift;
     let targetCamZ = player.pos.z + 12 + (stackLift * 0.6);
-    let targetLookX = player.pos.x * 0.1;
+    let targetLookX = isOffCenterRoute ? (player.pos.x * 0.72) : (player.pos.x * 0.1);
     let targetLookY = player.pos.y + (stackLift * 0.3);
     let targetLookAheadZ = player.pos.z - 5;
     let targetFOV = player.speedBoostActive ? 65 : 60;
@@ -887,8 +884,11 @@ export function animate(currentTime) {
       targetLookY = player.pos.y - 1.2;
       targetFOV = 67;
     } else if (isSlideRiding) {
+      // 左右中継島からのスライダーでも横方向を自然に追従
+      targetCamX = player.pos.x * 0.85;
       targetCamY = player.pos.y + 18;
       targetCamZ = player.pos.z + 9;
+      targetLookX = player.pos.x * 0.80;
       targetLookY = player.pos.y - 1;
       targetFOV = 63;
     } else if (isElevator) {
@@ -900,12 +900,12 @@ export function animate(currentTime) {
       targetLookAheadZ = player.pos.z - 12.0;
       targetFOV = 64;
     } else if (isSkydive) {
-      const airX = player.skydiveX || player.pos.x;
+      const airX = player.skydiveX !== undefined ? player.skydiveX : player.pos.x;
       const camCfg = SKYDIVE_CONFIG.CAMERA;
-      targetCamX = airX * 0.40;
+      targetCamX = airX * 0.75;
       targetCamY = player.pos.y + camCfg.offsetY;
       targetCamZ = player.pos.z + camCfg.offsetZ;
-      targetLookX = airX * 0.20;
+      targetLookX = airX * 0.65;
       targetLookY = player.pos.y - 0.8;
       targetLookAheadZ = player.pos.z + camCfg.lookAheadZ;
       targetFOV = camCfg.fovDrop;

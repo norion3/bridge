@@ -1,4 +1,4 @@
-// Bot AI自律思考ロジック・レーン評価・スカイダイブ＆ドロップタワー進入・空中姿勢同期・AIワープ追いつき復活・スタック回避・進入アライメント誘導・オーガニックスムージング
+// Bot AI自律思考ロジック・レーン評価・左右分岐選択（Phase 4）・スカイダイブ＆ドロップタワー進入・空中姿勢同期・AIワープ追いつき復活・スタック回避・進入アライメント誘導・オーガニックスムージング
 import {
   LANES,
   ELEVATOR_CONFIG,
@@ -111,7 +111,8 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
     bot.currentStage = player.currentStage;
     const stage = STAGES[bot.currentStage];
     if (stage) {
-      bot.pos.x = (Math.random() - 0.5) * 6;
+      const centerX = stage.subIslands ? ((bot.pos.x < 0) ? stage.subIslands.left.x : stage.subIslands.right.x) : (stage.x || 0.0);
+      bot.pos.x = centerX + (Math.random() - 0.5) * 6;
       bot.pos.z = stage.z + stage.r * 0.85;
       bot.pos.y = stage.y;
       bot.meshObj.root.position.copy(bot.pos);
@@ -121,9 +122,9 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
       bot.lastPlankIdx = -1;
       bot.targetBlock = null;
       bot.elevatorChoice = undefined;
+      bot.forkBranchChoice = undefined;
       bot.searchCooldown = (bot.team.id === 'red') ? 0 : 0.06;
       bot.unstuckTimer = 0;
-      // ワープ時に初期ブロック（4個）を補充して即座にレース参加
       while (bot.stackCount < 4) {
         addBrickToCharacter(bot, bot.team);
       }
@@ -204,6 +205,8 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
   if (!stage) return;
 
   const stageBridges = bridgesByStage.get(bot.currentStage) || [];
+  const currentCenterX = stage.subIslands ? ((bot.pos.x < 0) ? stage.subIslands.left.x : stage.subIslands.right.x) : (stage.x || 0.0);
+
   const activeBridge = stageBridges.find(b =>
     !b.isCurvedSlide &&
     !b.isZipline &&
@@ -213,11 +216,21 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
     !b.isFreefall &&
     bot.pos.z <= b.startZ + 1.5 &&
     bot.pos.z >= b.endZ - 0.5 &&
-    Math.abs(bot.pos.x - LANES[b.laneIdx]) < 2.5
+    Math.abs(bot.pos.x - (currentCenterX + LANES[b.laneIdx])) < 2.5
   );
 
   const nextConn = CONNECTIONS.find(c => c.from === bot.currentStage);
   const isVerticalNext = (nextConn && nextConn.type === 'vertical');
+
+  // ★ Phase 4: 分岐島（isFork）での自律判断・ルート選択
+  if (stage.isFork && bot.forkBranchChoice === undefined) {
+    const stackRatio = bot.stackCount / Math.max(1, bot.aiCapacityGoal || 15);
+    // ブロックが潤沢（または先行時）は近道（left: shortcut）を選びやすい、不足時はリッチ（right: rich）
+    const shortcutWeight = 0.35 + (stackRatio > 0.8 ? 0.35 : 0.0) + (isLaggingBehind ? -0.15 : 0.15);
+    bot.forkBranchChoice = (Math.random() < shortcutWeight) ? 'left' : 'right';
+  } else if (!stage.isFork && !stage.isBranch) {
+    bot.forkBranchChoice = undefined;
+  }
 
   if (nextConn) {
     if (nextConn.type === 'slide') {
@@ -324,8 +337,7 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
       const toBlockZ = bot.targetBlock.pos.z - bot.pos.z;
       const distToBlock = Math.hypot(toBlockX, toBlockZ);
 
-      // ★ オーガニック・カーブアプローチ：
-      // 点と点の最短直線移動を解消し、中長距離では弧を描く緩やかな回り込みラインを付与
+      // ★ オーガニック・カーブアプローチ
       if (distToBlock > 1.2) {
         const curveSign = (bot.team.id === 'red') ? 1.0 : -1.0;
         const curveFactor = Math.min(0.24, distToBlock * 0.035) * curveSign;
@@ -337,7 +349,7 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
       }
     } else {
       const timeSec = performance.now() * 0.0015;
-      const patrolX = Math.sin(timeSec + bot.team.hex) * 4.2;
+      const patrolX = currentCenterX + Math.sin(timeSec + bot.team.hex) * 4.2;
       const patrolZ = stage.z + Math.cos(timeSec * 0.8 + bot.team.hex) * 4.2;
       rawDx = patrolX - bot.pos.x;
       rawDz = patrolZ - bot.pos.z;
@@ -346,7 +358,6 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
     const len = lenSq > 0.0001 ? Math.sqrt(lenSq) : 1;
     const steer = avoidGateObstacles(bot, rawDx / len, rawDz / len);
 
-    // ★ スティック操作のようなオーガニックな旋回慣性補間（急激な角度変化を滑らかな曲線旋回へ）
     const steerLerp = THREE.MathUtils.clamp(8.5 * effectiveDt, 0.09, 0.20);
     bot.aiDirX = THREE.MathUtils.lerp(bot.aiDirX || 0, steer.x, steerLerp);
     bot.aiDirZ = THREE.MathUtils.lerp(bot.aiDirZ || -1, steer.z, steerLerp);
@@ -373,22 +384,34 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
       return;
     }
 
-    const b = stageBridges.find(
-      br =>
-        br.isSkydive ||
-        br.isTrapdoor ||
-        br.isCurvedSlide ||
-        br.isZipline ||
-        br.isElevator ||
-        br.isFreefall ||
-        br.laneIdx === bot.targetLane
-    );
+    // ★ Phase 4: 分岐島では選択したブランチ（left: -17.5m / right: +17.5m）へ向かう橋を特定
+    let b = null;
+    if (stage.isFork && bot.forkBranchChoice) {
+      const targetSubX = (bot.forkBranchChoice === 'left') ? -17.5 : 17.5;
+      b = stageBridges.find(br => {
+        const nextStg = STAGES[br.nextStageIdx];
+        if (!nextStg || !nextStg.subIslands) return false;
+        const sub = (bot.forkBranchChoice === 'left') ? nextStg.subIslands.left : nextStg.subIslands.right;
+        return sub && Math.abs(sub.x - targetSubX) < 1.0 && (br.laneIdx === bot.targetLane || br.laneIdx === 1);
+      }) || stageBridges.find(br => br.laneIdx === bot.targetLane);
+    } else {
+      b = stageBridges.find(
+        br =>
+          br.isSkydive ||
+          br.isTrapdoor ||
+          br.isCurvedSlide ||
+          br.isZipline ||
+          br.isElevator ||
+          br.isFreefall ||
+          br.laneIdx === bot.targetLane
+      );
+    }
 
     if (b) {
-      let targetX = LANES[bot.targetLane];
+      let targetX = currentCenterX + LANES[bot.targetLane];
 
       if (b.isSkydive || b.isTrapdoor || b.isCurvedSlide || b.isZipline || b.isFreefall) {
-        targetX = 0;
+        targetX = b.launchPoint ? b.launchPoint.x : currentCenterX;
       } else if (b.isElevator) {
         if (bot.elevatorChoice === undefined) {
           if (Math.random() < 0.25) {
@@ -405,7 +428,7 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
             bot.elevatorChoice = bestLaneIdx;
           }
         }
-        targetX = LANES[bot.elevatorChoice];
+        targetX = currentCenterX + LANES[bot.elevatorChoice];
       }
 
       const targetZ = b.isTrapdoor ? (b.startZ - 0.2) : (bot.pos.z < b.startZ ? bot.pos.z - 2 : b.startZ - 0.5);
@@ -423,7 +446,6 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
       const oldZ = bot.pos.z;
       const steer = avoidGateObstacles(bot, dx / len, dz / len);
 
-      // ★ 階段・ギミックアプローチ時の滑らかなステアリング補間
       const buildSteerLerp = THREE.MathUtils.clamp(10.0 * effectiveDt, 0.14, 0.28);
       bot.aiDirX = THREE.MathUtils.lerp(bot.aiDirX || 0, steer.x, buildSteerLerp);
       bot.aiDirZ = THREE.MathUtils.lerp(bot.aiDirZ || -1, steer.z, buildSteerLerp);

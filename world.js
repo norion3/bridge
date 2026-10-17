@@ -1,4 +1,4 @@
-// コース伸長・浮島・橋・スライド・ジップライン・エレベーター・スカイダイブ・ドロップタワー施設・幾何学ジュエル配置・破棄
+// コース伸長・浮島・橋・スライド・ジップライン・エレベーター・スカイダイブ・ドロップタワー施設・二股分岐＆合流（Phase 3）・全走者生存保証GC
 import {
   BLOCK_TYPES,
   TRAMPOLINE_TIERS,
@@ -59,7 +59,6 @@ export const activeMagnetBlocks = [];
 export const floorBlocksByStage = new Map();
 export const bridgesByStage = new Map();
 
-// アイテム完全均等シャッフルバッグ（4種均等出現・偏り完全根絶）
 const BASE_ITEMS = ['speed', 'attack', 'magnet', 'thunder'];
 let itemBag = [];
 
@@ -83,12 +82,11 @@ export function incMagnetDockStep() { return magnetDockStepCounter++; }
 
 const dummyPlankObj = new THREE.Object3D();
 
-// ステージ完全交互サイクル ＆ 2系統シャッフルバッグ（全9種満遍なく均等出現）
 const DESCENT_GIMMICKS = ['slide', 'skydive', 'trapdoor', 'curved_slide', 'zipline'];
 const ASCENT_GIMMICKS = ['elevator', 'vertical', 'jump', 'bridge'];
 let descentBag = [];
 let ascentBag = [];
-let lastGimmickCategory = 'descent'; // Stage 5 (zipline) 直後から交互に開始
+let lastGimmickCategory = 'descent';
 
 function getNextDescentGimmick() {
   if (descentBag.length === 0) {
@@ -131,7 +129,6 @@ export function createModifierGate(scene, stageIdx, posX, posZ, posY, opType, va
   panelMesh.castShadow = true;
   group.add(panelMesh);
 
-  // 門の柱：ホワイトスチール支柱
   const postGeo = new THREE.CylinderGeometry(0.09, 0.09, 2.4, 12);
   const p1 = new THREE.Mesh(postGeo, sharedMats.gateFrame);
   p1.position.set(-1.3, 1.2, 0);
@@ -140,7 +137,6 @@ export function createModifierGate(scene, stageIdx, posX, posZ, posY, opType, va
   p2.position.x = 1.3;
   group.add(p2);
 
-  // 支柱上下のオレンジアクセントリング
   const ringGeo = new THREE.TorusGeometry(0.12, 0.025, 8, 16);
   ringGeo.rotateX(Math.PI / 2);
   const rL1 = new THREE.Mesh(ringGeo, sharedMats.ziplinePylonTrim);
@@ -150,7 +146,6 @@ export function createModifierGate(scene, stageIdx, posX, posZ, posY, opType, va
   rR1.position.x = 1.3;
   group.add(rR1);
 
-  // 白大理石フロア直結クリーンベース
   const pedL = new THREE.Mesh(gatePedestalGeo, sharedMats.gatePedestal);
   pedL.position.set(-1.3, 0.08, 0);
   group.add(pedL);
@@ -178,6 +173,87 @@ export function createModifierGate(scene, stageIdx, posX, posZ, posY, opType, va
     consumed: false
   };
   modifierGates.push(gateData);
+}
+
+export function createForkGuideSign(scene, stageIdx, posX, posY, posZ) {
+  const group = new THREE.Group();
+
+  const postGeo = new THREE.CylinderGeometry(0.12, 0.12, 3.2, 12);
+  const pLeft = new THREE.Mesh(postGeo, sharedMats.gateFrame);
+  pLeft.position.set(-3.2, 1.6, 0);
+  group.add(pLeft);
+
+  const pCenter = new THREE.Mesh(postGeo, sharedMats.gateFrame);
+  pCenter.position.set(0, 1.6, 0);
+  group.add(pCenter);
+
+  const pRight = new THREE.Mesh(postGeo, sharedMats.gateFrame);
+  pRight.position.set(3.2, 1.6, 0);
+  group.add(pRight);
+
+  const topBarGeo = new THREE.CylinderGeometry(0.10, 0.10, 6.6, 12);
+  topBarGeo.rotateZ(Math.PI / 2);
+  const topBar = new THREE.Mesh(topBarGeo, sharedMats.gateFrame);
+  topBar.position.y = 3.2;
+  group.add(topBar);
+
+  const canvasLeft = document.createElement('canvas');
+  canvasLeft.width = 256;
+  canvasLeft.height = 128;
+  const ctxL = canvasLeft.getContext('2d');
+  ctxL.fillStyle = 'rgba(15, 23, 42, 0.90)';
+  ctxL.fillRect(0, 0, 256, 128);
+  ctxL.strokeStyle = '#00f0ff';
+  ctxL.lineWidth = 8;
+  ctxL.strokeRect(4, 4, 248, 120);
+  ctxL.fillStyle = '#00f0ff';
+  ctxL.font = 'bold 36px -apple-system, sans-serif';
+  ctxL.textAlign = 'center';
+  ctxL.textBaseline = 'middle';
+  ctxL.fillText('⚡ SHORTCUT', 128, 64);
+
+  const texLeft = new THREE.CanvasTexture(canvasLeft);
+  const matPanelLeft = new THREE.MeshStandardMaterial({
+    map: texLeft,
+    emissive: 0x00f0ff,
+    emissiveIntensity: 0.55,
+    roughness: 0.2
+  });
+  const signLeft = new THREE.Mesh(new THREE.BoxGeometry(2.8, 1.3, 0.12), matPanelLeft);
+  signLeft.position.set(-1.6, 2.3, 0);
+  group.add(signLeft);
+
+  const canvasRight = document.createElement('canvas');
+  canvasRight.width = 256;
+  canvasRight.height = 128;
+  const ctxR = canvasRight.getContext('2d');
+  ctxR.fillStyle = 'rgba(15, 23, 42, 0.90)';
+  ctxR.fillRect(0, 0, 256, 128);
+  ctxR.strokeStyle = '#facc15';
+  ctxR.lineWidth = 8;
+  ctxR.strokeRect(4, 4, 248, 120);
+  ctxR.fillStyle = '#facc15';
+  ctxR.font = 'bold 36px -apple-system, sans-serif';
+  ctxR.textAlign = 'center';
+  ctxR.textBaseline = 'middle';
+  ctxR.fillText('💎 RICH', 128, 64);
+
+  const texRight = new THREE.CanvasTexture(canvasRight);
+  const matPanelRight = new THREE.MeshStandardMaterial({
+    map: texRight,
+    emissive: 0xfacc15,
+    emissiveIntensity: 0.55,
+    roughness: 0.2
+  });
+  const signRight = new THREE.Mesh(new THREE.BoxGeometry(2.8, 1.3, 0.12), matPanelRight);
+  signRight.position.set(1.6, 2.3, 0);
+  group.add(signRight);
+
+  group.position.set(posX, posY, posZ);
+  scene.add(group);
+
+  stageMeshes.push({ meshGroup: group, stageIdx: stageIdx });
+  return group;
 }
 
 export function createTrampolineMesh(x, y, z, tier) {
@@ -278,7 +354,6 @@ export function createElevatorStationStructure(scene, startX, startY, startZ, en
   return group;
 }
 
-// スカイダイブ発射台：7.2m コースター滑走路規格
 export function createSkydiveCatapultStructure(scene, posX, posY, posZ) {
   const group = new THREE.Group();
   const rampLen = SKYDIVE_CONFIG.CATAPULT.length;
@@ -331,7 +406,6 @@ export function createSkydiveCatapultStructure(scene, posX, posY, posZ) {
   };
 }
 
-// ドロップタワー・スカイゲート施設
 export function createTrapdoorHatchStructure(scene, posX, posY, hatchZ, approachStartZ) {
   const group = new THREE.Group();
 
@@ -542,19 +616,18 @@ export function createOceanIsletMesh(scale = 1.0, type = 'tropical') {
   return group;
 }
 
-// 浮島メッシュ
-export function createIslandMesh(r, y, z) {
+export function createIslandMesh(r, y, z, x = 0.0) {
   const group = new THREE.Group();
   const plat = new THREE.Mesh(islandGeo, sharedMats.island);
   plat.scale.set(r, 1, r);
-  plat.position.set(0, y - 0.25, z);
+  plat.position.set(x, y - 0.25, z);
   plat.receiveShadow = true;
   group.add(plat);
 
   const torusGeo = new THREE.TorusGeometry(r, 0.2, 8, 36);
   torusGeo.rotateX(Math.PI / 2);
   const border = new THREE.Mesh(torusGeo, sharedMats.islandBorder);
-  border.position.set(0, y, z);
+  border.position.set(x, y, z);
   group.add(border);
 
   return group;
@@ -568,11 +641,12 @@ export function spawnItem(scene, stageIdx, type = 'speed') {
   let validPos = null;
   let attempts = 0;
   const stageBlocks = getFloorBlocksForStage(stageIdx);
+  const centerX = stageInfo.x || 0.0;
 
   while (attempts < 20) {
     const r = Math.sqrt(Math.random()) * (stageInfo.r - 2.8);
     const theta = Math.random() * Math.PI * 2;
-    const candX = Math.cos(theta) * r;
+    const candX = centerX + Math.cos(theta) * r;
     const candZ = stageInfo.z + Math.sin(theta) * r;
 
     let isOverlapping = false;
@@ -645,7 +719,7 @@ export function spawnItem(scene, stageIdx, type = 'speed') {
   });
 }
 
-export function spawnGatesOnIsland(scene, stageIdx, islandZ, islandY) {
+export function spawnGatesOnIsland(scene, stageIdx, islandZ, islandY, islandX = 0.0) {
   if (stageIdx % 2 !== 1) return;
 
   const gateZ = islandZ - 1.2;
@@ -695,17 +769,16 @@ export function spawnGatesOnIsland(scene, stageIdx, islandZ, islandY) {
     }
   }
 
-  createModifierGate(scene, stageIdx, -3.2, gateZ, islandY, p.left.op, p.left.val, p.left.label);
-  createModifierGate(scene, stageIdx, 3.2, gateZ, islandY, p.right.op, p.right.val, p.right.label);
+  createModifierGate(scene, stageIdx, islandX - 3.2, gateZ, islandY, p.left.op, p.left.val, p.left.label);
+  createModifierGate(scene, stageIdx, islandX + 3.2, gateZ, islandY, p.right.op, p.right.val, p.right.label);
 }
 
-export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, nextIslandZ, prevR, nextR, startY, endY, type) {
-  // スカイダイブ（頭先行・カタパルト台・前方放物線・空中ボーナスブロック配置）
+export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, nextIslandZ, prevR, nextR, startY, endY, type, prevIslandX = 0.0, nextIslandX = 0.0) {
   if (type === 'skydive') {
     const startZ = prevIslandZ - prevR + 1.2;
     const endZ = nextIslandZ + nextR - 1.2;
 
-    const catapult = createSkydiveCatapultStructure(scene, 0, startY, startZ);
+    const catapult = createSkydiveCatapultStructure(scene, prevIslandX, startY, startZ);
 
     const skydiveBridge = {
       stageIdx, nextStageIdx, laneIdx: 1, planks: [],
@@ -717,7 +790,6 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       bonusBlocks: []
     };
 
-    // ★ スカイダイブ空中ボーナスブロック（緩やかなS字ウェーブ配置：計7個）
     const numSkydiveBlocks = 7;
     for (let si = 0; si < numSkydiveBlocks; si++) {
       const t = 0.18 + (si / (numSkydiveBlocks - 1)) * 0.68;
@@ -725,8 +797,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       const fallPower = SKYDIVE_CONFIG.PHYSICS.gravityPower || 2.0;
       const hop = Math.sin(t * Math.PI) * (SKYDIVE_CONFIG.PHYSICS.hopHeight || 3.5);
       const bY = startY + (endY - startY) * Math.pow(t, fallPower) + hop + 0.35;
-      // プレイヤーがスワイプで気持ちよく回収できる緩やかなサインカーブ（左右幅 ±2.4m）
-      const bX = Math.sin(si * 1.5) * 2.4;
+      const bX = THREE.MathUtils.lerp(prevIslandX, nextIslandX, t) + Math.sin(si * 1.5) * 2.4;
 
       const bMesh = new THREE.Mesh(blockGeometry, sharedMats.blockNeutral);
       bMesh.position.set(bX, bY, bZ);
@@ -751,24 +822,23 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     return;
   }
 
-  // ドロップタワー（足先行・真下の着地デッキへ完全垂直落下）
   if (type === 'trapdoor' || type === 'freefall') {
     const approachStartZ = prevIslandZ - prevR + 1.2;
     const targetDropZ = nextIslandZ + nextR - 1.2;
 
-    const hatch = createTrapdoorHatchStructure(scene, 0, startY, targetDropZ, approachStartZ);
+    const hatch = createTrapdoorHatchStructure(scene, prevIslandX, startY, targetDropZ, approachStartZ);
 
     const landingPad = new THREE.Group();
     const landingRimGeo = new THREE.TorusGeometry(2.4, 0.08, 8, 32);
     landingRimGeo.rotateX(Math.PI / 2);
     const landingRim = new THREE.Mesh(landingRimGeo, sharedMats.dropPylonSteel);
-    landingRim.position.set(0, endY + 0.08, targetDropZ);
+    landingRim.position.set(nextIslandX, endY + 0.08, targetDropZ);
     landingPad.add(landingRim);
 
     const landingRingGeo = new THREE.RingGeometry(1.6, 2.2, 32);
     landingRingGeo.rotateX(-Math.PI / 2);
     const landingRing = new THREE.Mesh(landingRingGeo, sharedMats.dropIndicatorNeon);
-    landingRing.position.set(0, endY + 0.09, targetDropZ);
+    landingRing.position.set(nextIslandX, endY + 0.09, targetDropZ);
     landingPad.add(landingRing);
 
     scene.add(landingPad);
@@ -795,7 +865,6 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     return;
   }
 
-  // エレベーター（オープン展望ホバーリフト）
   if (type === 'elevator') {
     const startZ = prevIslandZ - prevR + 1.2;
     const endZ = nextIslandZ + nextR - 1.2;
@@ -823,7 +892,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     }
 
     shuffledLanes.forEach(cfg => {
-      const laneX = LANES[cfg.laneIdx];
+      const laneX = prevIslandX + LANES[cfg.laneIdx];
       const stationMesh = createElevatorStationStructure(scene, laneX, startY, startZ, endY, endZ, cfg);
       elevatorBridge.visualMeshes.push(stationMesh);
 
@@ -847,13 +916,13 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     const departureTopY = startY + 5.5;
     const arrivalTopY = endY + 4.5;
 
-    const depPylon = createZiplinePylonMesh(0, startY, startZ, departureTopY, true);
+    const depPylon = createZiplinePylonMesh(prevIslandX, startY, startZ, departureTopY, true);
     scene.add(depPylon);
-    const arrPylon = createZiplinePylonMesh(0, endY, endZ, arrivalTopY, false);
+    const arrPylon = createZiplinePylonMesh(nextIslandX, endY, endZ, arrivalTopY, false);
     scene.add(arrPylon);
 
-    const startPt = new THREE.Vector3(0, departureTopY - 0.2, startZ);
-    const endPt = new THREE.Vector3(0, arrivalTopY - 0.2, endZ);
+    const startPt = new THREE.Vector3(prevIslandX, departureTopY - 0.2, startZ);
+    const endPt = new THREE.Vector3(nextIslandX, arrivalTopY - 0.2, endZ);
     const cableVec = new THREE.Vector3().subVectors(endPt, startPt);
     const cableLen = cableVec.length();
 
@@ -906,7 +975,6 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     return;
   }
 
-  // S字スライダー端部の高さ＆延伸補正（オレンジリングの上に跨がせる）
   if (type === 'curved_slide') {
     const startZ = prevIslandZ - prevR + 0.4;
     const endZ = nextIslandZ + nextR - 2.0;
@@ -914,10 +982,10 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     const dropY = startY - endY;
     const sDir = (stageIdx % 2 === 0 ? 1 : -1);
 
-    const p0 = new THREE.Vector3(0, startY + 0.28, startZ);
-    const p1 = new THREE.Vector3(sDir * 7.5, startY - dropY * 0.28, startZ - distZ * 0.28);
-    const p2 = new THREE.Vector3(-sDir * 5.8, startY - dropY * 0.72, startZ - distZ * 0.72);
-    const p3 = new THREE.Vector3(0, endY + 0.28, endZ);
+    const p0 = new THREE.Vector3(prevIslandX, startY + 0.28, startZ);
+    const p1 = new THREE.Vector3(prevIslandX + sDir * 7.5, startY - dropY * 0.28, startZ - distZ * 0.28);
+    const p2 = new THREE.Vector3(nextIslandX - sDir * 5.8, startY - dropY * 0.72, startZ - distZ * 0.72);
+    const p3 = new THREE.Vector3(nextIslandX, endY + 0.28, endZ);
     const spline = new THREE.CatmullRomCurve3([p0, p1, p2, p3]);
 
     const steps = 55;
@@ -1047,7 +1115,6 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
   const isSlide = (type === 'slide');
   const isVertical = (type === 'vertical');
   const isStairs = (!isJump && !isSlide && !isVertical);
-  // 通常階段（isStairs）と垂直壁登り階段（isVertical）の両方を段板架橋ステップとして統合
   const isStepBridge = (isStairs || isVertical);
 
   let jumpTiers = [];
@@ -1060,17 +1127,19 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
   }
 
   for (let laneIdx = 0; laneIdx < 3; laneIdx++) {
-    const laneX = LANES[laneIdx];
-    const prevInsetZ = Math.sqrt(Math.max(1, prevR * prevR - laneX * laneX));
-    const nextInsetZ = Math.sqrt(Math.max(1, nextR * nextR - laneX * laneX));
+    const laneOffset = LANES[laneIdx];
+    const prevInsetZ = Math.sqrt(Math.max(1, prevR * prevR - laneOffset * laneOffset));
+    const nextInsetZ = Math.sqrt(Math.max(1, nextR * nextR - laneOffset * laneOffset));
 
-    // 左右レーン（laneIdx !== 1）は円弧感を保ちつつリングを隠すため約40cm手前に設定（通常階段・垂直階段共通）
     const stairsEndOffset = isStepBridge ? (laneIdx === 1 ? -0.4 : +0.03) : -1.2;
     const startZ = prevIslandZ - prevInsetZ + (isStepBridge ? 0.3 : 1.2);
     const endZ = nextIslandZ + nextInsetZ + stairsEndOffset;
     const distZ = startZ - endZ;
 
-    const dist3D = Math.hypot(distZ, endY - startY);
+    const startX = prevIslandX + laneOffset;
+    const endX = nextIslandX + laneOffset;
+
+    const dist3D = Math.hypot(Math.hypot(distZ, endX - startX), endY - startY);
     const numPlanks = isJump ? 1 : Math.max(12, Math.floor(dist3D / (PLANK_LENGTH * 0.75)));
 
     const bridge = {
@@ -1082,42 +1151,46 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     };
 
     if (isSlide) {
-      // 各レーンごとの円周エッジ接合（スライダースロープ面）
       const sStartZ = prevIslandZ - prevInsetZ;
       const sEndZ = nextIslandZ + nextInsetZ;
 
       const slopeOverlap = 0.45;
       const slopeDistZ = (sStartZ - sEndZ) + slopeOverlap * 2;
       const slopeDistY = endY - startY;
+      const slopeDistX = endX - startX;
       const slopeLength = Math.hypot(slopeDistZ, slopeDistY);
       const slopeGeo = new THREE.BoxGeometry(3.6, 0.22, slopeLength);
       const slopeMesh = new THREE.Mesh(slopeGeo, sharedMats.slideSurface);
 
       const midZ = (sStartZ + sEndZ) / 2;
       const midY = (startY + endY) / 2 + 0.10;
-      slopeMesh.position.set(laneX, midY, midZ);
+      const midX = (startX + endX) / 2;
+      slopeMesh.position.set(midX, midY, midZ);
       const angleX = Math.atan2(slopeDistY, slopeDistZ);
       slopeMesh.rotation.x = angleX;
+      if (Math.abs(slopeDistX) > 0.001) {
+        slopeMesh.rotation.y = Math.atan2(slopeDistX, slopeDistZ);
+      }
       slopeMesh.receiveShadow = true;
       scene.add(slopeMesh);
       bridge.visualMeshes.push(slopeMesh);
 
-      // ★ 直線スライダー滑走ボーナスブロック配置（各レーン4個の縦一列ダッシュライン）
       const numSlideBlocks = 4;
       for (let sbi = 0; sbi < numSlideBlocks; sbi++) {
         const prog = 0.22 + (sbi / (numSlideBlocks - 1)) * 0.58;
         const bZ = sStartZ - prog * (sStartZ - sEndZ);
         const bY = startY + prog * (endY - startY) + 0.34;
+        const bX = startX + prog * (endX - startX);
 
         const bMesh = new THREE.Mesh(blockGeometry, sharedMats.blockNeutral);
-        bMesh.position.set(laneX, bY, bZ);
+        bMesh.position.set(bX, bY, bZ);
         bMesh.rotation.x = angleX;
         scene.add(bMesh);
 
         const bonusData = {
           mesh: bMesh,
           laneIdx: laneIdx,
-          laneX: laneX,
+          laneX: bX,
           prog: prog,
           z: bZ,
           baseY: bY,
@@ -1129,22 +1202,15 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
         slideBonusBlocks.push(bonusData);
       }
 
-      // 4本のパイプレール幾何学計算：各パイプの X 座標ごとに円周エッジを個別に厳密算出
       if (laneIdx === 0) {
-        const railXList = [-5.85, -2.0, 2.0, 5.85];
-        railXList.forEach(rX => {
-          const rPrevInset = Math.sqrt(Math.max(1, prevR * prevR - rX * rX));
-          const rNextInset = Math.sqrt(Math.max(1, nextR * nextR - rX * rX));
-          const rStartZ = prevIslandZ - rPrevInset;
-          const rEndZ = nextIslandZ + rNextInset;
+        const railOffsets = [-1.85, 1.85];
+        railOffsets.forEach(rOff => {
+          const rP1 = new THREE.Vector3(startX + rOff, startY + 0.28, sStartZ + 0.35);
+          const rP2 = new THREE.Vector3(endX + rOff, endY + 0.28, sEndZ - 0.35);
 
-          const rOverlap = 0.35;
-          const p1 = new THREE.Vector3(rX, startY + 0.28, rStartZ + rOverlap);
-          const p2 = new THREE.Vector3(rX, endY + 0.28, rEndZ - rOverlap);
-
-          const railVec = new THREE.Vector3().subVectors(p2, p1);
+          const railVec = new THREE.Vector3().subVectors(rP2, rP1);
           const railLen = railVec.length();
-          const railMid = new THREE.Vector3().addVectors(p1, p2).multiplyScalar(0.5);
+          const railMid = new THREE.Vector3().addVectors(rP1, rP2).multiplyScalar(0.5);
 
           const railGeo = new THREE.CylinderGeometry(0.15, 0.15, railLen, 8);
           const railMesh = new THREE.Mesh(railGeo, sharedMats.slideRail);
@@ -1164,7 +1230,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     } else if (isJump) {
       let jumpTier = jumpTiers[laneIdx];
 
-      const tramp = createTrampolineMesh(LANES[laneIdx], startY, startZ - 1.8, jumpTier);
+      const tramp = createTrampolineMesh(startX, startY, startZ - 1.8, jumpTier);
       scene.add(tramp.group);
       bridge.visualMeshes.push(tramp.group);
       bridge.planks.push({
@@ -1179,9 +1245,8 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       });
     } else {
       const geoToUse = isVertical ? verticalPlankGeo : plankGeo;
-      // 垂直段板（厚み1.25m）と通常段板（厚み0.65m）それぞれの天面がリング頂点（+0.20m）とツライチになる中心オフセット
       const plankH = isVertical ? 1.25 : 0.65;
-      const plankCenterOffsetY = 0.20 - plankH / 2; // isVertical: -0.425m, isStairs: -0.125m
+      const plankCenterOffsetY = 0.20 - plankH / 2;
 
       const ghostMesh = new THREE.InstancedMesh(geoToUse, sharedMats.ghostPlank, numPlanks);
       ghostMesh.receiveShadow = true;
@@ -1193,21 +1258,21 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       for (let i = 0; i < numPlanks; i++) {
         const progress = (i + 0.5) / numPlanks;
         let pZ = startZ - progress * distZ;
+        let pX = startX + progress * (endX - startX);
 
-        // 自然で美しい階段スロープ幾何学（完全均一勾配）
         let pY = startY + progress * (endY - startY);
         if (isStepBridge) {
           pY = (startY + plankCenterOffsetY) + progress * (endY - startY);
 
-          // 最上段：中央は既存の美しさを維持、左右は+43cm手前に出してリングを完全に隠す
           if (i === numPlanks - 1) {
             const topOffset = (laneIdx === 1) ? -0.25 : +0.18;
             pZ = nextIslandZ + nextInsetZ + topOffset;
             pY = endY + plankCenterOffsetY;
+            pX = endX;
           }
         }
 
-        dummyPlankObj.position.set(LANES[laneIdx], pY, pZ);
+        dummyPlankObj.position.set(pX, pY, pZ);
         dummyPlankObj.rotation.set(0, 0, 0);
         dummyPlankObj.scale.set(1, 1, 1);
         dummyPlankObj.updateMatrix();
@@ -1238,9 +1303,151 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
   }
 }
 
+export function extendCourseForkPatternA(scene) {
+  const forkIdx = STAGES.length;
+  const prev = STAGES[forkIdx - 1];
+
+  const forkDistZ = 36.0;
+  const forkZ = prev.z - forkDistZ;
+  const forkY = Math.max(5.0, prev.y + 6.0);
+  const forkR = 13.0;
+
+  const forkStage = {
+    z: forkZ,
+    y: forkY,
+    x: 0.0,
+    r: forkR,
+    type: 'fork_hub',
+    isFork: true
+  };
+  STAGES.push(forkStage);
+
+  const forkMeshGroup = createIslandMesh(forkR, forkY, forkZ, 0.0);
+  scene.add(forkMeshGroup);
+  stageMeshes.push({ meshGroup: forkMeshGroup, stageIdx: forkIdx });
+
+  CONNECTIONS.push({ from: forkIdx - 1, to: forkIdx, type: 'bridge' });
+  createBridgeLinks(scene, forkIdx - 1, forkIdx, prev.z, forkZ, prev.r, forkR, prev.y, forkY, 'bridge', prev.x || 0.0, 0.0);
+
+  createForkGuideSign(scene, forkIdx, 0.0, forkY, forkZ - forkR * 0.45);
+
+  const midDistZ = 36.0;
+  const midZ = forkZ - midDistZ;
+
+  const leftMidY = forkY + 5.0;
+  const leftMidR = 9.5;
+  const leftMidX = -17.5;
+
+  const rightMidY = forkY + 3.0;
+  const rightMidR = 11.5;
+  const rightMidX = 17.5;
+
+  const midStageIdx = STAGES.length;
+  const midStage = {
+    z: midZ,
+    y: (leftMidY + rightMidY) / 2,
+    x: 0.0,
+    r: 12.0,
+    type: 'fork_branch',
+    isBranch: true,
+    subIslands: {
+      left: { x: leftMidX, y: leftMidY, z: midZ, r: leftMidR, role: 'shortcut' },
+      right: { x: rightMidX, y: rightMidY, z: midZ, r: rightMidR, role: 'rich' }
+    }
+  };
+  STAGES.push(midStage);
+
+  const leftMidMesh = createIslandMesh(leftMidR, leftMidY, midZ, leftMidX);
+  scene.add(leftMidMesh);
+  stageMeshes.push({ meshGroup: leftMidMesh, stageIdx: midStageIdx, subRole: 'left' });
+
+  const rightMidMesh = createIslandMesh(rightMidR, rightMidY, midZ, rightMidX);
+  scene.add(rightMidMesh);
+  stageMeshes.push({ meshGroup: rightMidMesh, stageIdx: midStageIdx, subRole: 'right' });
+
+  CONNECTIONS.push({ from: forkIdx, to: midStageIdx, type: 'fork_left_connect', branch: 'left' });
+  createBridgeLinks(scene, forkIdx, midStageIdx, forkZ, midZ, forkR, leftMidR, forkY, leftMidY, 'bridge', 0.0, leftMidX);
+
+  CONNECTIONS.push({ from: forkIdx, to: midStageIdx, type: 'fork_right_connect', branch: 'right' });
+  createBridgeLinks(scene, forkIdx, midStageIdx, forkZ, midZ, forkR, rightMidR, forkY, rightMidY, 'bridge', 0.0, rightMidX);
+
+  const richItemType = (Math.random() < 0.5 ? 'thunder' : 'magnet');
+  STAGES[midStageIdx] = midStage;
+
+  createModifierGate(scene, midStageIdx, rightMidX - 2.8, midZ - 0.8, rightMidY, 'add', 8, '+8');
+  createModifierGate(scene, midStageIdx, rightMidX + 2.8, midZ - 0.8, rightMidY, 'multiply', 2, '×2');
+
+  const richItemGroup = new THREE.Group();
+  const crystalMat = (richItemType === 'thunder') ? sharedMats.itemThunderCrystal : sharedMats.itemMagnetCrystal;
+  const ringMat = (richItemType === 'thunder') ? sharedMats.itemThunderBeaconRing : sharedMats.itemMagnetBeaconRing;
+  const crystalGeo = (richItemType === 'thunder') ? itemThunderGeo : itemMagnetGeo;
+
+  const crystal = new THREE.Mesh(crystalGeo, crystalMat);
+  crystal.position.y = 1.35;
+  if (richItemType === 'magnet') crystal.rotation.x = -Math.PI / 2;
+  crystal.castShadow = true;
+  richItemGroup.add(crystal);
+
+  const beaconRing = new THREE.Mesh(itemBeaconRingGeo, ringMat);
+  beaconRing.position.y = 0.04;
+  richItemGroup.add(beaconRing);
+
+  richItemGroup.position.set(rightMidX, rightMidY, midZ + 1.2);
+  scene.add(richItemGroup);
+
+  floorItems.push({
+    group: richItemGroup,
+    crystal: crystal,
+    beaconRing: beaconRing,
+    mesh: richItemGroup,
+    type: richItemType,
+    pos: richItemGroup.position,
+    active: true,
+    stageIdx: midStageIdx,
+    baseY: rightMidY
+  });
+
+  const mergeDistZ = 42.0;
+  const mergeZ = midZ - mergeDistZ;
+  const mergeY = Math.max(5.0, forkY - 4.0);
+  const mergeR = 13.0;
+
+  const mergeStageIdx = STAGES.length;
+  const mergeStage = {
+    z: mergeZ,
+    y: mergeY,
+    x: 0.0,
+    r: mergeR,
+    type: 'fork_merge',
+    isMerge: true
+  };
+  STAGES.push(mergeStage);
+
+  const mergeMeshGroup = createIslandMesh(mergeR, mergeY, mergeZ, 0.0);
+  scene.add(mergeMeshGroup);
+  stageMeshes.push({ meshGroup: mergeMeshGroup, stageIdx: mergeStageIdx });
+
+  CONNECTIONS.push({ from: midStageIdx, to: mergeStageIdx, type: 'merge_left_connect', branch: 'left' });
+  createBridgeLinks(scene, midStageIdx, mergeStageIdx, midZ, mergeZ, leftMidR, mergeR, leftMidY, mergeY, 'skydive', leftMidX, 0.0);
+
+  CONNECTIONS.push({ from: midStageIdx, to: mergeStageIdx, type: 'merge_right_connect', branch: 'right' });
+  createBridgeLinks(scene, midStageIdx, mergeStageIdx, midZ, mergeZ, rightMidR, mergeR, rightMidY, mergeY, 'slide', rightMidX, 0.0);
+
+  spawnGatesOnIsland(scene, mergeStageIdx, mergeZ, mergeY, 0.0);
+  spawnItem(scene, mergeStageIdx, getNextBagItem());
+
+  lastGimmickCategory = 'descent';
+}
+
 export function extendCourse(scene) {
   const idx = STAGES.length;
   const prev = STAGES[idx - 1];
+
+  if (idx === 6) {
+    extendCourseForkPatternA(scene);
+    return;
+  }
+
   let type, nextY, r, distZ;
 
   if (idx === 1) {
@@ -1274,7 +1481,6 @@ export function extendCourse(scene) {
     r = 10.5;
     lastGimmickCategory = 'descent';
   } else {
-    // 完全交互サイクル（登り ➜ 降り ➜ 登り ➜ 降り）＆ 2系統シャッフルバッグ
     let pickDescent = (lastGimmickCategory === 'ascent');
     if (prev.y <= 7.0) pickDescent = false;
     if (prev.y >= 38.0) pickDescent = true;
@@ -1298,7 +1504,7 @@ export function extendCourse(scene) {
         nextY = Math.max(6.0, prev.y - 8.0);
         distZ = 46;
         r = 11;
-      } else { // 'zipline'
+      } else {
         nextY = Math.max(7.0, prev.y - 12.0);
         distZ = 68;
         r = 10.5;
@@ -1318,7 +1524,7 @@ export function extendCourse(scene) {
         nextY = prev.y + 1.0;
         distZ = 30;
         r = 9.5;
-      } else { // 'bridge'
+      } else {
         nextY = prev.y + 7.0;
         distZ = 34;
         r = 10;
@@ -1328,18 +1534,18 @@ export function extendCourse(scene) {
 
   nextY = Math.max(5.0, nextY);
   const nextZ = prev.z - distZ;
-  const stageInfo = { z: nextZ, y: nextY, r: r, type: type };
+  const stageInfo = { z: nextZ, y: nextY, x: 0.0, r: r, type: type };
   STAGES.push(stageInfo);
 
-  const islandMeshGroup = createIslandMesh(r, nextY, nextZ);
+  const islandMeshGroup = createIslandMesh(r, nextY, nextZ, 0.0);
   scene.add(islandMeshGroup);
   stageMeshes.push({ meshGroup: islandMeshGroup, stageIdx: idx });
 
   CONNECTIONS.push({ from: idx - 1, to: idx, type: type });
-  createBridgeLinks(scene, idx - 1, idx, prev.z, nextZ, prev.r, r, prev.y, nextY, type);
+  createBridgeLinks(scene, idx - 1, idx, prev.z, nextZ, prev.r, r, prev.y, nextY, type, prev.x || 0.0, 0.0);
 
   if (idx >= 1) {
-    spawnGatesOnIsland(scene, idx, nextZ, nextY);
+    spawnGatesOnIsland(scene, idx, nextZ, nextY, 0.0);
 
     if (idx % 2 === 1) {
       const typeToSpawn = getNextBagItem();
@@ -1472,7 +1678,7 @@ export function buildWorld(scene) {
   slideBonusBlocks.length = 0;
 
   STAGES.length = 0;
-  STAGES.push({ z: 0, y: 0, r: 12 });
+  STAGES.push({ z: 0, y: 0, x: 0.0, r: 12 });
 
   scene.background = new THREE.Color(0x7dd3fc);
   scene.fog = new THREE.FogExp2(0x7dd3fc, 0.0032);
@@ -1497,16 +1703,25 @@ export function buildWorld(scene) {
     oceanIslands.push({ meshGroup: islet, stageIdx: 0 });
   });
 
-  const startIslandGroup = createIslandMesh(12, 0, 0);
+  const startIslandGroup = createIslandMesh(12, 0, 0, 0.0);
   scene.add(startIslandGroup);
   stageMeshes.push({ meshGroup: startIslandGroup, stageIdx: 0 });
 
   for (let i = 0; i < 6; i++) extendCourse(scene);
 }
 
+// ★ Phase 3: 全走者生存保証クリーンアップ（Multi-Safe GC）
+// プレイヤーだけでなく、後続の走者が左右中継島（Stage N+1）に残っている間は古い足場を破棄しない安全保護
 export function cleanupOldData(scene) {
   if (!player) return;
-  const safeStage = Math.max(0, player.currentStage - 3);
+
+  let minActiveStage = player.currentStage;
+  for (let i = 0; i < characters.length; i++) {
+    if (characters[i].currentStage < minActiveStage) {
+      minActiveStage = characters[i].currentStage;
+    }
+  }
+  const safeStage = Math.max(0, minActiveStage - 2);
 
   for (let i = activeMagnetBlocks.length - 1; i >= 0; i--) {
     const mb = activeMagnetBlocks[i];
@@ -1643,6 +1858,7 @@ export function spawnSingleBlock(scene, stageIdx, targetTeam = null) {
   let validPos = null;
   let attempts = 0;
   const stageBlocks = getFloorBlocksForStage(stageIdx);
+  const centerX = stageInfo.x || 0.0;
 
   const stageBridges = bridgesByStage.get(stageIdx) || [];
   const skydiveB = stageBridges.find(b => b.isSkydive);
@@ -1652,11 +1868,11 @@ export function spawnSingleBlock(scene, stageIdx, targetTeam = null) {
   while (attempts < 25) {
     const r = Math.sqrt(Math.random()) * (stageInfo.r - 2.2);
     const theta = Math.random() * Math.PI * 2;
-    const candX = Math.cos(theta) * r;
+    const candX = centerX + Math.cos(theta) * r;
     const candZ = stageInfo.z + Math.sin(theta) * r;
 
     if (skydiveB) {
-      const dSkySq = candX * candX + (candZ - skydiveB.startZ) * (candZ - skydiveB.startZ);
+      const dSkySq = (candX - (skydiveB.startPt ? skydiveB.startPt.x : centerX)) ** 2 + (candZ - skydiveB.startZ) ** 2;
       if (dSkySq < (SKYDIVE_CONFIG.CATAPULT.exclusionRadius * SKYDIVE_CONFIG.CATAPULT.exclusionRadius)) {
         attempts++;
         continue;
@@ -1664,7 +1880,7 @@ export function spawnSingleBlock(scene, stageIdx, targetTeam = null) {
     }
 
     if (trapdoorB) {
-      const dHatchSq = candX * candX + (candZ - trapdoorB.startZ) * (candZ - trapdoorB.startZ);
+      const dHatchSq = (candX - centerX) ** 2 + (candZ - trapdoorB.startZ) ** 2;
       if (dHatchSq < (TRAPDOOR_CONFIG.HATCH.exclusionRadius * TRAPDOOR_CONFIG.HATCH.exclusionRadius)) {
         attempts++;
         continue;
@@ -1672,7 +1888,7 @@ export function spawnSingleBlock(scene, stageIdx, targetTeam = null) {
     }
 
     if (eleB) {
-      if (candZ < stageInfo.z - stageInfo.r * 0.45 && Math.abs(candX) < 5.5) {
+      if (candZ < stageInfo.z - stageInfo.r * 0.45 && Math.abs(candX - centerX) < 5.5) {
         attempts++;
         continue;
       }
