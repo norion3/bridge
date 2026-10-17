@@ -113,16 +113,14 @@ export function updateNameplatePosition(char) {
 
   const isShrunk = (char.shrinkTimer > 0);
 
-  if (isShrunk) {
-    char.nameplateSprite.scale.set(0.60, 0.60, 0.60);
-  } else {
-    char.nameplateSprite.scale.set(1.0, 1.0, 1.0);
-  }
+  // ★ ユーザー様ご提案：ちびキャラ時もスケールは普通サイズ（等倍）を維持！
+  char.nameplateSprite.scale.set(1.0, 1.0, 1.0);
 
   // 見下ろしカメラがある手前側（+Z方向）の開けた床面へ配置！タワーや身体で遮られない
   const targetX = char.pos.x;
   const targetY = char.pos.y + 0.05; // 床面スレスレ
-  const targetZ = char.pos.z + 1.15; // 画面手前側（カメラ方向）へオフセット
+  // ちびキャラ時は歩幅に合わせて手前オフセットを少し寄せる (+0.82m)
+  const targetZ = char.pos.z + (isShrunk ? 0.82 : 1.15);
 
   char.nameplateSprite.position.set(targetX, targetY, targetZ);
 }

@@ -1,4 +1,4 @@
-// コース伸長・浮島・橋・スライド・ジップライン・エレベーター・スカイダイブ・ドロップタワー施設・二股分岐＆合流（通常3レーン完全復元＆合流スライダー幾何学密着化）
+// コース伸長・浮島・橋・スライド・ジップライン・エレベーター・スカイダイブ・ドロップタワー施設・二股分岐＆合流（通常3レーン完全復元＆合流スライダー幾何学密着化・構文エラー完全修復版）
 import {
   BLOCK_TYPES,
   TRAMPOLINE_TIERS,
@@ -1133,6 +1133,9 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
           stageIdx: stageIdx
         };
         bridge.bonusBlocks.push(bonusData);
+        slideBonusBlocks.push(bonusData); // ★ 自転アニメーション用配列へ登録
+      } // ★★★ 欠落していた閉じ括弧を補完！
+
       // スライダーの仕切りパイプレール
       const railOffsets = singleLaneOnly ? [-1.85, 1.85] : (laneIdx === 0 ? [-5.85, -2.0, 2.0, 5.85] : []);
       railOffsets.forEach(rOff => {
