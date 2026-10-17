@@ -1,4 +1,4 @@
-// Bot AI自律思考ロジック・レーン評価・左右分岐選択（完全分離レイアウト）・スカイダイブ＆ドロップタワー進入・空中姿勢同期・AIワープ追いつき復活・スタック回避
+// Bot AI自律思考ロジック・レーン評価・左右分岐選択（テーマ認識型＆状況適応自律ルート選択）・スカイダイブ＆ドロップタワー進入・空中姿勢同期・AIワープ追いつき復活・スタック回避
 import {
   LANES,
   ELEVATOR_CONFIG,
@@ -215,36 +215,77 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
     Math.abs(bot.pos.x - (currentCenterX + LANES[b.laneIdx])) < 2.5
   );
 
-  const nextConn = CONNECTIONS.find(c => c.from === bot.currentStage);
-  const isVerticalNext = (nextConn && nextConn.type === 'vertical');
-
-  // 分岐島での自律判断・ルート選択
+  // ■ テーマ認識型 分岐自律選択ロジック (Phase 3)
   if (stage.isFork && bot.forkBranchChoice === undefined) {
-    const stackRatio = bot.stackCount / Math.max(1, bot.aiCapacityGoal || 15);
-    const shortcutWeight = 0.40 + (stackRatio > 0.8 ? 0.35 : 0.0) + (isLaggingBehind ? -0.20 : 0.15);
-    bot.forkBranchChoice = (Math.random() < shortcutWeight) ? 'left' : 'right';
+    let leftRole = 'shortcut';
+    let rightRole = 'rich';
+
+    const leftBridge = stageBridges.find(br => {
+      const nextStg = STAGES[br.nextStageIdx];
+      return nextStg && Math.abs((nextStg.x || 0.0) - (-6.5)) < 1.0;
+    });
+    const rightBridge = stageBridges.find(br => {
+      const nextStg = STAGES[br.nextStageIdx];
+      return nextStg && Math.abs((nextStg.x || 0.0) - 6.5) < 1.0;
+    });
+
+    if (leftBridge && STAGES[leftBridge.nextStageIdx]) {
+      leftRole = STAGES[leftBridge.nextStageIdx].branchRole || leftRole;
+    }
+    if (rightBridge && STAGES[rightBridge.nextStageIdx]) {
+      rightRole = STAGES[rightBridge.nextStageIdx].branchRole || rightRole;
+    }
+
+    // 所持ブロック数に応じた意思決定
+    let preferShortcutWeight = 0.50;
+    if (bot.stackCount >= 14) {
+      preferShortcutWeight = 0.72; // ブロック潤沢 ➜ 近道/テクニカルで一気に先行
+    } else if (bot.stackCount < 8) {
+      preferShortcutWeight = 0.25; // ブロック不足 ➜ リッチ島で資材・アイテム回収
+    }
+
+    if (isLaggingBehind) {
+      if (bot.stackCount >= 10) preferShortcutWeight += 0.15; // 逆転ダイブ狙い
+      else preferShortcutWeight -= 0.15; // サンダーなどの逆転アイテム回収狙い
+    }
+
+    const wantsShortcut = (Math.random() < preferShortcutWeight);
+    const shortcutBranch = (leftRole === 'shortcut' || leftRole === 'technical') ? 'left' : 'right';
+    const richBranch = (shortcutBranch === 'left') ? 'right' : 'left';
+
+    bot.forkBranchChoice = wantsShortcut ? shortcutBranch : richBranch;
   } else if (!stage.isFork && stage.type !== 'fork_left' && stage.type !== 'fork_right') {
     bot.forkBranchChoice = undefined;
   }
 
-  if (nextConn) {
-    if (nextConn.type === 'slide') {
+  // 分岐選択を考慮したアクティブ接続の取得
+  let activeConn = null;
+  if (stage.isFork && bot.forkBranchChoice) {
+    activeConn = CONNECTIONS.find(c => c.from === bot.currentStage && c.branch === bot.forkBranchChoice);
+  }
+  if (!activeConn) {
+    activeConn = CONNECTIONS.find(c => c.from === bot.currentStage);
+  }
+  const isVerticalNext = (activeConn && activeConn.type === 'vertical');
+
+  if (activeConn) {
+    if (activeConn.type === 'slide') {
       bot.aiState = 'BUILD';
       if (bot.targetLane === undefined) bot.targetLane = Math.floor(Math.random() * 3);
     } else if (
-      nextConn.type === 'skydive' ||
-      nextConn.type === 'trapdoor' ||
-      nextConn.type === 'curved_slide' ||
-      nextConn.type === 'zipline' ||
-      nextConn.type === 'elevator' ||
-      nextConn.type === 'freefall'
+      activeConn.type === 'skydive' ||
+      activeConn.type === 'trapdoor' ||
+      activeConn.type === 'curved_slide' ||
+      activeConn.type === 'zipline' ||
+      activeConn.type === 'elevator' ||
+      activeConn.type === 'freefall'
     ) {
       bot.aiState = 'BUILD';
       bot.targetLane = 1;
       bot.aiCapacityGoal = 0;
-    } else if (nextConn.type === 'jump') {
+    } else if (activeConn.type === 'jump') {
       bot.aiState = 'BUILD';
-      if (bot.targetLane === undefined) bot.targetLane = Math.floor(Math.random() * 3);
+      if (bot.targetLane === undefined) bot.targetLane = stage.isFork ? 1 : Math.floor(Math.random() * 3);
       bot.aiCapacityGoal = 0;
     } else if (isVerticalNext) {
       if (bot.aiCapacityGoal < 18) bot.aiCapacityGoal = 18 + Math.floor(Math.random() * 4);

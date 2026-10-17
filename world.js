@@ -1,4 +1,4 @@
-// コース伸長・浮島・橋・スライド・ジップライン・エレベーター・スカイダイブ・ドロップタワー施設・二股分岐＆合流（通常3レーン完全復元＆合流スライダー幾何学密着化・構文エラー完全修復版）
+// コース伸長・浮島・橋・スライド・ジップライン・エレベーター・スカイダイブ・ドロップタワー施設・二股分岐＆合流（Phase 2: 周期的分岐出現 ＆ クリーンアップ整合版）
 import {
   BLOCK_TYPES,
   TRAMPOLINE_TIERS,
@@ -87,6 +87,7 @@ const ASCENT_GIMMICKS = ['elevator', 'vertical', 'jump', 'bridge'];
 let descentBag = [];
 let ascentBag = [];
 let lastGimmickCategory = 'descent';
+let lastMergeStageIdx = -1;
 
 function getNextDescentGimmick() {
   if (descentBag.length === 0) {
@@ -1133,8 +1134,8 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
           stageIdx: stageIdx
         };
         bridge.bonusBlocks.push(bonusData);
-        slideBonusBlocks.push(bonusData); // ★ 自転アニメーション用配列へ登録
-      } // ★★★ 欠落していた閉じ括弧を補完！
+        slideBonusBlocks.push(bonusData);
+      }
 
       // スライダーの仕切りパイプレール
       const railOffsets = singleLaneOnly ? [-1.85, 1.85] : (laneIdx === 0 ? [-5.85, -2.0, 2.0, 5.85] : []);
@@ -1169,7 +1170,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
         bridge.planks.push({ teamId: 'slide_free', index: i, y: pY, z: pZ });
       }
     } else if (isJump) {
-      let jumpTier = jumpTiers[laneIdx];
+      let jumpTier = singleLaneOnly ? TRAMPOLINE_TIERS.mega : jumpTiers[laneIdx];
 
       const tramp = createTrampolineMesh(startX, startY, startZ - 1.8, jumpTier);
       scene.add(tramp.group);
@@ -1242,12 +1243,12 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
   }
 }
 
-// 高低差立体レイアウト ＆ 各ルート橋1本化 ＆ 隙間ゼロ完全接合コース生成
+// 分岐テーマ抽選エンジン ＆ 左右シャッフル ＆ 幾何学完全接合コース生成
 export function extendCourseForkPatternB(scene) {
   const forkIdx = STAGES.length;
   const prev = STAGES[forkIdx - 1];
 
-  // 1. 分岐アイランド（Stage 6: X = 0.0m, Y = 10.0m, R = 11.5m）
+  // 1. 分岐アイランド（Stage 6, 14, 22... : X = 0.0m, Y = 10.0m, R = 11.5m）
   const forkDistZ = 36.0;
   const forkZ = prev.z - forkDistZ;
   const forkY = Math.max(8.0, prev.y + 4.0);
@@ -1271,10 +1272,87 @@ export function extendCourseForkPatternB(scene) {
   CONNECTIONS.push({ from: forkIdx - 1, to: forkIdx, type: 'bridge' });
   createBridgeLinks(scene, forkIdx - 1, forkIdx, prev.z, forkZ, prev.r, forkR, prev.y, forkY, 'bridge', 0.0, false);
 
-  // 2. 左中継島（Stage 7: 【超高層 天上島】通常の2倍高！ Y = 36.0m, X = -6.5m, R = 8.5m）
+  // ■ 4大要素対角バランシング テーマ選定エンジン
+  const pairRoll = Math.random();
+  let theme1, theme2;
+
+  if (pairRoll < 0.40) {
+    // 【Pair 1】 テーマA (Rush & Dive) vs テーマB (Rich & Boost)
+    theme1 = {
+      name: 'rush',
+      role: 'shortcut',
+      deltaY: 26.0,
+      approachType: 'vertical',
+      itemType: 'speed',
+      exitType: 'skydive',
+      gateL: { op: 'add', val: 4, label: '+4' },
+      gateR: { op: 'divide', val: 2, label: '÷2' }
+    };
+    theme2 = {
+      name: 'rich',
+      role: 'rich',
+      deltaY: 6.0,
+      approachType: 'bridge',
+      itemType: (Math.random() < 0.5 ? 'thunder' : 'magnet'),
+      exitType: 'slide',
+      gateL: { op: 'add', val: 8, label: '+8' },
+      gateR: { op: 'multiply', val: 2, label: '×2' }
+    };
+  } else if (pairRoll < 0.70) {
+    // 【Pair 2】 テーマB (Rich & Boost) vs テーマC (Technical & Gimmick)
+    theme1 = {
+      name: 'rich',
+      role: 'rich',
+      deltaY: 6.0,
+      approachType: 'bridge',
+      itemType: (Math.random() < 0.5 ? 'thunder' : 'magnet'),
+      exitType: 'slide',
+      gateL: { op: 'add', val: 8, label: '+8' },
+      gateR: { op: 'multiply', val: 2, label: '×2' }
+    };
+    theme2 = {
+      name: 'technical',
+      role: 'technical',
+      deltaY: 18.0,
+      approachType: 'jump',
+      itemType: 'attack',
+      exitType: 'skydive',
+      gateL: { op: 'multiply', val: 2, label: '×2' },
+      gateR: { op: 'subtract', val: 6, label: '-6' }
+    };
+  } else {
+    // 【Pair 3】 テーマA (Rush & Dive) vs テーマC (Technical & Gimmick)
+    theme1 = {
+      name: 'rush',
+      role: 'shortcut',
+      deltaY: 26.0,
+      approachType: 'vertical',
+      itemType: 'speed',
+      exitType: 'skydive',
+      gateL: { op: 'add', val: 4, label: '+4' },
+      gateR: { op: 'divide', val: 2, label: '÷2' }
+    };
+    theme2 = {
+      name: 'technical',
+      role: 'technical',
+      deltaY: 14.0,
+      approachType: 'jump',
+      itemType: 'attack',
+      exitType: 'slide',
+      gateL: { op: 'multiply', val: 2, label: '×2' },
+      gateR: { op: 'subtract', val: 4, label: '-4' }
+    };
+  }
+
+  // 50% の確率で左右シャッフル
+  const isSwapped = (Math.random() < 0.5);
+  const leftTheme = isSwapped ? theme2 : theme1;
+  const rightTheme = isSwapped ? theme1 : theme2;
+
+  // 2. 左中継島（Stage 7, 15, 23... : X = -6.5m, R = 8.5m）
   const leftMidDistZ = 38.0;
   const leftMidZ = forkZ - leftMidDistZ;
-  const leftMidY = forkY + 26.0; // Y = 36.0m
+  const leftMidY = forkY + leftTheme.deltaY;
   const leftMidR = 8.5;
   const leftMidX = -6.5;
 
@@ -1285,7 +1363,8 @@ export function extendCourseForkPatternB(scene) {
     x: leftMidX,
     r: leftMidR,
     type: 'fork_left',
-    branchRole: 'shortcut'
+    branchRole: leftTheme.role,
+    themeName: leftTheme.name
   };
   STAGES.push(leftStage);
 
@@ -1293,14 +1372,19 @@ export function extendCourseForkPatternB(scene) {
   scene.add(leftMesh);
   stageMeshes.push({ meshGroup: leftMesh, stageIdx: leftStageIdx });
 
-  // 分岐島から左島へ向かう橋は「1本だけ（垂直絶壁クライム階段）」隙間ゼロでピタッと接合
-  CONNECTIONS.push({ from: forkIdx, to: leftStageIdx, type: 'vertical', branch: 'left' });
-  createBridgeLinks(scene, forkIdx, leftStageIdx, forkZ, leftMidZ, forkR, leftMidR, forkY, leftMidY, 'vertical', leftMidX, true);
+  // 分岐島から左島へ向かう橋（単独レーン・隙間ゼロ接合）
+  CONNECTIONS.push({ from: forkIdx, to: leftStageIdx, type: leftTheme.approachType, branch: 'left' });
+  createBridgeLinks(scene, forkIdx, leftStageIdx, forkZ, leftMidZ, forkR, leftMidR, forkY, leftMidY, leftTheme.approachType, leftMidX, true);
 
-  // 3. 右中継島（Stage 8: 【通常低空 リッチ島】Y = 16.0m, X = +6.5m, R = 8.5m）
+  // 左島アイテム ＆ ゲート
+  createModifierGate(scene, leftStageIdx, leftMidX - 2.8, leftMidZ - 0.8, leftMidY, leftTheme.gateL.op, leftTheme.gateL.val, leftTheme.gateL.label);
+  createModifierGate(scene, leftStageIdx, leftMidX + 2.8, leftMidZ - 0.8, leftMidY, leftTheme.gateR.op, leftTheme.gateR.val, leftTheme.gateR.label);
+  spawnItem(scene, leftStageIdx, leftTheme.itemType);
+
+  // 3. 右中継島（Stage 8, 16, 24... : X = +6.5m, R = 8.5m）
   const rightMidDistZ = 38.0;
   const rightMidZ = forkZ - rightMidDistZ;
-  const rightMidY = forkY + 6.0; // Y = 16.0m
+  const rightMidY = forkY + rightTheme.deltaY;
   const rightMidR = 8.5;
   const rightMidX = 6.5;
 
@@ -1311,7 +1395,8 @@ export function extendCourseForkPatternB(scene) {
     x: rightMidX,
     r: rightMidR,
     type: 'fork_right',
-    branchRole: 'rich'
+    branchRole: rightTheme.role,
+    themeName: rightTheme.name
   };
   STAGES.push(rightStage);
 
@@ -1319,18 +1404,16 @@ export function extendCourseForkPatternB(scene) {
   scene.add(rightMesh);
   stageMeshes.push({ meshGroup: rightMesh, stageIdx: rightStageIdx });
 
-  // 分岐島から右島へ向かう橋は「1本だけ（緩やかステップ階段）」隙間ゼロでピタッと接合
-  CONNECTIONS.push({ from: forkIdx, to: rightStageIdx, type: 'bridge', branch: 'right' });
-  createBridgeLinks(scene, forkIdx, rightStageIdx, forkZ, rightMidZ, forkR, rightMidR, forkY, rightMidY, 'bridge', rightMidX, true);
+  // 分岐島から右島へ向かう橋（単独レーン・隙間ゼロ接合）
+  CONNECTIONS.push({ from: forkIdx, to: rightStageIdx, type: rightTheme.approachType, branch: 'right' });
+  createBridgeLinks(scene, forkIdx, rightStageIdx, forkZ, rightMidZ, forkR, rightMidR, forkY, rightMidY, rightTheme.approachType, rightMidX, true);
 
-  // 右島：リッチ確定アイテム（サンダー or マグネット）＆ボーナスゲート
-  createModifierGate(scene, rightStageIdx, rightMidX - 2.8, rightMidZ - 0.8, rightMidY, 'add', 8, '+8');
-  createModifierGate(scene, rightStageIdx, rightMidX + 2.8, rightMidZ - 0.8, rightMidY, 'multiply', 2, '×2');
+  // 右島アイテム ＆ ゲート
+  createModifierGate(scene, rightStageIdx, rightMidX - 2.8, rightMidZ - 0.8, rightMidY, rightTheme.gateL.op, rightTheme.gateL.val, rightTheme.gateL.label);
+  createModifierGate(scene, rightStageIdx, rightMidX + 2.8, rightMidZ - 0.8, rightMidY, rightTheme.gateR.op, rightTheme.gateR.val, rightTheme.gateR.label);
+  spawnItem(scene, rightStageIdx, rightTheme.itemType);
 
-  const richItemType = (Math.random() < 0.5 ? 'thunder' : 'magnet');
-  spawnItem(scene, rightStageIdx, richItemType);
-
-  // 4. 合流アイランド（Stage 9: X = 0.0m, Y = 10.0m, R = 12.0m）
+  // 4. 合流アイランド（Stage 9, 17, 25... : X = 0.0m, Y = 10.0m, R = 12.0m）
   const mergeDistZ = 46.0;
   const mergeZ = Math.min(leftMidZ, rightMidZ) - mergeDistZ;
   const mergeY = forkY;
@@ -1346,18 +1429,19 @@ export function extendCourseForkPatternB(scene) {
     isMerge: true
   };
   STAGES.push(mergeStage);
+  lastMergeStageIdx = mergeStageIdx; // ★ 合流島インデックスを更新
 
   const mergeMeshGroup = createIslandMesh(mergeR, mergeY, mergeZ, 0.0);
   scene.add(mergeMeshGroup);
   stageMeshes.push({ meshGroup: mergeMeshGroup, stageIdx: mergeStageIdx });
 
-  // 左の天空島（Y=36m）からは落差-26m 超特大スカイダイブで合流島へダイブ
-  CONNECTIONS.push({ from: leftStageIdx, to: mergeStageIdx, type: 'skydive', branch: 'left' });
-  createBridgeLinks(scene, leftStageIdx, mergeStageIdx, leftMidZ, mergeZ, leftMidR, mergeR, leftMidY, mergeY, 'skydive', leftMidX, true);
+  // 左中継島から合流島への脱出アトラクション
+  CONNECTIONS.push({ from: leftStageIdx, to: mergeStageIdx, type: leftTheme.exitType, branch: 'left' });
+  createBridgeLinks(scene, leftStageIdx, mergeStageIdx, leftMidZ, mergeZ, leftMidR, mergeR, leftMidY, mergeY, leftTheme.exitType, leftMidX, true);
 
-  // 右の低空島（Y=16m）からはウォータースライダーで合流（終点島中心 X=0.0m との相対オフセットを厳密計算）
-  CONNECTIONS.push({ from: rightStageIdx, to: mergeStageIdx, type: 'slide', branch: 'right' });
-  createBridgeLinks(scene, rightStageIdx, mergeStageIdx, rightMidZ, mergeZ, rightMidR, mergeR, rightMidY, mergeY, 'slide', rightMidX, true);
+  // 右中継島から合流島への脱出アトラクション
+  CONNECTIONS.push({ from: rightStageIdx, to: mergeStageIdx, type: rightTheme.exitType, branch: 'right' });
+  createBridgeLinks(scene, rightStageIdx, mergeStageIdx, rightMidZ, mergeZ, rightMidR, mergeR, rightMidY, mergeY, rightTheme.exitType, rightMidX, true);
 
   spawnGatesOnIsland(scene, mergeStageIdx, mergeZ, mergeY, 0.0);
   spawnItem(scene, mergeStageIdx, getNextBagItem());
@@ -1369,7 +1453,11 @@ export function extendCourse(scene) {
   const idx = STAGES.length;
   const prev = STAGES[idx - 1];
 
-  if (idx === 6) {
+  // ★ 周期的分岐出現ロジック：初回はStage 6、以降は前回の合流島から5ステージ後（4区間通常ステージを挟む）に自動生成
+  const stagesSinceLastMerge = (lastMergeStageIdx === -1) ? (idx - 6) : (idx - lastMergeStageIdx);
+  const shouldSpawnFork = (lastMergeStageIdx === -1 && idx === 6) || (lastMergeStageIdx !== -1 && stagesSinceLastMerge >= 5);
+
+  if (shouldSpawnFork) {
     extendCourseForkPatternB(scene);
     return;
   }
@@ -1511,6 +1599,7 @@ export function buildWorld(scene) {
   ascentBag.length = 0;
   itemBag.length = 0;
   lastGimmickCategory = 'descent';
+  lastMergeStageIdx = -1;
 
   floorBlocksByStage.forEach(bucket => {
     bucket.forEach(b => {
@@ -1637,7 +1726,7 @@ export function buildWorld(scene) {
   for (let i = 0; i < 6; i++) extendCourse(scene);
 }
 
-// ★ クリーンアップ安全化：現在プレイヤーおよび全キャラクターがいるステージから最低2ステージ以上前のものだけを安全に消去
+// クリーンアップ安全化：現在プレイヤーおよび全キャラクターがいるステージから最低2ステージ以上前のものだけを安全に消去
 export function cleanupOldData(scene) {
   if (!player) return;
 
