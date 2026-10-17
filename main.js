@@ -1,4 +1,4 @@
-// メインエントリポイント：Three.js初期化・ダイナミックロックオン並走カメラ（左右ルート完全整合追従）・メインループ・ネームプレート連動
+// メインエントリポイント：Three.js初期化・ダイナミックロックオン並走カメラ（完全連続滑らかLERP追従・カクつきゼロ）・メインループ・ネームプレート連動
 import { SoundEngine } from './audio.js';
 import {
   TEAMS,
@@ -828,12 +828,11 @@ export function animate(currentTime) {
 
     const stackLift = Math.min((player.stackCount || 0) * 0.08, 3.2);
 
-    // 左右ルート（X = ±6.0m）に滑らかに追従するカメラオフセット
-    const isOffCenterRoute = Math.abs(player.pos.x) > 2.0;
-    let targetCamX = isOffCenterRoute ? (player.pos.x * 0.85) : (player.pos.x * 0.2);
+    // ★ 境界による if/else を完全撤廃し、連続的でシルクのように滑らかな追従（カクつきゼロ）
+    let targetCamX = player.pos.x * 0.75;
     let targetCamY = player.pos.y + 24 + stackLift;
     let targetCamZ = player.pos.z + 12 + (stackLift * 0.6);
-    let targetLookX = isOffCenterRoute ? (player.pos.x * 0.75) : (player.pos.x * 0.1);
+    let targetLookX = player.pos.x * 0.65;
     let targetLookY = player.pos.y + (stackLift * 0.3);
     let targetLookAheadZ = player.pos.z - 5;
     let targetFOV = player.speedBoostActive ? 65 : 60;
@@ -985,9 +984,9 @@ export function animate(currentTime) {
       ? (prog < 0.22 ? 0.32 : (prog < 0.42 ? TRAPDOOR_CONFIG.CAMERA.lerpFactorLead : TRAPDOOR_CONFIG.CAMERA.lerpFactorChase))
       : 0.14;
 
-    const lerpFactorX = isTrapdoor ? trapdoorLerp : (isApproachingTrapdoor ? 0.20 : (isSkydive ? 0.40 : (trapdoorLandingRecoveryTimer > 0 ? 0.18 : 0.14)));
-    const lerpFactorY = isTrapdoor ? trapdoorLerp : (isApproachingTrapdoor ? 0.20 : (isSkydive ? 0.40 : (isJumping ? 0.16 : (trapdoorLandingRecoveryTimer > 0 ? 0.18 : 0.14))));
-    const lerpFactorZ = isTrapdoor ? trapdoorLerp : (isApproachingTrapdoor ? 0.20 : (isSkydive ? 0.44 : (trapdoorLandingRecoveryTimer > 0 ? 0.18 : 0.14)));
+    const lerpFactorX = isTrapdoor ? trapdoorLerp : (isApproachingTrapdoor ? 0.20 : (isSkydive ? 0.40 : (trapdoorLandingRecoveryTimer > 0 ? 0.18 : 0.12)));
+    const lerpFactorY = isTrapdoor ? trapdoorLerp : (isApproachingTrapdoor ? 0.20 : (isSkydive ? 0.40 : (isJumping ? 0.16 : (trapdoorLandingRecoveryTimer > 0 ? 0.18 : 0.12))));
+    const lerpFactorZ = isTrapdoor ? trapdoorLerp : (isApproachingTrapdoor ? 0.20 : (isSkydive ? 0.44 : (trapdoorLandingRecoveryTimer > 0 ? 0.18 : 0.12)));
 
     camera.position.x = THREE.MathUtils.lerp(camera.position.x, targetCamX, lerpFactorX);
     camera.position.y = THREE.MathUtils.lerp(camera.position.y, targetCamY, lerpFactorY);

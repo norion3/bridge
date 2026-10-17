@@ -1,4 +1,4 @@
-// コース伸長・浮島・橋・スライド・ジップライン・エレベーター・スカイダイブ・ドロップタワー施設・二股分岐＆合流（完全分離・重なりゼロ幾何学レイアウト）
+// コース伸長・浮島・橋・スライド・ジップライン・エレベーター・スカイダイブ・ドロップタワー施設・二股分岐＆合流（超高低差立体レイアウト ＆ 各ルート橋1本化）
 import {
   BLOCK_TYPES,
   TRAMPOLINE_TIERS,
@@ -175,7 +175,7 @@ export function createModifierGate(scene, stageIdx, posX, posZ, posY, opType, va
   modifierGates.push(gateData);
 }
 
-// 分岐島（Stage 6）中央の誘導ネオンアーチ（左右幅を広げて堂々と配置）
+// 分岐島（Stage 6）中央の誘導ネオンアーチ
 export function createForkGuideSign(scene, stageIdx, posX, posY, posZ) {
   const group = new THREE.Group();
 
@@ -208,10 +208,10 @@ export function createForkGuideSign(scene, stageIdx, posX, posY, posZ) {
   ctxL.lineWidth = 8;
   ctxL.strokeRect(4, 4, 248, 120);
   ctxL.fillStyle = '#00f0ff';
-  ctxL.font = 'bold 32px -apple-system, sans-serif';
+  ctxL.font = 'bold 30px -apple-system, sans-serif';
   ctxL.textAlign = 'center';
   ctxL.textBaseline = 'middle';
-  ctxL.fillText('⚡ SHORTCUT', 128, 64);
+  ctxL.fillText('⚡ 天空 SHORTCUT', 128, 64);
 
   const texLeft = new THREE.CanvasTexture(canvasLeft);
   const matPanelLeft = new THREE.MeshStandardMaterial({
@@ -234,10 +234,10 @@ export function createForkGuideSign(scene, stageIdx, posX, posY, posZ) {
   ctxR.lineWidth = 8;
   ctxR.strokeRect(4, 4, 248, 120);
   ctxR.fillStyle = '#facc15';
-  ctxR.font = 'bold 32px -apple-system, sans-serif';
+  ctxR.font = 'bold 30px -apple-system, sans-serif';
   ctxR.textAlign = 'center';
   ctxR.textBaseline = 'middle';
-  ctxR.fillText('💎 RICH', 128, 64);
+  ctxR.fillText('💎 リッチ RICH', 128, 64);
 
   const texRight = new THREE.CanvasTexture(canvasRight);
   const matPanelRight = new THREE.MeshStandardMaterial({
@@ -774,8 +774,8 @@ export function spawnGatesOnIsland(scene, stageIdx, islandZ, islandY, islandX = 
   createModifierGate(scene, stageIdx, islandX + 3.2, gateZ, islandY, p.right.op, p.right.val, p.right.label);
 }
 
-// 完全直進・平行架橋（指定された islandCenterX 軸に沿ってまっすぐ架橋）
-export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, nextIslandZ, prevR, nextR, startY, endY, type, islandCenterX = 0.0) {
+// 架橋生成（singleLaneOnly: true の場合は中央の1本のみ架設）
+export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, nextIslandZ, prevR, nextR, startY, endY, type, islandCenterX = 0.0, singleLaneOnly = false) {
   if (type === 'skydive') {
     const startZ = prevIslandZ - prevR + 1.2;
     const endZ = nextIslandZ + nextR - 1.2;
@@ -1128,8 +1128,12 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     }
   }
 
-  for (let laneIdx = 0; laneIdx < 3; laneIdx++) {
-    const laneOffset = LANES[laneIdx];
+  // ★ ユーザー様ご提案：分岐する島へは橋をそれぞれ「1本だけ（中央レーン幅）」にする！
+  const laneIndices = singleLaneOnly ? [1] : [0, 1, 2];
+
+  for (let lIdx = 0; lIdx < laneIndices.length; lIdx++) {
+    const laneIdx = laneIndices[lIdx];
+    const laneOffset = singleLaneOnly ? 0.0 : LANES[laneIdx];
     const prevInsetZ = Math.sqrt(Math.max(1, prevR * prevR - laneOffset * laneOffset));
     const nextInsetZ = Math.sqrt(Math.max(1, nextR * nextR - laneOffset * laneOffset));
 
@@ -1197,24 +1201,28 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
         slideBonusBlocks.push(bonusData);
       }
 
-      if (laneIdx === 0) {
-        const railOffsets = [-1.85, 1.85];
-        railOffsets.forEach(rOff => {
-          const rP1 = new THREE.Vector3(startX + rOff, startY + 0.28, sStartZ + 0.35);
-          const rP2 = new THREE.Vector3(startX + rOff, endY + 0.28, sEndZ - 0.35);
+      // ★ スライダーの4本仕切りパイプレールを完全復元（画像25の解消）
+      // singleLaneOnly の時は両端の2本、3レーン時は4本すべて架設
+      const railOffsets = singleLaneOnly ? [-1.85, 1.85] : (laneIdx === 0 ? [-5.85, -2.0, 2.0, 5.85] : []);
+      railOffsets.forEach(rOff => {
+        const rActualX = singleLaneOnly ? (startX + rOff) : (islandCenterX + rOff);
+        const rPrevInset = Math.sqrt(Math.max(1, prevR * prevR - (rOff * rOff)));
+        const rNextInset = Math.sqrt(Math.max(1, nextR * nextR - (rOff * rOff)));
 
-          const railVec = new THREE.Vector3().subVectors(rP2, rP1);
-          const railLen = railVec.length();
-          const railMid = new THREE.Vector3().addVectors(rP1, rP2).multiplyScalar(0.5);
+        const rP1 = new THREE.Vector3(rActualX, startY + 0.28, prevIslandZ - rPrevInset + 0.35);
+        const rP2 = new THREE.Vector3(rActualX, endY + 0.28, nextIslandZ + rNextInset - 0.35);
 
-          const railGeo = new THREE.CylinderGeometry(0.15, 0.15, railLen, 8);
-          const railMesh = new THREE.Mesh(railGeo, sharedMats.slideRail);
-          railMesh.position.copy(railMid);
-          railMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), railVec.clone().normalize());
-          scene.add(railMesh);
-          bridge.visualMeshes.push(railMesh);
-        });
-      }
+        const railVec = new THREE.Vector3().subVectors(rP2, rP1);
+        const railLen = railVec.length();
+        const railMid = new THREE.Vector3().addVectors(rP1, rP2).multiplyScalar(0.5);
+
+        const railGeo = new THREE.CylinderGeometry(0.15, 0.15, railLen, 8);
+        const railMesh = new THREE.Mesh(railGeo, sharedMats.slideRail);
+        railMesh.position.copy(railMid);
+        railMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), railVec.clone().normalize());
+        scene.add(railMesh);
+        bridge.visualMeshes.push(railMesh);
+      });
 
       for (let i = 0; i < numPlanks; i++) {
         const progress = (i + 0.5) / numPlanks;
@@ -1296,16 +1304,16 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
   }
 }
 
-// ★ 選択Bリビルド：島も階段も完全に分離した「重なりゼロ・幾何学比率」レイアウト
+// ★ ユーザー様提案の「高低差立体レイアウト ＆ 各ルート橋1本化」コース生成
 export function extendCourseForkPatternB(scene) {
   const forkIdx = STAGES.length;
   const prev = STAGES[forkIdx - 1];
 
-  // 1. 分岐アイランド（Stage 6: X = 0.0m, R = 12.0m）
+  // 1. 分岐アイランド（Stage 6: X = 0.0m, Y = 10.0m, R = 11.5m）
   const forkDistZ = 36.0;
   const forkZ = prev.z - forkDistZ;
-  const forkY = prev.y + 6.0;
-  const forkR = 12.0;
+  const forkY = Math.max(8.0, prev.y + 4.0);
+  const forkR = 11.5;
 
   const forkStage = {
     z: forkZ,
@@ -1322,21 +1330,17 @@ export function extendCourseForkPatternB(scene) {
   stageMeshes.push({ meshGroup: forkMeshGroup, stageIdx: forkIdx });
 
   CONNECTIONS.push({ from: forkIdx - 1, to: forkIdx, type: 'bridge' });
-  createBridgeLinks(scene, forkIdx - 1, forkIdx, prev.z, forkZ, prev.r, forkR, prev.y, forkY, 'bridge', 0.0);
+  createBridgeLinks(scene, forkIdx - 1, forkIdx, prev.z, forkZ, prev.r, forkR, prev.y, forkY, 'bridge', 0.0, false);
 
-  // 分岐案内ネオンサイン（Stage 6 の中央手前に堂々と配置）
+  // 分岐案内ネオンサイン
   createForkGuideSign(scene, forkIdx, 0.0, forkY, forkZ - forkR * 0.40);
 
-  // ★ 左右スパンを ±14.0m（中心間距離 28m！）へ大幅拡大
-  // これにより、左島（右端 -5m）と右島（左端 +4.5m）の間が 9.5m の海面となり、めり込みがゼロになります！
-  // 階段同士（幅11.6m）の間も 16.4m 開くため、階段の重なりも100%消滅します！
-
-  // 2. 左中継島（Stage 7: ショートカット X = -14.0m, R = 9.0m, 直進配置）
-  const leftMidDistZ = 42.0;
+  // 2. 左中継島（Stage 7: 【超高層 天上島】★通常の2倍高！ Y = 36.0m, X = -9.0m, R = 8.5m）
+  const leftMidDistZ = 38.0;
   const leftMidZ = forkZ - leftMidDistZ;
-  const leftMidY = forkY + 6.0;
-  const leftMidR = 9.0;
-  const leftMidX = -14.0;
+  const leftMidY = forkY + 26.0; // ★ 通常の2倍高！(Y = 36.0m) 雲を突き抜ける天空島！
+  const leftMidR = 8.5;
+  const leftMidX = -9.0;
 
   const leftStageIdx = STAGES.length;
   const leftStage = {
@@ -1353,16 +1357,16 @@ export function extendCourseForkPatternB(scene) {
   scene.add(leftMesh);
   stageMeshes.push({ meshGroup: leftMesh, stageIdx: leftStageIdx });
 
-  // 分岐島から左島へ向かう「完全独立・直進階段」（X = -14.0m）
-  CONNECTIONS.push({ from: forkIdx, to: leftStageIdx, type: 'bridge', branch: 'left' });
-  createBridgeLinks(scene, forkIdx, leftStageIdx, forkZ, leftMidZ, forkR, leftMidR, forkY, leftMidY, 'bridge', leftMidX);
+  // ★ 分岐島から左島へ向かう橋は「1本だけ（垂直絶壁クライム階段）」
+  CONNECTIONS.push({ from: forkIdx, to: leftStageIdx, type: 'vertical', branch: 'left' });
+  createBridgeLinks(scene, forkIdx, leftStageIdx, forkZ, leftMidZ, forkR, leftMidR, forkY, leftMidY, 'vertical', leftMidX, true);
 
-  // 3. 右中継島（Stage 8: リッチ資材 X = +14.0m, R = 9.5m, 直進配置）
-  const rightMidDistZ = 42.0;
+  // 3. 右中継島（Stage 8: 【通常低空 リッチ島】Y = 16.0m, X = +9.0m, R = 9.5m）
+  const rightMidDistZ = 38.0;
   const rightMidZ = forkZ - rightMidDistZ;
-  const rightMidY = forkY + 5.0;
+  const rightMidY = forkY + 6.0; // 通常の高さ（低空リッチ島）
   const rightMidR = 9.5;
-  const rightMidX = 14.0;
+  const rightMidX = 9.0;
 
   const rightStageIdx = STAGES.length;
   const rightStage = {
@@ -1379,9 +1383,9 @@ export function extendCourseForkPatternB(scene) {
   scene.add(rightMesh);
   stageMeshes.push({ meshGroup: rightMesh, stageIdx: rightStageIdx });
 
-  // 分岐島から右島へ向かう「完全独立・直進階段」（X = +14.0m）
+  // ★ 分岐島から右島へ向かう橋は「1本だけ（緩やかステップ階段）」
   CONNECTIONS.push({ from: forkIdx, to: rightStageIdx, type: 'bridge', branch: 'right' });
-  createBridgeLinks(scene, forkIdx, rightStageIdx, forkZ, rightMidZ, forkR, rightMidR, forkY, rightMidY, 'bridge', rightMidX);
+  createBridgeLinks(scene, forkIdx, rightStageIdx, forkZ, rightMidZ, forkR, rightMidR, forkY, rightMidY, 'bridge', rightMidX, true);
 
   // 右島：リッチ確定アイテム（サンダー or マグネット）＆ボーナスゲート
   createModifierGate(scene, rightStageIdx, rightMidX - 2.8, rightMidZ - 0.8, rightMidY, 'add', 8, '+8');
@@ -1390,10 +1394,10 @@ export function extendCourseForkPatternB(scene) {
   const richItemType = (Math.random() < 0.5 ? 'thunder' : 'magnet');
   spawnItem(scene, rightStageIdx, richItemType);
 
-  // 4. 合流アイランド（Stage 9: X = 0.0m, 前後距離もしっかり46m確保）
+  // 4. 合流アイランド（Stage 9: X = 0.0m, Y = 10.0m, R = 12.0m）
   const mergeDistZ = 46.0;
   const mergeZ = Math.min(leftMidZ, rightMidZ) - mergeDistZ;
-  const mergeY = Math.max(5.0, forkY - 6.0);
+  const mergeY = forkY;
   const mergeR = 12.0;
 
   const mergeStageIdx = STAGES.length;
@@ -1411,13 +1415,13 @@ export function extendCourseForkPatternB(scene) {
   scene.add(mergeMeshGroup);
   stageMeshes.push({ meshGroup: mergeMeshGroup, stageIdx: mergeStageIdx });
 
-  // 左島からは「特大スカイダイブ」（X = -14.0m から合流島へ一直線ダイブ！）
+  // ★ 左の天空島（Y=36m）からは「落差-26m 超特大スカイダイブ」で一気に合流島へ先回りダイブ！
   CONNECTIONS.push({ from: leftStageIdx, to: mergeStageIdx, type: 'skydive', branch: 'left' });
-  createBridgeLinks(scene, leftStageIdx, mergeStageIdx, leftMidZ, mergeZ, leftMidR, mergeR, leftMidY, mergeY, 'skydive', leftMidX);
+  createBridgeLinks(scene, leftStageIdx, mergeStageIdx, leftMidZ, mergeZ, leftMidR, mergeR, leftMidY, mergeY, 'skydive', leftMidX, true);
 
-  // 右島からは「高速ウォータースライダー」（X = +14.0m から合流島へ一直線滑走！）
+  // ★ 右の低空島（Y=16m）からは「爽快ウォータースライダー」でブロック回収しながら合流！
   CONNECTIONS.push({ from: rightStageIdx, to: mergeStageIdx, type: 'slide', branch: 'right' });
-  createBridgeLinks(scene, rightStageIdx, mergeStageIdx, rightMidZ, mergeZ, rightMidR, mergeR, rightMidY, mergeY, 'slide', rightMidX);
+  createBridgeLinks(scene, rightStageIdx, mergeStageIdx, rightMidZ, mergeZ, rightMidR, mergeR, rightMidY, mergeY, 'slide', rightMidX, true);
 
   spawnGatesOnIsland(scene, mergeStageIdx, mergeZ, mergeY, 0.0);
   spawnItem(scene, mergeStageIdx, getNextBagItem());
@@ -1429,7 +1433,7 @@ export function extendCourse(scene) {
   const idx = STAGES.length;
   const prev = STAGES[idx - 1];
 
-  // Stage 6 到達時に「完全分離・重なりゼロの二股分岐＆合流」を安全生成
+  // Stage 6 到達時に「立体高低差 ＆ 橋1本化の二股分岐＆合流」を生成
   if (idx === 6) {
     extendCourseForkPatternB(scene);
     return;
@@ -1530,7 +1534,7 @@ export function extendCourse(scene) {
   stageMeshes.push({ meshGroup: islandMeshGroup, stageIdx: idx });
 
   CONNECTIONS.push({ from: idx - 1, to: idx, type: type });
-  createBridgeLinks(scene, idx - 1, idx, prev.z, nextZ, prev.r, r, prev.y, nextY, type, currentIslandX);
+  createBridgeLinks(scene, idx - 1, idx, prev.z, nextZ, prev.r, r, prev.y, nextY, type, currentIslandX, false);
 
   if (idx >= 1) {
     spawnGatesOnIsland(scene, idx, nextZ, nextY, currentIslandX);
@@ -1698,7 +1702,6 @@ export function buildWorld(scene) {
   for (let i = 0; i < 6; i++) extendCourse(scene);
 }
 
-// 全走者生存保証クリーンアップ
 export function cleanupOldData(scene) {
   if (!player) return;
 
