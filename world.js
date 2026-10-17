@@ -1,4 +1,4 @@
-// コース伸長・浮島・橋・スライド・ジップライン・エレベーター・スカイダイブ・ドロップタワー施設・二股分岐＆合流（通常ステージ3レーン完全復元 ＆ 分岐ステージ厳格隔離）
+// コース伸長・浮島・橋・スライド・ジップライン・エレベーター・スカイダイブ・ドロップタワー施設・二股分岐＆合流（通常3レーン完全復元＆クリーンアップ誤消去防止）
 import {
   BLOCK_TYPES,
   TRAMPOLINE_TIERS,
@@ -693,7 +693,7 @@ export function spawnGatesOnIsland(scene, stageIdx, islandZ, islandY, islandX = 
   createModifierGate(scene, stageIdx, islandX + 3.2, gateZ, islandY, p.right.op, p.right.val, p.right.label);
 }
 
-// 架橋生成（通常ステージは厳格に3レーン、singleLaneOnly: true の分岐ステージのみ中央の1本）
+// 架橋生成（通常ステージは厳格に3本 [0, 1, 2] を配置、分岐ステージのみ singleLaneOnly = true で中央の1本のみ）
 export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, nextIslandZ, prevR, nextR, startY, endY, type, islandCenterX = 0.0, singleLaneOnly = false) {
   if (type === 'skydive') {
     const startZ = prevIslandZ - prevR + 1.2;
@@ -1047,19 +1047,16 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     }
   }
 
-  // ★ 通常ステージ（singleLaneOnly === false）は本来の3本 [0, 1, 2] を厳格に保証！
+  // ★ 通常ステージ（singleLaneOnly === false）は確実に 3本 [0, 1, 2] を走査！
   // ★ 分岐ステージ（singleLaneOnly === true）の時のみ [1]（中央1本のみ）
   const laneIndices = singleLaneOnly ? [1] : [0, 1, 2];
 
   for (let lIdx = 0; lIdx < laneIndices.length; lIdx++) {
     const laneIdx = laneIndices[lIdx];
 
-    // 通常ステージは島中心（0.0m）からのオフセット LANES[laneIdx] = [-4.0, 0, +4.0]
-    // 分岐単独橋の時のみ islandCenterX (±6.5m)
+    const actualBridgeX = singleLaneOnly ? islandCenterX : LANES[laneIdx];
     const laneX = singleLaneOnly ? 0.0 : LANES[laneIdx];
-    const actualBridgeX = singleLaneOnly ? islandCenterX : (islandCenterX + laneX);
 
-    // 始点島からの切り欠き：通常ステージは各レーンの laneX、分岐ステージは実際の横位置
     const fromStageObj = STAGES[stageIdx];
     const fromStageCenterX = fromStageObj ? (fromStageObj.x || 0.0) : 0.0;
     const relFromX = singleLaneOnly ? (actualBridgeX - fromStageCenterX) : laneX;
@@ -1067,7 +1064,6 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     const prevInsetZ = Math.sqrt(Math.max(1, prevR * prevR - relFromX * relFromX));
     const nextInsetZ = Math.sqrt(Math.max(1, nextR * nextR - laneX * laneX));
 
-    // 通常ステージの前後オフセットは本来のマスター値へ完全復元
     const stairsEndOffset = isStepBridge ? (laneIdx === 1 ? -0.4 : +0.03) : -1.2;
     const startZ = prevIslandZ - prevInsetZ + (isStepBridge ? 0.35 : 1.2);
     const endZ = nextIslandZ + nextInsetZ + stairsEndOffset;
@@ -1132,7 +1128,6 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
         slideBonusBlocks.push(bonusData);
       }
 
-      // スライダーの仕切りパイプレール
       const railOffsets = singleLaneOnly ? [-1.85, 1.85] : (laneIdx === 0 ? [-5.85, -2.0, 2.0, 5.85] : []);
       railOffsets.forEach(rOff => {
         const rActualX = singleLaneOnly ? (startX + rOff) : (islandCenterX + rOff);
@@ -1629,6 +1624,7 @@ export function buildWorld(scene) {
   for (let i = 0; i < 6; i++) extendCourse(scene);
 }
 
+// ★ クリーンアップ安全化：現在プレイヤーおよび全キャラクターがいるステージから最低2ステージ以上前のものだけを安全に消去
 export function cleanupOldData(scene) {
   if (!player) return;
 
@@ -1638,6 +1634,7 @@ export function cleanupOldData(scene) {
       minActiveStage = characters[i].currentStage;
     }
   }
+  // 現在走行中の島、およびその直前の島は絶対に破棄しない（最低2ステージ前の安全マージン）
   const safeStage = Math.max(0, minActiveStage - 2);
 
   for (let i = activeMagnetBlocks.length - 1; i >= 0; i--) {
@@ -1660,6 +1657,8 @@ export function cleanupOldData(scene) {
       stageMeshes.splice(i, 1);
     }
   }
+
+  // ★ 橋の消去ガード：stageIdx が safeStage 未満のものだけを破棄
   for (let i = bridges.length - 1; i >= 0; i--) {
     if (bridges[i].stageIdx < safeStage) {
       bridges[i].visualMeshes.forEach(vm => {
