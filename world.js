@@ -1054,7 +1054,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
   for (let lIdx = 0; lIdx < laneIndices.length; lIdx++) {
     const laneIdx = laneIndices[lIdx];
 
-    const actualBridgeX = singleLaneOnly ? islandCenterX : LANES[laneIdx];
+    const actualBridgeX = singleLaneOnly ? islandCenterX : (islandCenterX + LANES[laneIdx]);
     const laneX = singleLaneOnly ? 0.0 : LANES[laneIdx];
 
     const fromStageObj = STAGES[stageIdx];
@@ -1078,6 +1078,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       stageIdx, nextStageIdx, laneIdx, planks: [], visualMeshes: [],
       startZ, endZ, isJump, isSlide, isVertical,
       isSkydive: false, isTrapdoor: false, isCurvedSlide: false, isZipline: false,
+      actualBridgeX: actualBridgeX,
       ghostMesh: null, solidMesh: null,
       bonusBlocks: []
     };

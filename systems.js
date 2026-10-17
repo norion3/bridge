@@ -1,4 +1,4 @@
-// 物理移動判定・スカイウォーク歩行開放・ハッチ進入同期・リュック収納アニメーション連動・シームレス風音連携・スカイダイブ＆スライダーボーナス回収・平行直進ルート完全整合
+// 物理移動判定・スカイウォーク歩行開放・ハッチ進入同期・リュック収納アニメーション連動・シームレス風音連携・スカイダイブ＆スライダーボーナス回収・平行直進ルート完全整合（レーンX座標判定正常化＆インスタンス同期完全独立版）
 import {
   TEAMS,
   TRAMPOLINE_TIERS,
@@ -446,7 +446,7 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
       }
     }
 
-    // 6. 通常階段・直線スライダー・ジャンプ台（通常3レーン完全復元 ＆ 分岐単独橋整合）
+    // 6. 通常階段・直線スライダー・ジャンプ台（★ 欠陥ロジック完全撤廃：b.visualMeshes[0].position.x 参照を排し、厳密な laneX を直接判定）
     let onBridge = null;
     for (let b of localBridges) {
       if (b.isCurvedSlide || b.isZipline || b.isElevator || b.isSkydive || b.isTrapdoor) continue;
@@ -454,8 +454,9 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
 
       const fromStg = STAGES[b.stageIdx];
       const bCenterX = fromStg ? (fromStg.x || 0.0) : 0.0;
-      const expectedLaneX = (b.visualMeshes && b.visualMeshes[0] && b.visualMeshes[0].position)
-        ? b.visualMeshes[0].position.x
+      // 単独分岐橋ならそのX座標、通常3レーンなら bCenterX + LANES[b.laneIdx]
+      const expectedLaneX = (b.actualBridgeX !== undefined)
+        ? b.actualBridgeX
         : (bCenterX + LANES[b.laneIdx]);
 
       if (Math.abs(nextX - expectedLaneX) > 1.95) continue;
@@ -477,8 +478,8 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
     if (onBridge) {
       const fromStg = STAGES[onBridge.stageIdx];
       const bCenterX = fromStg ? (fromStg.x || 0.0) : 0.0;
-      const currentLaneX = (onBridge.visualMeshes && onBridge.visualMeshes[0] && onBridge.visualMeshes[0].position)
-        ? onBridge.visualMeshes[0].position.x
+      const currentLaneX = (onBridge.actualBridgeX !== undefined)
+        ? onBridge.actualBridgeX
         : (bCenterX + LANES[onBridge.laneIdx]);
 
       if (char.currentStage === onBridge.nextStageIdx) {
@@ -626,6 +627,7 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
                 removeBrickFromCharacter(char, updateHUDRef);
                 currentP.teamId = char.team.id;
 
+                // ★ 他レーン巻き込み消失の完全根絶：自身のレーン（onBridge）のメッシュのみを厳密に更新
                 if (onBridge.solidMesh && onBridge.ghostMesh) {
                   dummyPlankObj.position.set(currentLaneX, currentP.y, currentP.z);
                   dummyPlankObj.rotation.set(0, 0, 0);
@@ -723,8 +725,8 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
         } else if (b.isElevator) {
           return ELEVATOR_CONFIG.LANES.some(cfg => Math.abs(nextX - (stgCenterX + LANES[cfg.laneIdx])) < 1.7);
         } else {
-          const bX = (b.visualMeshes && b.visualMeshes[0] && b.visualMeshes[0].position)
-            ? b.visualMeshes[0].position.x
+          const bX = (b.actualBridgeX !== undefined)
+            ? b.actualBridgeX
             : (stgCenterX + LANES[b.laneIdx]);
           return Math.abs(nextX - bX) < 2.0;
         }
@@ -1505,7 +1507,7 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
           const lX = b.launchPoint ? b.launchPoint.x : stgCenterX;
           return Math.abs(char.pos.x - lX) < 2.5 && (char.pos.z <= b.startZ + 3.0 && char.pos.z >= b.startZ - 4.0);
         }
-        const laneX = (b.isCurvedSlide || b.isZipline) ? stgCenterX : (stgCenterX + LANES[b.laneIdx]);
+        const laneX = (b.actualBridgeX !== undefined) ? b.actualBridgeX : ((b.isCurvedSlide || b.isZipline) ? stgCenterX : (stgCenterX + LANES[b.laneIdx]));
         return Math.abs(char.pos.x - laneX) < 2.2 && (char.pos.z <= b.startZ + 2.5 && char.pos.z >= b.endZ - 1.0);
       });
 
