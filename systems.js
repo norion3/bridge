@@ -1,4 +1,4 @@
-// 物理移動判定・スカイウォーク歩行開放・ハッチ進入同期・リュック収納アニメーション連動・シームレス風音連携・スカイダイブ＆スライダーボーナス回収・合流島安全着地完全整合・お邪魔キャラ衝突判定（Phase 2: パファーボット安全被弾＆ブースト吹き飛ばし版）
+// 物理移動判定・スカイウォーク歩行開放・ハッチ進入同期・リュック収納アニメーション連動・シームレス風音連携・スカイダイブ＆スライダーボーナス回収・合流島安全着地完全整合・お邪魔キャラ衝突判定・下層島誤ワープ完全防止版
 import {
   TEAMS,
   TRAMPOLINE_TIERS,
@@ -164,7 +164,7 @@ export function checkGateCollisions(scene, char) {
   }
 }
 
-// ★ お邪魔キャラ「パファーボット」との衝突・吹き飛ばし判定
+// お邪魔キャラとの衝突・吹き飛ばし判定
 export function checkObstacleMobCollisions(scene, char) {
   if (char.invulnerableTimer > 0) return;
 
@@ -178,7 +178,6 @@ export function checkObstacleMobCollisions(scene, char) {
 
     if (distSq < 1.69 && Math.abs(char.pos.y - mob.baseY) < 1.4) {
       if (char.speedBoostActive) {
-        // スピードブースト（オーラ中）で突撃：お邪魔キャラを海へ「ポヨ〜ン！」と吹き飛ばして消滅！
         mob.blownAway = true;
         const pushDirX = Math.sign(dx) || 1.0;
         mob.blowVelocity.set(pushDirX * 12.0, 16.0, -18.0);
@@ -186,18 +185,15 @@ export function checkObstacleMobCollisions(scene, char) {
         triggerLandingShockwave(mob.currentX, char.pos.y + 0.2, mob.baseZ, 2.5, 0xf97316);
         if (char.isPlayer && soundRef) soundRef.playTackle();
 
-        // 爽快ボーナスとしてニュートラルブロックを2個ドロップ
-        scatterBricks(scene, char, 0); // 自身のブロックは落とさない
+        scatterBricks(scene, char, 0);
         break;
       } else {
-        // 通常時接触：マイルドな2個ドロップ固定＆軽いノックバック＆1.4秒無敵
-        char.stunTimer = 0.45; // 0.45秒の短いよろめき
-        char.invulnerableTimer = 1.4; // 1.4秒無敵点滅で多段ヒット完全防止
+        char.stunTimer = 0.45;
+        char.invulnerableTimer = 1.4;
         if (char.isPlayer && soundRef) soundRef.playTackle();
 
-        scatterBricks(scene, char, 2); // 目の前に2個ポロッと落ちるだけ（0.5秒で回収可能）
+        scatterBricks(scene, char, 2);
 
-        // 後方ノックバック（1.5m押し戻し）
         const pushMag = Math.hypot(dx, dz) || 1.0;
         char.pos.x += (dx / pushMag) * 1.5;
         char.pos.z += (dz / pushMag) * 1.5;
@@ -735,17 +731,37 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
     }
   }
 
-  // 7. 島内滞在判定
+  // ★ 7. 島内滞在判定（現在ステージ最優先 ＆ 高度差 ±3.5m ガードで下層島誤ワープ完全防止）
   let onStage = null;
-  for (let i = Math.max(0, char.currentStage - 1); i < STAGES.length; i++) {
-    const stage = STAGES[i];
-    const stgCenterX = stage.x || 0.0;
-    const dx = nextX - stgCenterX;
-    const dz = nextZ - stage.z;
-    const inCircle = (dx * dx + dz * dz) < ((stage.r + 1.0) * (stage.r + 1.0));
-    if (inCircle) {
-      onStage = i;
-      break;
+
+  // ルール1: まず現在いるステージを最優先で評価
+  const curStage = STAGES[char.currentStage];
+  if (curStage) {
+    const curCenterX = curStage.x || 0.0;
+    const curDx = nextX - curCenterX;
+    const curDz = nextZ - curStage.z;
+    const curInCircle = (curDx * curDx + curDz * curDz) < ((curStage.r + 1.0) * (curStage.r + 1.0));
+    const curHeightMatch = Math.abs(char.pos.y - curStage.y) < 3.5;
+    if (curInCircle && curHeightMatch) {
+      onStage = char.currentStage;
+    }
+  }
+
+  // ルール2: 現在の島から外れた場合のみ、高度差 ±3.5m 以内の隣接島を探索
+  if (onStage === null) {
+    for (let i = Math.max(0, char.currentStage - 1); i < STAGES.length; i++) {
+      const stage = STAGES[i];
+      const heightDiff = Math.abs(char.pos.y - stage.y);
+      if (heightDiff >= 3.5) continue; // 高度が大きく異なる島（下層・上空）は物理的に完全除外
+
+      const stgCenterX = stage.x || 0.0;
+      const dx = nextX - stgCenterX;
+      const dz = nextZ - stage.z;
+      const inCircle = (dx * dx + dz * dz) < ((stage.r + 1.0) * (stage.r + 1.0));
+      if (inCircle) {
+        onStage = i;
+        break;
+      }
     }
   }
 
@@ -802,7 +818,6 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
 }
 
 export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffCloud, spawnSpeedStepRing) {
-  // ★ プレイヤー更新時に1回だけお邪魔キャラのパトロール移動と吹き飛び物理を更新
   if (char.isPlayer) {
     updateObstacleMobs(dt, scene);
   }
@@ -882,19 +897,19 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     }
   }
 
-  // ★ 1. スカイダイブ搭乗中物理・姿勢制御（gimmicks.js へ移譲）
+  // 1. スカイダイブ搭乗中物理・姿勢制御
   if (char.onSkydive && char.activeSkydive) {
     updateSkydiveMovement(scene, char, dirX, dt, soundRef, updateHUDRef);
     return;
   }
 
-  // ★ 2. トラップドア・フリーフォール搭乗中物理・姿勢制御（gimmicks.js へ移譲）
+  // 2. トラップドア・フリーフォール搭乗中物理・姿勢制御
   if ((char.onTrapdoor && char.activeTrapdoor) || (char.onFreefall && char.activeFreefall)) {
     updateTrapdoorMovement(scene, char, dirX, dt, soundRef);
     return;
   }
 
-  // ★ 3. エレベーター搭乗中物理・姿勢制御（gimmicks.js へ移譲）
+  // 3. エレベーター搭乗中物理・姿勢制御
   if (char.onElevator && char.activeElevator) {
     updateElevatorMovement(char, dt, soundRef);
     return;
@@ -986,13 +1001,13 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
   }
   char.meshObj.root.rotation.z = 0;
 
-  // ★ 4. ジップライン搭乗中物理・姿勢制御（gimmicks.js へ移譲）
+  // 4. ジップライン搭乗中物理・姿勢制御
   if (char.onZipline && char.activeZipline) {
     updateZiplineMovement(scene, char, dt, soundRef, updateHUDRef);
     return;
   }
 
-  // ★ 5. S字カーブスライダー搭乗中物理・姿勢制御（gimmicks.js へ移譲）
+  // 5. S字カーブスライダー搭乗中物理・姿勢制御
   if (char.onCurvedSlide && char.activeCurvedBridge) {
     updateCurvedSlideMovement(scene, char, dirX, dt, soundRef, updateHUDRef);
     return;
@@ -1136,7 +1151,6 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
 
     checkGateCollisions(scene, char);
 
-    // ★ お邪魔キャラ「パファーボット」との衝突・吹き飛ばし判定
     checkObstacleMobCollisions(scene, char);
   }
 

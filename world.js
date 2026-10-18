@@ -1,4 +1,4 @@
-// コース伸長・浮島・橋・スライド・ジップライン・エレベーター・スカイダイブ・ドロップタワー施設・二股分岐＆合流・お邪魔キャラ（スマート出現ディレクター版）
+// コース伸長・浮島・橋・スライド・ジップライン・エレベーター・スカイダイブ・ドロップタワー施設・二股分岐＆合流・目鼻なし愛嬌お邪魔キャラ（スマート出現ディレクター版）
 import {
   BLOCK_TYPES,
   TRAMPOLINE_TIERS,
@@ -61,7 +61,7 @@ export const activeMagnetBlocks = [];
 export const floorBlocksByStage = new Map();
 export const bridgesByStage = new Map();
 
-// ★ お邪魔キャラ「パファーボット」管理配列 ＆ スマート・ディレクター用カウンター
+// ★ お邪魔キャラ管理配列 ＆ スマート・ディレクター用カウンター
 export const obstacleMobs = [];
 let stagesSinceLastObstacle = 0;
 
@@ -268,7 +268,7 @@ export function spawnGatesOnIsland(scene, stageIdx, islandZ, islandY, islandX = 
   createModifierGate(scene, stageIdx, islandX + 3.2, gateZ, islandY, p.right.op, p.right.val, p.right.label);
 }
 
-// ★ スマート・ディレクターによるお邪魔キャラ「パファーボット」出現制御
+// ★ スマート・ディレクターによる目鼻なしお邪魔キャラ出現制御
 export function spawnObstacleMobOnStage(scene, stageIdx, islandZ, islandY, islandX = 0.0) {
   // 1. ブラックリスト除外判定
   if (stageIdx <= 3) return; // 序盤チュートリアルは完全平穏
@@ -289,11 +289,13 @@ export function spawnObstacleMobOnStage(scene, stageIdx, islandZ, islandY, islan
     // ゲートの手前（または島の中央付近）を左右に往復する安全なパトロール
     const hasGates = (stageIdx % 2 === 1);
     const spawnZ = hasGates ? (islandZ + 1.2) : islandZ;
-    const mobGroup = createObstacleMobMesh(islandX, islandY, spawnZ);
-    scene.add(mobGroup);
+    const mobObj = createObstacleMobMesh(islandX, islandY, spawnZ);
+    scene.add(mobObj.group);
 
     obstacleMobs.push({
-      group: mobGroup,
+      group: mobObj.group,
+      bulb: mobObj.bulb,
+      dangerRing: mobObj.dangerRing,
       stageIdx: stageIdx,
       baseY: islandY,
       baseZ: spawnZ,
@@ -311,7 +313,7 @@ export function spawnObstacleMobOnStage(scene, stageIdx, islandZ, islandY, islan
   }
 }
 
-// ★ お邪魔キャラのパトロール移動 ＆ 吹き飛ばされ物理更新
+// ★ お邪魔キャラのパトロール移動・ポヨンポヨン弾み歩行・ピコピコアンテナ点滅・吹き飛ばされ物理更新
 export function updateObstacleMobs(dt, scene) {
   const timeSec = performance.now() * 0.001;
 
@@ -340,9 +342,21 @@ export function updateObstacleMobs(dt, scene) {
         mob.currentX = mob.centerX + Math.sign(mob.currentX - mob.centerX) * mob.rangeX;
       }
 
-      const bobY = Math.abs(Math.sin(timeSec * 5.5 + mob.stageIdx)) * 0.10;
-      mob.group.position.set(mob.currentX, mob.baseY + bobY, mob.baseZ);
+      // ★ オモチャのようにポヨンポヨン弾む愛らしい歩行モーション（ゴムまりのようなバウンス）
+      const bounceCycle = Math.abs(Math.sin(timeSec * 7.5 + mob.stageIdx)) * 0.14;
+      mob.group.position.set(mob.currentX, mob.baseY + bounceCycle, mob.baseZ);
       mob.group.rotation.y = (mob.direction > 0) ? (Math.PI / 2) : (-Math.PI / 2);
+
+      // アンテナ先端ランプの愛らしいピコピコ明滅（1秒間に約3回点滅）
+      if (mob.bulb) {
+        mob.bulb.visible = (Math.floor(timeSec * 6.0) % 2 === 0);
+      }
+
+      // 足元デンジャーリングの微細なパルス
+      if (mob.dangerRing) {
+        const ringPulse = 1.0 + Math.sin(timeSec * 4.5) * 0.05;
+        mob.dangerRing.scale.set(ringPulse, ringPulse, ringPulse);
+      }
     }
   }
 }
@@ -1180,7 +1194,7 @@ export function extendCourse(scene) {
       spawnItem(scene, idx, typeToSpawn);
     }
 
-    // ★ スマート・ディレクターによるお邪魔キャラの配置判定（たまに出るアクセント）
+    // ★ スマート・ディレクターによる目鼻なし愛嬌お邪魔キャラの配置判定（たまに出るアクセント）
     spawnObstacleMobOnStage(scene, idx, nextZ, nextY, currentIslandX);
   }
 

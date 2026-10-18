@@ -1,4 +1,4 @@
-// メインエントリポイント：Three.js初期化・ダイナミックロックオン並走カメラ（完全連続滑らかLERP追従・カクつきゼロ）・メインループ・ネームプレート連動
+// メインエントリポイント：Three.js初期化・ダイナミックロックオン並走カメラ（完全連続滑らかLERP追従・カクつきゼロ）・メインループ・ネームプレート連動・スコアMicro-Pop＆30秒タイマー色変化
 import { SoundEngine } from './audio.js';
 import {
   TEAMS,
@@ -80,7 +80,40 @@ let lastDisplayedSec = -1;
 let trapdoorLandingRecoveryTimer = 0;
 let wasTrapdoorLastFrame = false;
 
+// ★ 階段スコア連続加算アンチシェイク（Micro-Pop & Scale Clamp）用タイマー・タイムスタンプ
+let scorePopTimer = null;
+let lastPlankPlacedTime = 0;
+
 const input = { x: 0, y: 0, active: false };
+
+// ★ 階段スコアの小気味よいポップ演出（連続設置でも数字が激しく揺れず見やすい設計）
+export function triggerScorePop() {
+  const scoreEl = document.getElementById('hud-score');
+  if (!scoreEl) return;
+
+  const now = performance.now();
+  const timeSinceLast = now - lastPlankPlacedTime;
+  lastPlankPlacedTime = now;
+
+  if (scorePopTimer) {
+    clearTimeout(scorePopTimer);
+  }
+
+  // 連続設置時（直前の設置から140ms以内）は多重拡大を防止し、最大1.15倍でクランプ
+  if (timeSinceLast < 140) {
+    scoreEl.classList.remove('score-pop');
+    scoreEl.classList.add('score-clamped');
+  } else {
+    scoreEl.classList.remove('score-clamped');
+    scoreEl.classList.add('score-pop');
+  }
+
+  // 設置が止まってから140ms後にスッと滑らかに等倍（1.0倍）へ戻す
+  scorePopTimer = setTimeout(() => {
+    scoreEl.classList.remove('score-pop', 'score-clamped');
+    scorePopTimer = null;
+  }, 140);
+}
 
 export function updateHUD() {
   const countEl = document.getElementById('hud-stack-count');
@@ -89,6 +122,7 @@ export function updateHUD() {
   if (scoreEl) scoreEl.innerText = placedPlankCount;
 }
 
+// ★ 残り30秒で文字色をネオンレッドへ切り替え、心拍のようなパルス演出を開始
 export function updateTimerHUD(force = false) {
   const currentSecInt = Math.floor(timeLeft);
   if (!force && currentSecInt === lastDisplayedSec) return;
@@ -98,7 +132,19 @@ export function updateTimerHUD(force = false) {
   const timerEl = document.getElementById('hud-timer');
   if (timerEl) {
     timerEl.innerText = `${min}:${sec}`;
-    timerEl.style.textShadow = '0 2px 8px rgba(0, 0, 0, 0.95), 0 0 4px rgba(0, 0, 0, 0.9)';
+
+    // 残り30秒以下で鮮やかな警告レッドに切り替え＆微細パルス
+    if (timeLeft <= 30 && timeLeft > 0) {
+      if (!timerEl.classList.contains('timer-critical')) {
+        timerEl.classList.add('timer-critical');
+        timerEl.style.textShadow = '0 0 12px rgba(244, 63, 94, 0.85), 0 2px 6px rgba(0, 0, 0, 0.95)';
+      }
+    } else {
+      if (timerEl.classList.contains('timer-critical')) {
+        timerEl.classList.remove('timer-critical');
+      }
+      timerEl.style.textShadow = '0 2px 8px rgba(0, 0, 0, 0.95), 0 0 4px rgba(0, 0, 0, 0.9)';
+    }
   }
 }
 
@@ -127,6 +173,17 @@ export function resetGame() {
   lastDisplayedSec = -1;
   trapdoorLandingRecoveryTimer = 0;
   wasTrapdoorLastFrame = false;
+
+  if (scorePopTimer) {
+    clearTimeout(scorePopTimer);
+    scorePopTimer = null;
+  }
+  lastPlankPlacedTime = 0;
+  const scoreEl = document.getElementById('hud-score');
+  if (scoreEl) scoreEl.classList.remove('score-pop', 'score-clamped');
+
+  const timerEl = document.getElementById('hud-timer');
+  if (timerEl) timerEl.classList.remove('timer-critical');
 
   buildWorld(scene);
   resetCharacters(STAGES);
@@ -311,6 +368,7 @@ export function initThree() {
   setSystemCallbacks(sound, updateHUD, () => {
     placedPlankCount++;
     updateHUD();
+    triggerScorePop(); // ★ 階段設置時にフォントのMicro-Pop演出を起動
   });
 
   for (let i = 0; i < 60; i++) manageBlockSpawns(scene, isGameOver);

@@ -1,4 +1,4 @@
-// 静的構造物・アトラクション施設・浮島・装飾メッシュ・お邪魔キャラ生成モジュール（完全分離レイヤー）
+// 静的構造物・アトラクション施設・浮島・装飾メッシュ・目鼻なし愛嬌お邪魔キャラ生成モジュール（完全分離レイヤー）
 import {
   SKYDIVE_CONFIG,
   TRAPDOOR_CONFIG
@@ -480,79 +480,89 @@ export function createIslandMesh(r, y, z, x = 0.0) {
   return group;
 }
 
-// ★ 10. お邪魔キャラ「パファーボット（Puffer Bot）」メッシュ生成
-// 丸っこい球体ボディ（イエロー×オレンジ）＋危険な警告トゲ＋怒ったデフォルメ目＋ホバー足
+// ★ 10. 目鼻なし（ノンフェイシャル）・愛嬌お邪魔キャラ「トゲトゲ・ポヨポヨ」メッシュ生成
+// 自キャラの世界観（目鼻口なしのピクトグラム調）に合わせ、目・鼻・バイザーを完全排除！
+// 床ブロック（青・赤・黄）と絶対に被らない鮮やかな「ネオンバイオレット（パープル）」＋「コーラル警告スタッド」＋「ピコピコ警告アンテナ」＋「足元デンジャーリング」
 export function createObstacleMobMesh(posX, posY, posZ) {
   const group = new THREE.Group();
 
-  // 1. まん丸い単色イエロー/オレンジボディ（直径約1.3m）
-  const bodyGeo = new THREE.SphereGeometry(0.65, 18, 18);
+  // 1. ツルツルなめらかなネオンパープルの丸っこいボディ（自キャラと同じ滑らか単色質感）
+  const bodyGeo = new THREE.SphereGeometry(0.62, 22, 22);
   const bodyMat = new THREE.MeshStandardMaterial({
-    color: 0xfbbf24, // 鮮やかなアンバーイエロー
-    roughness: 0.25,
-    metalness: 0.15
+    color: 0xa855f7, // 鮮やかなネオンバイオレット（床の青・赤・黄と100%被らない！）
+    roughness: 0.22,
+    metalness: 0.10
   });
   const body = new THREE.Mesh(bodyGeo, bodyMat);
-  body.position.y = 0.70;
+  body.position.y = 0.68;
   body.castShadow = true;
   group.add(body);
 
-  // 2. 危険な警告トゲ（ネオンオレンジ ConeGeometry）
-  const spikeGeo = new THREE.ConeGeometry(0.14, 0.40, 8);
+  // 2. 丸みのある痛そうな警告スタッド（ネオンコーラルレッドの小コーン）
+  const spikeGeo = new THREE.ConeGeometry(0.12, 0.30, 8);
   const spikeMat = new THREE.MeshStandardMaterial({
-    color: 0xf97316, // ネオンオレンジ
-    emissive: 0xea580c,
+    color: 0xf43f5e, // 鮮烈なコーラルレッド
+    emissive: 0xe11d48,
     emissiveIntensity: 0.35,
     roughness: 0.2
   });
 
   const spikeAngles = [
-    { pitch: 0.55, yaw: 0 },
-    { pitch: 0.55, yaw: Math.PI / 2 },
-    { pitch: 0.55, yaw: Math.PI },
-    { pitch: 0.55, yaw: -Math.PI / 2 },
-    { pitch: -0.25, yaw: Math.PI / 4 },
-    { pitch: -0.25, yaw: (3 * Math.PI) / 4 },
-    { pitch: -0.25, yaw: (-3 * Math.PI) / 4 },
-    { pitch: -0.25, yaw: -Math.PI / 4 }
+    { pitch: 0.48, yaw: 0 },
+    { pitch: 0.48, yaw: Math.PI / 2 },
+    { pitch: 0.48, yaw: Math.PI },
+    { pitch: 0.48, yaw: -Math.PI / 2 },
+    { pitch: -0.15, yaw: Math.PI / 4 },
+    { pitch: -0.15, yaw: (3 * Math.PI) / 4 },
+    { pitch: -0.15, yaw: (-3 * Math.PI) / 4 },
+    { pitch: -0.15, yaw: -Math.PI / 4 }
   ];
 
   spikeAngles.forEach(ang => {
     const spike = new THREE.Mesh(spikeGeo, spikeMat);
     spike.position.set(
-      Math.sin(ang.yaw) * Math.cos(ang.pitch) * 0.65,
-      0.70 + Math.sin(ang.pitch) * 0.65,
-      Math.cos(ang.yaw) * Math.cos(ang.pitch) * 0.65
+      Math.sin(ang.yaw) * Math.cos(ang.pitch) * 0.62,
+      0.68 + Math.sin(ang.pitch) * 0.62,
+      Math.cos(ang.yaw) * Math.cos(ang.pitch) * 0.62
     );
     spike.rotation.x = -ang.pitch + Math.PI / 2;
     spike.rotation.y = ang.yaw;
     group.add(spike);
   });
 
-  // 3. 怒ったようなデフォルメの目（黒バイザー＆白ハイライト）
-  const eyePlateGeo = new THREE.BoxGeometry(0.48, 0.20, 0.10);
-  const eyePlateMat = new THREE.MeshBasicMaterial({ color: 0x0f172a });
-  const eyePlate = new THREE.Mesh(eyePlateGeo, eyePlateMat);
-  eyePlate.position.set(0, 0.78, 0.62);
-  group.add(eyePlate);
+  // 3. 頭頂部のピコピコ警告アンテナ（目鼻の代わりに愛らしく点滅する自律トイの記号）
+  const poleGeo = new THREE.CylinderGeometry(0.024, 0.024, 0.32, 8);
+  const poleMat = new THREE.MeshStandardMaterial({ color: 0x475569, metalness: 0.6, roughness: 0.3 });
+  const pole = new THREE.Mesh(poleGeo, poleMat);
+  pole.position.set(0, 1.40, 0);
+  group.add(pole);
 
-  const eyePupilGeo = new THREE.BoxGeometry(0.12, 0.08, 0.04);
-  const eyePupilMat = new THREE.MeshBasicMaterial({ color: 0xf43f5e }); // 怒ったネオンレッドの瞳
-  const pupilL = new THREE.Mesh(eyePupilGeo, eyePupilMat);
-  pupilL.position.set(-0.14, 0.78, 0.68);
-  pupilL.rotation.z = 0.25;
-  group.add(pupilL);
-  const pupilR = pupilL.clone();
-  pupilR.position.x = 0.14;
-  pupilR.rotation.z = -0.25;
-  group.add(pupilR);
+  const bulbGeo = new THREE.SphereGeometry(0.09, 12, 12);
+  const bulbMat = new THREE.MeshBasicMaterial({ color: 0xf43f5e });
+  const bulb = new THREE.Mesh(bulbGeo, bulbMat);
+  bulb.position.set(0, 1.58, 0);
+  group.add(bulb);
 
-  // 4. 足元のホバーリング（床面スレスレの回転台座）
-  const hoverRingGeo = new THREE.CylinderGeometry(0.42, 0.50, 0.12, 16);
+  // 4. 足元のデンジャー警告リング（床面スレスレに薄く投影される赤い点線風サークル）
+  const ringGeo = new THREE.RingGeometry(1.25, 1.38, 32);
+  ringGeo.rotateX(-Math.PI / 2);
+  const ringMat = new THREE.MeshBasicMaterial({
+    color: 0xf43f5e,
+    transparent: true,
+    opacity: 0.45,
+    side: THREE.DoubleSide,
+    depthWrite: false
+  });
+  const dangerRing = new THREE.Mesh(ringGeo, ringMat);
+  dangerRing.position.y = 0.04;
+  group.add(dangerRing);
+
+  // 5. 足元の回転ホバー台座
+  const hoverRingGeo = new THREE.CylinderGeometry(0.38, 0.46, 0.10, 16);
   const hoverRingMat = new THREE.MeshStandardMaterial({
-    color: 0x475569,
-    roughness: 0.3,
-    metalness: 0.4
+    color: 0x334155,
+    roughness: 0.35,
+    metalness: 0.3
   });
   const hoverRing = new THREE.Mesh(hoverRingGeo, hoverRingMat);
   hoverRing.position.y = 0.08;
@@ -560,5 +570,10 @@ export function createObstacleMobMesh(posX, posY, posZ) {
   group.add(hoverRing);
 
   group.position.set(posX, posY, posZ);
-  return group;
+
+  return {
+    group,
+    bulb,
+    dangerRing
+  };
 }
