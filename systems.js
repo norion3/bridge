@@ -1,4 +1,4 @@
-// 物理移動判定・スカイウォーク歩行開放・ハッチ進入同期・リュック収納アニメーション連動・シームレス風音連携・スカイダイブ＆スライダーボーナス回収・合流島安全着地完全整合（Phase 2: gimmicks.js 分離・完全整合版）
+// 物理移動判定・スカイウォーク歩行開放・ハッチ進入同期・リュック収納アニメーション連動・シームレス風音連携・スカイダイブ＆スライダーボーナス回収・合流島安全着地完全整合（Phase 1: 合流スライダー強制送還バグ完全根絶版）
 import {
   TEAMS,
   TRAMPOLINE_TIERS,
@@ -1119,13 +1119,39 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
   }
 
   const currentStageObj = STAGES[char.currentStage];
-  const nextStageObj = STAGES[char.currentStage + 1];
-  const lowestAllowedY = Math.min(
-    currentStageObj ? currentStageObj.y : 0,
-    nextStageObj ? nextStageObj.y : 0
-  ) - 10.0;
+  
+  // ★ 修正：中継島から合流島などへの接続先ステージ高度を正しく参照し、最低許容高度を安全に算出
+  let targetDestY = currentStageObj ? currentStageObj.y : 0;
+  const stageBridges = bridgesByStage.get(char.currentStage) || [];
+  if (stageBridges.length > 0) {
+    let minBridgeDestY = 999999;
+    for (let bi = 0; bi < stageBridges.length; bi++) {
+      const bObj = stageBridges[bi];
+      const destStg = STAGES[bObj.nextStageIdx];
+      if (destStg && destStg.y < minBridgeDestY) {
+        minBridgeDestY = destStg.y;
+      }
+    }
+    if (minBridgeDestY < 999999) {
+      targetDestY = Math.min(targetDestY, minBridgeDestY);
+    }
+  } else {
+    const nextStageObj = STAGES[char.currentStage + 1];
+    if (nextStageObj) targetDestY = Math.min(targetDestY, nextStageObj.y);
+  }
+  const lowestAllowedY = targetDestY - 10.0;
 
-  if (!char.isJumping && !char.onCurvedSlide && !char.onZipline && !char.onElevator && !char.onSkydive && !char.onTrapdoor && char.pos.y < lowestAllowedY) {
+  // ★★★ 根本バグ修正：落下除外ガードに !char.onSlide を追加！ ★★★
+  if (
+    !char.onSlide &&
+    !char.isJumping &&
+    !char.onCurvedSlide &&
+    !char.onZipline &&
+    !char.onElevator &&
+    !char.onSkydive &&
+    !char.onTrapdoor &&
+    char.pos.y < lowestAllowedY
+  ) {
     if (currentStageObj) {
       const resetX = currentStageObj.x || 0.0;
       char.pos.set(resetX, currentStageObj.y, currentStageObj.z);
