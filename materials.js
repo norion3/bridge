@@ -227,6 +227,15 @@ export const sharedMats = {
     roughness: 0.08,
     metalness: 0.05
   }),
+  // ★ 海上浅瀬リーフ用マテリアル（半透明エメラルドグリーン・大気遠近感）
+  oceanReef: new THREE.MeshStandardMaterial({
+    color: 0x2dd4bf,
+    roughness: 0.25,
+    metalness: 0.08,
+    transparent: true,
+    opacity: 0.72,
+    depthWrite: false
+  }),
   oceanSand: new THREE.MeshStandardMaterial({ color: 0xfef08a, roughness: 0.85 }),
   oceanGrass: new THREE.MeshStandardMaterial({ color: 0x22c55e, roughness: 0.6 }),
   oceanRock: new THREE.MeshStandardMaterial({ color: 0x64748b, roughness: 0.75 }),

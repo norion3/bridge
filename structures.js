@@ -399,11 +399,21 @@ export function createCloudMesh() {
   return cloud;
 }
 
-// 8. 海上装飾島生成
+// 8. 海上装飾島生成（★ ミニチュア環礁・エメラルド浅瀬リーフリング追加）
 export function createOceanIsletMesh(scale = 1.0, type = 'tropical') {
   const group = new THREE.Group();
 
   const sandR = (4.0 + Math.random() * 2.0) * scale;
+
+  // ★ 航空写真のように美しい「エメラルド浅瀬（リーフ）リング」
+  // 砂浜の外周に広がる半透明エメラルドグリーン。高高度見下ろし時に「あんなに下に島がある！」と一目瞭然に
+  const reefR = sandR * 1.55;
+  const reefGeo = new THREE.CylinderGeometry(reefR * 0.95, reefR, 0.2, 16);
+  const reefMesh = new THREE.Mesh(reefGeo, sharedMats.oceanReef);
+  reefMesh.position.y = 0.08;
+  reefMesh.receiveShadow = false;
+  group.add(reefMesh);
+
   const sandGeo = new THREE.CylinderGeometry(sandR * 0.9, sandR, 0.8, 14);
   const sandMesh = new THREE.Mesh(sandGeo, sharedMats.oceanSand);
   sandMesh.position.y = 0.35;

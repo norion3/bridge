@@ -1,4 +1,4 @@
-// コース伸長・浮島・橋・スライド・ジップライン・エレベーター・スカイダイブ・ドロップタワー施設・二股分岐＆合流（Phase 1: structures.js 分離・完全整合版）
+// コース伸長・浮島・橋・スライド・ジップライン・エレベーター・スカイダイブ・ドロップタワー施設・二股分岐＆合流（Phase 2: 海上小島視野角適正化＆高高度見下ろしパノラマ環礁統合版）
 import {
   BLOCK_TYPES,
   TRAMPOLINE_TIERS,
@@ -1121,19 +1121,33 @@ export function extendCourse(scene) {
     cloudObjects.push({ mesh: cloudMesh, stageIdx: idx, baseY: cloudY, offset: Math.random() * 10 });
   }
 
+  // ★ 海上ミニチュア小島の配置（スマホの縦長画面視野角 X = ±14m〜24m に適正化）
   [-1, 1].forEach(side => {
-    if (Math.random() < 0.65) {
+    if (Math.random() < 0.70) {
       const isletMesh = createOceanIsletMesh(
-        0.8 + Math.random() * 0.7,
-        Math.random() < 0.6 ? 'tropical' : 'rocky'
+        0.75 + Math.random() * 0.55,
+        Math.random() < 0.65 ? 'tropical' : 'rocky'
       );
-      const isletX = currentIslandX + side * (26 + Math.random() * 16);
-      const isletZ = nextZ + (Math.random() * 14 - 7);
+      // 画面の視界に自然に入る位置（±14m〜24m）へ配置
+      const isletX = currentIslandX + side * (14 + Math.random() * 10);
+      const isletZ = nextZ + (Math.random() * 16 - 8);
       isletMesh.position.set(isletX, -42, isletZ);
       scene.add(isletMesh);
       oceanIslands.push({ meshGroup: isletMesh, stageIdx: idx });
     }
   });
+
+  // ★ スカイダイブ／ドロップタワー／垂直クライムなどの高高度・大落差ギミック時、
+  // 直下の見下ろし視界にパノラマ環礁を確実に配置（天空にいる実感を最大化）
+  if (type === 'skydive' || type === 'trapdoor' || type === 'vertical') {
+    const vistaIslet = createOceanIsletMesh(1.1 + Math.random() * 0.4, 'tropical');
+    const vistaSide = Math.random() < 0.5 ? 1 : -1;
+    const vistaX = currentIslandX + vistaSide * (11.0 + Math.random() * 6.0);
+    const vistaZ = (prev.z + nextZ) / 2 + (Math.random() * 8.0 - 4.0);
+    vistaIslet.position.set(vistaX, -42, vistaZ);
+    scene.add(vistaIslet);
+    oceanIslands.push({ meshGroup: vistaIslet, stageIdx: idx });
+  }
 }
 
 export function buildWorld(scene) {
@@ -1248,11 +1262,12 @@ export function buildWorld(scene) {
   seaMesh.receiveShadow = false;
   scene.add(seaMesh);
 
+  // ★ 初期配置の小島（画面の視界に入る X = ±16m〜22m に適正化）
   const initialIslets = [
-    { x: -30, z: -15, scale: 1.2, type: 'tropical' },
-    { x: 32, z: 10, scale: 1.0, type: 'rocky' },
-    { x: -28, z: 25, scale: 0.9, type: 'tropical' },
-    { x: 34, z: -35, scale: 1.3, type: 'tropical' }
+    { x: -18, z: -15, scale: 1.1, type: 'tropical' },
+    { x: 19, z: 8, scale: 0.95, type: 'rocky' },
+    { x: -16, z: 22, scale: 0.85, type: 'tropical' },
+    { x: 21, z: -35, scale: 1.2, type: 'tropical' }
   ];
   initialIslets.forEach(cfg => {
     const islet = createOceanIsletMesh(cfg.scale, cfg.type);
