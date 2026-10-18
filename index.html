@@ -2,135 +2,163 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>Bridge Race 3D</title>
+  <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
-  <!-- Three.js r128 -->
+  <!-- Three.js r128 CDN -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <style>
+    * {
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
+      touch-action: none;
+    }
     body, html {
       margin: 0;
       padding: 0;
       width: 100%;
       height: 100%;
       overflow: hidden;
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: #7dd3fc;
+      background-color: #7dd3fc;
     }
-
-    /* iOS/WebView特有の長押し、拡大、テキスト選択、ラバーバンドを完全マスク */
-    html, body, #canvas-container, #touch-control-layer {
-      -webkit-user-select: none;
-      user-select: none;
-      -webkit-touch-callout: none;
-      -webkit-tap-highlight-color: transparent;
-      overscroll-behavior: none;
-      -webkit-overflow-scrolling: auto;
-      touch-action: none;
-    }
-
     #canvas-container {
       position: absolute;
-      inset: 0;
+      top: 0;
+      left: 0;
       width: 100%;
       height: 100%;
       z-index: 1;
     }
     #touch-control-layer {
       position: absolute;
-      inset: 0;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
       z-index: 10;
+      touch-action: none;
     }
-    .hidden {
-      display: none !important;
-    }
-    /* iPhoneのDynamic Islandやノッチとの干渉を完全に防ぐセーフエリア余白 */
     .safe-top-padding {
-      padding-top: max(env(safe-area-inset-top, 20px), 18px);
+      padding-top: max(16px, env(safe-area-inset-top));
     }
     .safe-bottom-padding {
-      padding-bottom: max(env(safe-area-inset-bottom, 20px), 16px);
+      padding-bottom: max(16px, env(safe-area-inset-bottom));
     }
     .safe-x-padding {
-      padding-left: max(env(safe-area-inset-left, 16px), 16px);
-      padding-right: max(env(safe-area-inset-right, 16px), 16px);
+      padding-left: max(16px, env(safe-area-inset-left));
+      padding-right: max(16px, env(safe-area-inset-right));
+    }
+
+    /* ★ 階段スコアの小気味よい Micro-Pop ＆ 連続設置アンチシェイク設計 */
+    #hud-score {
+      display: inline-block;
+      transform-origin: center center;
+      will-change: transform, color;
+    }
+    .score-pop {
+      transform: scale(1.14) !important;
+      color: #fde047 !important; /* 鮮やかなイエローゴールド発光 */
+      transition: transform 120ms cubic-bezier(0.18, 0.89, 0.32, 1.28), color 120ms ease-out;
+    }
+    .score-clamped {
+      transform: scale(1.15) !important;
+      color: #fde047 !important;
+      transition: transform 50ms linear, color 50ms ease-out;
+    }
+
+    /* ★ 残り30秒「タイムクライシス・アラート」（ネオンレッド化 ＆ 心拍パルス） */
+    @keyframes timerHeartbeat {
+      0%, 100% {
+        transform: scale(1.0);
+        filter: drop-shadow(0 0 6px rgba(244, 63, 94, 0.5));
+      }
+      50% {
+        transform: scale(1.06);
+        filter: drop-shadow(0 0 14px rgba(244, 63, 94, 0.95));
+      }
+    }
+    .timer-critical {
+      color: #f43f5e !important; /* 鮮烈なネオンレッド / コーラルピンク */
+      animation: timerHeartbeat 1.0s ease-in-out infinite;
+      display: inline-block;
+      transform-origin: center center;
     }
   </style>
 </head>
-<body class="text-white">
-
-  <!-- 3D Canvas Viewport -->
+<body class="font-sans antialiased">
+  <!-- 3Dレンダリング用コンテナ -->
   <div id="canvas-container"></div>
-  
-  <!-- Virtual Touch Input Layer (全画面スワイプ操作) -->
+
+  <!-- タッチ・スワイプ入力受取レイヤー -->
   <div id="touch-control-layer"></div>
 
-  <!-- HUD Interface Overlay (Dynamic Island・ノッチを避けたスマートレイアウト) -->
-  <div class="fixed top-0 inset-x-0 z-20 pointer-events-none safe-top-padding safe-x-padding flex justify-between items-start">
-    <!-- スコア (特大ゴールド数字 + 段) -->
-    <div class="flex items-baseline bg-slate-950/45 backdrop-blur-md px-3.5 py-1.5 rounded-2xl border border-white/10 shadow-lg select-none">
-      <span id="hud-score" class="text-2xl sm:text-3xl font-black text-amber-300 font-mono tracking-tight leading-none">0</span>
-      <span class="text-xs sm:text-sm font-black text-amber-200 ml-1">段</span>
+  <!-- HUD オーバーレイ（画面上部） -->
+  <div class="fixed top-0 left-0 right-0 z-20 flex justify-between items-start safe-top-padding safe-x-padding pointer-events-none">
+    <!-- 左上：階段スコア -->
+    <div class="flex items-center gap-2 bg-slate-900/75 backdrop-blur-md px-3.5 py-1.5 rounded-full border border-white/15 shadow-lg">
+      <span class="text-xs font-bold text-amber-300">🪜 段数</span>
+      <span id="hud-score" class="text-base sm:text-lg font-black text-amber-400 tracking-wide">0</span>
+      <span class="text-xs font-semibold text-slate-300">段</span>
     </div>
 
-    <!-- タイマー (中央上・Dynamic Islandの下に程よく配置された半透明カプセルバッジ) -->
-    <div class="flex items-center bg-slate-950/55 backdrop-blur-md px-4 py-1.5 rounded-full border border-white/15 shadow-xl select-none mt-1">
-      <svg class="w-3.5 h-3.5 text-cyan-300 mr-1.5 opacity-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-      </svg>
-      <span id="hud-timer" class="text-sm sm:text-base font-black text-white font-mono tracking-widest leading-none">05:00</span>
+    <!-- 中央上：残り時間タイマー -->
+    <div class="flex items-center gap-1.5 bg-slate-900/75 backdrop-blur-md px-4 py-1.5 rounded-full border border-white/15 shadow-lg">
+      <span class="text-xs font-semibold text-slate-300">⏱️</span>
+      <span id="hud-timer" class="text-base sm:text-lg font-black text-white tracking-widest transition-colors duration-300">05:00</span>
     </div>
 
-    <!-- 所持数 (手持ちリソース・白数字 + 個) -->
-    <div class="flex items-baseline bg-slate-950/45 backdrop-blur-md px-3.5 py-1.5 rounded-2xl border border-white/10 shadow-lg select-none">
-      <span id="hud-stack-count" class="text-2xl sm:text-3xl font-black text-white font-mono tracking-tight leading-none">0</span>
-      <span class="text-xs sm:text-sm font-black text-slate-200 ml-1">個</span>
+    <!-- 右上：所持ブロック数 -->
+    <div class="flex items-center gap-1.5 bg-slate-900/75 backdrop-blur-md px-3.5 py-1.5 rounded-full border border-white/15 shadow-lg">
+      <span class="text-xs font-bold text-cyan-300">🧱</span>
+      <span id="hud-stack-count" class="text-base sm:text-lg font-black text-cyan-400 tracking-wide">0</span>
+      <span class="text-xs font-semibold text-slate-300">個</span>
     </div>
   </div>
 
-  <!-- Floating Sound Button -->
+  <!-- 右下：サウンドボタン -->
   <div class="fixed bottom-0 right-0 z-20 p-4 sm:p-6 safe-bottom-padding safe-x-padding pointer-events-none flex justify-end items-end">
-    <button id="btn-sound" type="button" aria-label="Toggle Sound" class="pointer-events-auto w-11 h-11 rounded-full bg-slate-900/80 backdrop-blur-md border border-white/15 flex items-center justify-center shadow-lg hover:bg-slate-800 active:scale-90 transition cursor-pointer">
-      <svg id="icon-sound-off" class="w-5 h-5 text-slate-400 fill-current" viewBox="0 0 24 24">
-        <path d="M3.63 3.63a.996.996 0 000 1.41L7.29 8.7 7 9H4c-.55 0-1 .45-1 1v4c0 .55.45 1 1 1h3l3.29 3.29c.63.63 1.71.18 1.71-.71v-4.17l4.18 4.18c-.49.37-1.02.68-1.6.91-.36.15-.58.53-.58.92 0 .69.67 1.2 1.33.97.8-.29 1.53-.72 2.18-1.25l1.39 1.39a.996.996 0 101.41-1.41L5.05 3.63a.996.996 0 00-1.42 0zM19 12c0 .82-.15 1.61-.41 2.34l1.53 1.53c.56-1.17.88-2.48.88-3.87 0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
+    <button id="btn-sound" type="button" aria-label="Toggle Sound" 
+      class="pointer-events-auto w-11 h-11 rounded-full bg-slate-900/80 backdrop-blur-md border border-white/15 flex items-center justify-center shadow-lg hover:bg-slate-800 active:scale-90 transition cursor-pointer">
+      <svg id="icon-sound-off" class="w-5 h-5 text-slate-400 fill-none stroke-current" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
       </svg>
-      <svg id="icon-sound-on" class="w-5 h-5 text-cyan-400 fill-current hidden" viewBox="0 0 24 24">
-        <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
+      <svg id="icon-sound-on" class="w-5 h-5 text-cyan-400 fill-none stroke-current hidden" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
       </svg>
     </button>
   </div>
 
-  <!-- Start Screen Modal -->
-  <div id="modal-start" class="fixed inset-0 z-50 bg-slate-950/40 backdrop-blur-sm flex items-center justify-center p-4">
-    <div class="bg-slate-950/80 backdrop-blur-md border border-cyan-400/25 p-7 sm:p-8 rounded-[28px] max-w-xs sm:max-w-sm w-full text-center shadow-[0_15px_40px_rgba(0,0,0,0.5)] pointer-events-auto">
-      <h2 class="text-2xl sm:text-3xl font-black text-cyan-400 tracking-wider mb-4">
-        階段を架けろ！
-      </h2>
-      <div class="space-y-2 text-slate-200 text-xs sm:text-sm font-medium leading-relaxed mb-6">
-        <p>画面をなぞってブロックを集める</p>
-        <p>ブロックで階段を架けて登る</p>
-      </div>
-      <button id="btn-start" type="button" class="w-full py-3.5 rounded-full border-2 border-cyan-400/80 bg-cyan-950/30 hover:bg-cyan-900/50 active:scale-95 text-cyan-300 font-extrabold text-sm sm:text-base tracking-[0.2em] shadow-[0_0_20px_rgba(6,182,212,0.3)] transition duration-200 cursor-pointer">
+  <!-- スタートモーダル -->
+  <div id="modal-start" class="fixed inset-0 z-30 flex items-center justify-center bg-slate-950/40 backdrop-blur-sm p-4">
+    <div class="bg-slate-900/90 border border-white/20 rounded-3xl p-6 sm:p-8 max-w-sm w-full text-center shadow-2xl flex flex-col items-center">
+      <h1 class="text-2xl sm:text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-sky-200 mb-2">Bridge Race 3D</h1>
+      <p class="text-xs sm:text-sm text-slate-300 mb-6 font-medium leading-relaxed">
+        ブロックを集めて階段を架けろ！<br>
+        スワイプで自由にダッシュ移動
+      </p>
+      <button id="btn-start" type="button" 
+        class="w-full py-3.5 bg-gradient-to-r from-sky-400 to-blue-600 hover:from-sky-300 hover:to-blue-500 active:scale-95 text-white font-extrabold rounded-2xl shadow-lg transition duration-150 cursor-pointer text-base">
         TAP TO START
       </button>
     </div>
   </div>
 
-  <!-- Result Screen Modal -->
-  <div id="modal-result" class="fixed inset-0 z-50 bg-slate-950/40 backdrop-blur-sm hidden flex items-center justify-center p-4">
-    <div class="bg-slate-950/80 backdrop-blur-md border border-cyan-400/25 p-7 sm:p-8 rounded-[28px] max-w-xs sm:max-w-sm w-full text-center shadow-[0_15px_40px_rgba(0,0,0,0.5)] pointer-events-auto">
-      <h2 class="text-2xl sm:text-3xl font-black text-cyan-400 tracking-wider mb-5">TIME UP!</h2>
-      <div class="bg-slate-900/60 rounded-2xl p-4 mb-6 border border-white/5">
-        <div class="text-xs text-slate-400 font-semibold">最終スコア (架けた階段数)</div>
-        <div id="modal-rank" class="text-3xl sm:text-4xl font-black text-amber-400 mt-1">0 段</div>
-      </div>
-      <button id="btn-restart" type="button" class="w-full py-3.5 rounded-full border-2 border-cyan-400/80 bg-cyan-950/30 hover:bg-cyan-900/50 active:scale-95 text-cyan-300 font-extrabold text-sm sm:text-base tracking-[0.2em] shadow-[0_0_20px_rgba(6,182,212,0.3)] transition duration-200 cursor-pointer">
-        RETRY
+  <!-- リザルトモーダル -->
+  <div id="modal-result" class="fixed inset-0 z-30 hidden items-center justify-center bg-slate-950/50 backdrop-blur-sm p-4">
+    <div class="bg-slate-900/95 border border-white/20 rounded-3xl p-6 sm:p-8 max-w-sm w-full text-center shadow-2xl flex flex-col items-center">
+      <h2 class="text-xl font-bold text-amber-400 mb-1">TIME UP!</h2>
+      <div class="text-4xl sm:text-5xl font-black text-white my-4 tracking-tight" id="modal-rank">0 段</div>
+      <p class="text-xs text-slate-300 mb-6">架設した階段の合計スコアです！</p>
+      <button id="btn-restart" type="button" 
+        class="w-full py-3.5 bg-gradient-to-r from-emerald-400 to-teal-600 hover:from-emerald-300 hover:to-teal-500 active:scale-95 text-white font-extrabold rounded-2xl shadow-lg transition duration-150 cursor-pointer text-base">
+        もう一度遊ぶ
       </button>
     </div>
   </div>
 
-  <!-- 正式エントリポイント main.js をモジュールとして読み込み -->
   <script type="module" src="./main.js"></script>
 </body>
 </html>

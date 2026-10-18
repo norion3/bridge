@@ -1,4 +1,4 @@
-// コース伸長・浮島・橋・スライド・ジップライン・エレベーター・スカイダイブ・ドロップタワー施設・二股分岐＆合流（自然な海上群島パノラマ＆中間高度既存雲配置版）
+// コース伸長・浮島・橋・スライド・ジップライン・エレベーター・スカイダイブ・ドロップタワー施設・二股分岐＆合流・お邪魔キャラ（スマート出現ディレクター版）
 import {
   BLOCK_TYPES,
   TRAMPOLINE_TIERS,
@@ -38,7 +38,8 @@ import {
   createZiplinePylonMesh,
   createCloudMesh,
   createOceanIsletMesh,
-  createIslandMesh
+  createIslandMesh,
+  createObstacleMobMesh
 } from './structures.js';
 
 export { createModifierGate };
@@ -59,6 +60,10 @@ export const slideBonusBlocks = [];
 export const activeMagnetBlocks = [];
 export const floorBlocksByStage = new Map();
 export const bridgesByStage = new Map();
+
+// ★ お邪魔キャラ「パファーボット」管理配列 ＆ スマート・ディレクター用カウンター
+export const obstacleMobs = [];
+let stagesSinceLastObstacle = 0;
 
 setModifierGatesReference(modifierGates);
 
@@ -261,6 +266,85 @@ export function spawnGatesOnIsland(scene, stageIdx, islandZ, islandY, islandX = 
 
   createModifierGate(scene, stageIdx, islandX - 3.2, gateZ, islandY, p.left.op, p.left.val, p.left.label);
   createModifierGate(scene, stageIdx, islandX + 3.2, gateZ, islandY, p.right.op, p.right.val, p.right.label);
+}
+
+// ★ スマート・ディレクターによるお邪魔キャラ「パファーボット」出現制御
+export function spawnObstacleMobOnStage(scene, stageIdx, islandZ, islandY, islandX = 0.0) {
+  // 1. ブラックリスト除外判定
+  if (stageIdx <= 3) return; // 序盤チュートリアルは完全平穏
+  const stageInfo = STAGES[stageIdx];
+  if (!stageInfo || stageInfo.r < 9.0 || stageInfo.isFork || stageInfo.isMerge) return; // 狭い島・分岐・合流は禁止
+
+  // 2. 最低4ステージの完全平穏保証（クールダウン）
+  if (stagesSinceLastObstacle < 4) {
+    stagesSinceLastObstacle++;
+    return;
+  }
+
+  // 3. 5〜6ステージ経過後、35%の確率で出現（6ステージ以上なら確定）
+  const spawnChance = (stagesSinceLastObstacle >= 6) ? 1.0 : 0.35;
+  if (Math.random() < spawnChance) {
+    stagesSinceLastObstacle = 0; // カウンターリセット
+
+    // ゲートの手前（または島の中央付近）を左右に往復する安全なパトロール
+    const hasGates = (stageIdx % 2 === 1);
+    const spawnZ = hasGates ? (islandZ + 1.2) : islandZ;
+    const mobGroup = createObstacleMobMesh(islandX, islandY, spawnZ);
+    scene.add(mobGroup);
+
+    obstacleMobs.push({
+      group: mobGroup,
+      stageIdx: stageIdx,
+      baseY: islandY,
+      baseZ: spawnZ,
+      centerX: islandX,
+      rangeX: 3.2,
+      currentX: islandX,
+      direction: (Math.random() < 0.5 ? 1 : -1),
+      speed: 2.8,
+      active: true,
+      blownAway: false,
+      blowVelocity: new THREE.Vector3()
+    });
+  } else {
+    stagesSinceLastObstacle++;
+  }
+}
+
+// ★ お邪魔キャラのパトロール移動 ＆ 吹き飛ばされ物理更新
+export function updateObstacleMobs(dt, scene) {
+  const timeSec = performance.now() * 0.001;
+
+  for (let i = obstacleMobs.length - 1; i >= 0; i--) {
+    const mob = obstacleMobs[i];
+    if (!mob.active) continue;
+
+    if (mob.blownAway) {
+      // スピードブーストで突進された際の豪快な吹き飛び物理
+      mob.blowVelocity.y -= 38.0 * dt; // 重力
+      mob.group.position.addScaledVector(mob.blowVelocity, dt);
+      mob.group.rotation.x += dt * 14.0;
+      mob.group.rotation.y += dt * 18.0;
+
+      if (mob.group.position.y < -42.0) {
+        mob.active = false;
+        disposeHierarchy(mob.group);
+        scene.remove(mob.group);
+        obstacleMobs.splice(i, 1);
+      }
+    } else {
+      // のんびり左右パトロール（2.8m/s）
+      mob.currentX += mob.direction * mob.speed * dt;
+      if (Math.abs(mob.currentX - mob.centerX) >= mob.rangeX) {
+        mob.direction *= -1;
+        mob.currentX = mob.centerX + Math.sign(mob.currentX - mob.centerX) * mob.rangeX;
+      }
+
+      const bobY = Math.abs(Math.sin(timeSec * 5.5 + mob.stageIdx)) * 0.10;
+      mob.group.position.set(mob.currentX, mob.baseY + bobY, mob.baseZ);
+      mob.group.rotation.y = (mob.direction > 0) ? (Math.PI / 2) : (-Math.PI / 2);
+    }
+  }
 }
 
 // 架橋生成（通常ステージは厳格に3本 [0, 1, 2] を配置、分岐ステージのみ singleLaneOnly = true で中央の1本のみ）
@@ -617,8 +701,6 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     }
   }
 
-  // ★ 通常ステージ（singleLaneOnly === false）は確実に 3本 [0, 1, 2] を走査！
-  // ★ 分岐ステージ（singleLaneOnly === true）の時のみ [1]（中央1本のみ）
   const laneIndices = singleLaneOnly ? [1] : [0, 1, 2];
 
   for (let lIdx = 0; lIdx < laneIndices.length; lIdx++) {
@@ -638,8 +720,6 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     const prevInsetZ = Math.sqrt(Math.max(1, prevR * prevR - relFromX * relFromX));
     const nextInsetZ = Math.sqrt(Math.max(1, nextR * nextR - relToX * relToX));
 
-    // ★ スライダー接合の幾何学修正：合流島（toStageCenterX=0.0）へのスライダー（actualBridgeX=+6.5）の場合、
-    // 終点エッジを島の円弧フロア内に +0.5m しっかり食い込ませて隙間ゼロ化
     const stairsEndOffset = isStepBridge ? (laneIdx === 1 ? -0.4 : +0.03) : (isSlide && singleLaneOnly ? -0.5 : -1.2);
     const startZ = prevIslandZ - prevInsetZ + (isStepBridge ? 0.35 : 1.2);
     const endZ = nextIslandZ + nextInsetZ + stairsEndOffset;
@@ -660,7 +740,6 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     };
 
     if (isSlide) {
-      // 始点と終点の円弧深さをそれぞれの島中心からのオフセットで厳密計算
       const sStartZ = prevIslandZ - prevInsetZ;
       const sEndZ = nextIslandZ + nextInsetZ - (singleLaneOnly ? 0.5 : 0.0);
 
@@ -706,7 +785,6 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
         slideBonusBlocks.push(bonusData);
       }
 
-      // スライダーの仕切りパイプレール
       const railOffsets = singleLaneOnly ? [-1.85, 1.85] : (laneIdx === 0 ? [-5.85, -2.0, 2.0, 5.85] : []);
       railOffsets.forEach(rOff => {
         const rActualX = singleLaneOnly ? (startX + rOff) : (islandCenterX + rOff);
@@ -815,7 +893,6 @@ export function extendCourseForkPatternB(scene) {
   const forkIdx = STAGES.length;
   const prev = STAGES[forkIdx - 1];
 
-  // 1. 分岐アイランド（Stage 6: X = 0.0m, Y = 10.0m, R = 11.5m）
   const forkDistZ = 36.0;
   const forkZ = prev.z - forkDistZ;
   const forkY = Math.max(8.0, prev.y + 4.0);
@@ -835,11 +912,9 @@ export function extendCourseForkPatternB(scene) {
   scene.add(forkMeshGroup);
   stageMeshes.push({ meshGroup: forkMeshGroup, stageIdx: forkIdx });
 
-  // 分岐島への階段は通常の3レーン
   CONNECTIONS.push({ from: forkIdx - 1, to: forkIdx, type: 'bridge' });
   createBridgeLinks(scene, forkIdx - 1, forkIdx, prev.z, forkZ, prev.r, forkR, prev.y, forkY, 'bridge', 0.0, false);
 
-  // ■ 4大要素対角バランシング（相反テーマペアリング）
   const themeA = {
     id: 'theme_a',
     name: 'Rush & Dive',
@@ -889,12 +964,10 @@ export function extendCourseForkPatternB(scene) {
   ];
   const chosenPair = candidatePairs[Math.floor(Math.random() * candidatePairs.length)];
 
-  // 左右 50% シャッフルルーレット
   const shuffleLeft = (Math.random() < 0.5);
   const leftTheme = shuffleLeft ? chosenPair[0] : chosenPair[1];
   const rightTheme = shuffleLeft ? chosenPair[1] : chosenPair[0];
 
-  // 2. 左中継島（Stage 7）
   const leftMidDistZ = 38.0;
   const leftMidZ = forkZ - leftMidDistZ;
   const leftMidY = forkY + leftTheme.deltaY;
@@ -926,7 +999,6 @@ export function extendCourseForkPatternB(scene) {
     spawnItem(scene, leftStageIdx, leftTheme.itemType);
   }
 
-  // 3. 右中継島（Stage 8）
   const rightMidDistZ = 38.0;
   const rightMidZ = forkZ - rightMidDistZ;
   const rightMidY = forkY + rightTheme.deltaY;
@@ -958,7 +1030,6 @@ export function extendCourseForkPatternB(scene) {
     spawnItem(scene, rightStageIdx, rightTheme.itemType);
   }
 
-  // 4. 合流アイランド（Stage 9: X = 0.0m, Y = 10.0m, R = 12.0m）
   const mergeDistZ = 46.0;
   const mergeZ = Math.min(leftMidZ, rightMidZ) - mergeDistZ;
   const mergeY = forkY;
@@ -1108,9 +1179,12 @@ export function extendCourse(scene) {
       const typeToSpawn = getNextBagItem();
       spawnItem(scene, idx, typeToSpawn);
     }
+
+    // ★ スマート・ディレクターによるお邪魔キャラの配置判定（たまに出るアクセント）
+    spawnObstacleMobOnStage(scene, idx, nextZ, nextY, currentIslandX);
   }
 
-  // ★ 1. コース横の既存の雲（従来のふんわり雲を100%完全維持）
+  // 1. コース横の既存の雲
   if (idx % 2 === 0) {
     const cloudSide = (idx % 4 === 0) ? 1 : -1;
     const cloudMesh = createCloudMesh();
@@ -1122,26 +1196,23 @@ export function extendCourse(scene) {
     cloudObjects.push({ mesh: cloudMesh, stageIdx: idx, baseY: cloudY, offset: Math.random() * 10 });
   }
 
-  // ★ 2. 高度感の物差し：コースと海面の中間高度（Y = +5m 〜 +12m）にも既存の雲をふわりと漂わせる
-  // 高いステージに登った際、足元の下にいつもの雲が見え、その隙間から海面を見下ろせるため、直感的に高さを実感できる
+  // 2. 高度感の物差し：コースと海面の中間高度（Y = +6m 〜 +11m）の既存雲
   if (Math.max(prev.y, nextY) >= 16.0 && Math.random() < 0.65) {
     const midCloudMesh = createCloudMesh();
     const midCloudSide = Math.random() < 0.5 ? 1 : -1;
     const midCloudX = currentIslandX + midCloudSide * (15.0 + Math.random() * 16.0);
-    const midCloudY = 6.0 + Math.random() * 5.0; // 中間高度 Y = 6m〜11m
+    const midCloudY = 6.0 + Math.random() * 5.0;
     const midCloudZ = (prev.z + nextZ) / 2 + (Math.random() * 18.0 - 9.0);
     midCloudMesh.position.set(midCloudX, midCloudY, midCloudZ);
     scene.add(midCloudMesh);
     cloudObjects.push({ mesh: midCloudMesh, stageIdx: idx, baseY: midCloudY, offset: Math.random() * 10 });
   }
 
-  // ★ 3. 自然な海上群島（多島海アーキペラゴ）配置
-  // 「高い場所に登った瞬間に急に湧く」ピンポイント生成を完全廃止！
-  // 低空にいる時から遠近（近景・中景・遠景）に自然に島が散らばっており、登ると視界が開けて眼下に見渡せる現実と同じ自然な幾何学へ
+  // 3. 自然な海上群島（近景・中景・遠景）
   const distanceZones = [
-    { minX: 16, maxX: 23, weight: 0.60, minScale: 0.80, maxScale: 1.15 }, // 近景ゾーン
-    { minX: 28, maxX: 42, weight: 0.50, minScale: 0.65, maxScale: 0.95 }, // 中景ゾーン
-    { minX: 48, maxX: 68, weight: 0.40, minScale: 0.55, maxScale: 0.85 }  // 遠景ゾーン
+    { minX: 16, maxX: 23, weight: 0.60, minScale: 0.80, maxScale: 1.15 },
+    { minX: 28, maxX: 42, weight: 0.50, minScale: 0.65, maxScale: 0.95 },
+    { minX: 48, maxX: 68, weight: 0.40, minScale: 0.55, maxScale: 0.85 }
   ];
 
   distanceZones.forEach(zone => {
@@ -1167,6 +1238,7 @@ export function buildWorld(scene) {
   itemBag.length = 0;
   lastGimmickCategory = 'descent';
   lastMergeStageIdx = -1;
+  stagesSinceLastObstacle = 0; // スマート・ディレクター用カウンター初期化
 
   floorBlocksByStage.forEach(bucket => {
     bucket.forEach(b => {
@@ -1236,6 +1308,15 @@ export function buildWorld(scene) {
     }
   });
 
+  // お邪魔キャラの完全破棄・配列リセット
+  obstacleMobs.forEach(mob => {
+    if (mob.group) {
+      disposeHierarchy(mob.group);
+      scene.remove(mob.group);
+    }
+  });
+  obstacleMobs.length = 0;
+
   activeMagnetBlocks.forEach(mb => {
     if (mb.poolItem) {
       mb.poolItem.active = false;
@@ -1273,14 +1354,13 @@ export function buildWorld(scene) {
   seaMesh.receiveShadow = false;
   scene.add(seaMesh);
 
-  // ★ 最初から海上一面に自然に広がっている群島（近景・中景・遠景の初期配置）
   const initialIslets = [
-    { x: -18, z: -15, scale: 1.05, type: 'tropical' }, // 近景
-    { x: 20, z: 10, scale: 0.95, type: 'rocky' },      // 近景
-    { x: -36, z: 22, scale: 0.85, type: 'tropical' },  // 中景
-    { x: 38, z: -40, scale: 0.90, type: 'tropical' },  // 中景
-    { x: -58, z: -60, scale: 0.75, type: 'tropical' }, // 遠景
-    { x: 55, z: -10, scale: 0.70, type: 'rocky' }      // 遠景
+    { x: -18, z: -15, scale: 1.05, type: 'tropical' },
+    { x: 20, z: 10, scale: 0.95, type: 'rocky' },
+    { x: -36, z: 22, scale: 0.85, type: 'tropical' },
+    { x: 38, z: -40, scale: 0.90, type: 'tropical' },
+    { x: -58, z: -60, scale: 0.75, type: 'tropical' },
+    { x: 55, z: -10, scale: 0.70, type: 'rocky' }
   ];
   initialIslets.forEach(cfg => {
     const islet = createOceanIsletMesh(cfg.scale, cfg.type);
@@ -1296,7 +1376,7 @@ export function buildWorld(scene) {
   for (let i = 0; i < 6; i++) extendCourse(scene);
 }
 
-// ★ クリーンアップ安全化：現在プレイヤーおよび全キャラクターがいるステージから最低2ステージ以上前のものだけを安全に消去
+// クリーンアップ安全化：古いステージのお邪魔キャラ・メッシュを安全に消去
 export function cleanupOldData(scene) {
   if (!player) return;
 
@@ -1307,6 +1387,17 @@ export function cleanupOldData(scene) {
     }
   }
   const safeStage = Math.max(0, minActiveStage - 2);
+
+  // 古いお邪魔キャラの破棄
+  for (let i = obstacleMobs.length - 1; i >= 0; i--) {
+    if (obstacleMobs[i].stageIdx < safeStage) {
+      if (obstacleMobs[i].group) {
+        disposeHierarchy(obstacleMobs[i].group);
+        scene.remove(obstacleMobs[i].group);
+      }
+      obstacleMobs.splice(i, 1);
+    }
+  }
 
   for (let i = activeMagnetBlocks.length - 1; i >= 0; i--) {
     const mb = activeMagnetBlocks[i];

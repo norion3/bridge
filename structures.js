@@ -1,4 +1,4 @@
-// 静的構造物・アトラクション施設・浮島・装飾メッシュ生成モジュール（完全分離レイヤー）
+// 静的構造物・アトラクション施設・浮島・装飾メッシュ・お邪魔キャラ生成モジュール（完全分離レイヤー）
 import {
   SKYDIVE_CONFIG,
   TRAPDOOR_CONFIG
@@ -399,14 +399,12 @@ export function createCloudMesh() {
   return cloud;
 }
 
-// 8. 海上装飾島生成（★ ミニチュア環礁・エメラルド浅瀬リーフリング追加）
+// 8. 海上装飾島生成（ミニチュア環礁・エメラルド浅瀬リーフリング追加）
 export function createOceanIsletMesh(scale = 1.0, type = 'tropical') {
   const group = new THREE.Group();
 
   const sandR = (4.0 + Math.random() * 2.0) * scale;
 
-  // ★ 航空写真のように美しい「エメラルド浅瀬（リーフ）リング」
-  // 砂浜の外周に広がる半透明エメラルドグリーン。高高度見下ろし時に「あんなに下に島がある！」と一目瞭然に
   const reefR = sandR * 1.55;
   const reefGeo = new THREE.CylinderGeometry(reefR * 0.95, reefR, 0.2, 16);
   const reefMesh = new THREE.Mesh(reefGeo, sharedMats.oceanReef);
@@ -479,5 +477,88 @@ export function createIslandMesh(r, y, z, x = 0.0) {
   border.position.set(x, y, z);
   group.add(border);
 
+  return group;
+}
+
+// ★ 10. お邪魔キャラ「パファーボット（Puffer Bot）」メッシュ生成
+// 丸っこい球体ボディ（イエロー×オレンジ）＋危険な警告トゲ＋怒ったデフォルメ目＋ホバー足
+export function createObstacleMobMesh(posX, posY, posZ) {
+  const group = new THREE.Group();
+
+  // 1. まん丸い単色イエロー/オレンジボディ（直径約1.3m）
+  const bodyGeo = new THREE.SphereGeometry(0.65, 18, 18);
+  const bodyMat = new THREE.MeshStandardMaterial({
+    color: 0xfbbf24, // 鮮やかなアンバーイエロー
+    roughness: 0.25,
+    metalness: 0.15
+  });
+  const body = new THREE.Mesh(bodyGeo, bodyMat);
+  body.position.y = 0.70;
+  body.castShadow = true;
+  group.add(body);
+
+  // 2. 危険な警告トゲ（ネオンオレンジ ConeGeometry）
+  const spikeGeo = new THREE.ConeGeometry(0.14, 0.40, 8);
+  const spikeMat = new THREE.MeshStandardMaterial({
+    color: 0xf97316, // ネオンオレンジ
+    emissive: 0xea580c,
+    emissiveIntensity: 0.35,
+    roughness: 0.2
+  });
+
+  const spikeAngles = [
+    { pitch: 0.55, yaw: 0 },
+    { pitch: 0.55, yaw: Math.PI / 2 },
+    { pitch: 0.55, yaw: Math.PI },
+    { pitch: 0.55, yaw: -Math.PI / 2 },
+    { pitch: -0.25, yaw: Math.PI / 4 },
+    { pitch: -0.25, yaw: (3 * Math.PI) / 4 },
+    { pitch: -0.25, yaw: (-3 * Math.PI) / 4 },
+    { pitch: -0.25, yaw: -Math.PI / 4 }
+  ];
+
+  spikeAngles.forEach(ang => {
+    const spike = new THREE.Mesh(spikeGeo, spikeMat);
+    spike.position.set(
+      Math.sin(ang.yaw) * Math.cos(ang.pitch) * 0.65,
+      0.70 + Math.sin(ang.pitch) * 0.65,
+      Math.cos(ang.yaw) * Math.cos(ang.pitch) * 0.65
+    );
+    spike.rotation.x = -ang.pitch + Math.PI / 2;
+    spike.rotation.y = ang.yaw;
+    group.add(spike);
+  });
+
+  // 3. 怒ったようなデフォルメの目（黒バイザー＆白ハイライト）
+  const eyePlateGeo = new THREE.BoxGeometry(0.48, 0.20, 0.10);
+  const eyePlateMat = new THREE.MeshBasicMaterial({ color: 0x0f172a });
+  const eyePlate = new THREE.Mesh(eyePlateGeo, eyePlateMat);
+  eyePlate.position.set(0, 0.78, 0.62);
+  group.add(eyePlate);
+
+  const eyePupilGeo = new THREE.BoxGeometry(0.12, 0.08, 0.04);
+  const eyePupilMat = new THREE.MeshBasicMaterial({ color: 0xf43f5e }); // 怒ったネオンレッドの瞳
+  const pupilL = new THREE.Mesh(eyePupilGeo, eyePupilMat);
+  pupilL.position.set(-0.14, 0.78, 0.68);
+  pupilL.rotation.z = 0.25;
+  group.add(pupilL);
+  const pupilR = pupilL.clone();
+  pupilR.position.x = 0.14;
+  pupilR.rotation.z = -0.25;
+  group.add(pupilR);
+
+  // 4. 足元のホバーリング（床面スレスレの回転台座）
+  const hoverRingGeo = new THREE.CylinderGeometry(0.42, 0.50, 0.12, 16);
+  const hoverRingMat = new THREE.MeshStandardMaterial({
+    color: 0x475569,
+    roughness: 0.3,
+    metalness: 0.4
+  });
+  const hoverRing = new THREE.Mesh(hoverRingGeo, hoverRingMat);
+  hoverRing.position.y = 0.08;
+  hoverRing.receiveShadow = true;
+  group.add(hoverRing);
+
+  group.position.set(posX, posY, posZ);
   return group;
 }

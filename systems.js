@@ -1,4 +1,4 @@
-// 物理移動判定・スカイウォーク歩行開放・ハッチ進入同期・リュック収納アニメーション連動・シームレス風音連携・スカイダイブ＆スライダーボーナス回収・合流島安全着地完全整合（Phase 1: 合流スライダー強制送還バグ完全根絶版）
+// 物理移動判定・スカイウォーク歩行開放・ハッチ進入同期・リュック収納アニメーション連動・シームレス風音連携・スカイダイブ＆スライダーボーナス回収・合流島安全着地完全整合・お邪魔キャラ衝突判定（Phase 2: パファーボット安全被弾＆ブースト吹き飛ばし版）
 import {
   TEAMS,
   TRAMPOLINE_TIERS,
@@ -32,7 +32,9 @@ import {
   activeMagnetBlocks,
   floorItems,
   getFloorBlocksForStage,
-  setAttackCamTimer
+  setAttackCamTimer,
+  obstacleMobs,
+  updateObstacleMobs
 } from './world.js';
 import {
   triggerLandingShockwave,
@@ -158,6 +160,49 @@ export function checkGateCollisions(scene, char) {
         if (soundRef) soundRef.playTackle();
       }
       break;
+    }
+  }
+}
+
+// ★ お邪魔キャラ「パファーボット」との衝突・吹き飛ばし判定
+export function checkObstacleMobCollisions(scene, char) {
+  if (char.invulnerableTimer > 0) return;
+
+  for (let i = 0; i < obstacleMobs.length; i++) {
+    const mob = obstacleMobs[i];
+    if (!mob.active || mob.blownAway || mob.stageIdx !== char.currentStage) continue;
+
+    const dx = char.pos.x - mob.currentX;
+    const dz = char.pos.z - mob.baseZ;
+    const distSq = dx * dx + dz * dz;
+
+    if (distSq < 1.69 && Math.abs(char.pos.y - mob.baseY) < 1.4) {
+      if (char.speedBoostActive) {
+        // スピードブースト（オーラ中）で突撃：お邪魔キャラを海へ「ポヨ〜ン！」と吹き飛ばして消滅！
+        mob.blownAway = true;
+        const pushDirX = Math.sign(dx) || 1.0;
+        mob.blowVelocity.set(pushDirX * 12.0, 16.0, -18.0);
+
+        triggerLandingShockwave(mob.currentX, char.pos.y + 0.2, mob.baseZ, 2.5, 0xf97316);
+        if (char.isPlayer && soundRef) soundRef.playTackle();
+
+        // 爽快ボーナスとしてニュートラルブロックを2個ドロップ
+        scatterBricks(scene, char, 0); // 自身のブロックは落とさない
+        break;
+      } else {
+        // 通常時接触：マイルドな2個ドロップ固定＆軽いノックバック＆1.4秒無敵
+        char.stunTimer = 0.45; // 0.45秒の短いよろめき
+        char.invulnerableTimer = 1.4; // 1.4秒無敵点滅で多段ヒット完全防止
+        if (char.isPlayer && soundRef) soundRef.playTackle();
+
+        scatterBricks(scene, char, 2); // 目の前に2個ポロッと落ちるだけ（0.5秒で回収可能）
+
+        // 後方ノックバック（1.5m押し戻し）
+        const pushMag = Math.hypot(dx, dz) || 1.0;
+        char.pos.x += (dx / pushMag) * 1.5;
+        char.pos.z += (dz / pushMag) * 1.5;
+        break;
+      }
     }
   }
 }
@@ -331,7 +376,6 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
   if (bridgesByStage.has(char.currentStage)) {
     localBridges.push(...bridgesByStage.get(char.currentStage));
   }
-  // ★ クールダウン中（降車直後）は直前ステージの橋を走査に含めない
   if (char.slideCooldown <= 0 && char.currentStage > 0 && bridgesByStage.has(char.currentStage - 1)) {
     localBridges.push(...bridgesByStage.get(char.currentStage - 1));
   }
@@ -452,7 +496,6 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
       if (b.isCurvedSlide || b.isZipline || b.isElevator || b.isSkydive || b.isTrapdoor) continue;
       if (char.currentStage !== b.stageIdx && char.currentStage !== b.nextStageIdx) continue;
 
-      // ★ 降車直後ガード：直前ステージから降りてきたスライダー橋（b.nextStageIdx === currentStage）は再判定・吸い戻しを完全拒絶！
       if (b.isSlide && char.currentStage === b.nextStageIdx && char.slideCooldown > 0) continue;
 
       const fromStg = STAGES[b.stageIdx];
@@ -500,7 +543,7 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
         }
       }
 
-      // ★ 終点島への上陸（合流スライダー降車判定完全整合：終点島の円周内に安全着地＆吸い戻し完全根絶）
+      // 終点島への上陸
       if (nextZ <= onBridge.endZ - 0.1) {
         const lastPlank = onBridge.planks[onBridge.planks.length - 1];
         const canPassEnd = onBridge.isSlide || onBridge.isJump || (lastPlank && lastPlank.teamId === char.team.id);
@@ -510,13 +553,11 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
           const destCenterX = toStg ? (toStg.x || 0.0) : 0.0;
 
           if (onBridge.isSlide) {
-            // 合流島（destCenterX=0.0）または通常島の円周安全圏内に深く着地（島中心へ+2.0m踏み込み）
             const maxR = toStg.r - 2.5;
             char.pos.x = THREE.MathUtils.lerp(nextX, destCenterX, 0.45);
             char.pos.x = Math.max(destCenterX - maxR, Math.min(destCenterX + maxR, char.pos.x));
-            // スライダー終端コライダーの完全外側（島の中心、-Z方向へ深く踏み込ませる）
             char.pos.z = Math.min(nextZ, onBridge.endZ - 2.0);
-            char.slideCooldown = 0.65; // ★ 0.65秒間の再搭乗完全無効ガード
+            char.slideCooldown = 0.65;
           } else {
             char.pos.x = currentLaneX;
             char.pos.z = nextZ;
@@ -694,7 +735,7 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
     }
   }
 
-  // 7. 島内滞在判定（各ステージの中心 X 座標に完全整合）
+  // 7. 島内滞在判定
   let onStage = null;
   for (let i = Math.max(0, char.currentStage - 1); i < STAGES.length; i++) {
     const stage = STAGES[i];
@@ -718,7 +759,7 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
     return;
   }
 
-  // 8. AI外周クランプ（各島の中心 X 座標に完全整合）
+  // 8. AI外周クランプ
   if (!char.isPlayer) {
     const curStage = STAGES[char.currentStage];
     if (curStage) {
@@ -761,6 +802,11 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
 }
 
 export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffCloud, spawnSpeedStepRing) {
+  // ★ プレイヤー更新時に1回だけお邪魔キャラのパトロール移動と吹き飛び物理を更新
+  if (char.isPlayer) {
+    updateObstacleMobs(dt, scene);
+  }
+
   if (char.invulnerableTimer > 0) {
     char.invulnerableTimer -= dt;
     char.meshObj.root.visible = (Math.floor(Date.now() / 90) % 2 === 0);
@@ -1089,6 +1135,9 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     }
 
     checkGateCollisions(scene, char);
+
+    // ★ お邪魔キャラ「パファーボット」との衝突・吹き飛ばし判定
+    checkObstacleMobCollisions(scene, char);
   }
 
   if (!char.isPlayer && !char.onSlide && !char.onCurvedSlide && !char.onZipline && !char.onElevator && !char.isJumping && !char.onSkydive && !char.onTrapdoor) {
@@ -1120,7 +1169,6 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
 
   const currentStageObj = STAGES[char.currentStage];
   
-  // ★ 修正：中継島から合流島などへの接続先ステージ高度を正しく参照し、最低許容高度を安全に算出
   let targetDestY = currentStageObj ? currentStageObj.y : 0;
   const stageBridges = bridgesByStage.get(char.currentStage) || [];
   if (stageBridges.length > 0) {
@@ -1141,7 +1189,6 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
   }
   const lowestAllowedY = targetDestY - 10.0;
 
-  // ★★★ 根本バグ修正：落下除外ガードに !char.onSlide を追加！ ★★★
   if (
     !char.onSlide &&
     !char.isJumping &&
