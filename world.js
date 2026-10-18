@@ -1,4 +1,4 @@
-// コース伸長・浮島・橋・スライド・ジップライン・エレベーター・スカイダイブ・ドロップタワー施設・二股分岐＆合流（Phase 2: 海上小島視野角適正化＆高高度見下ろしパノラマ環礁統合版）
+// コース伸長・浮島・橋・スライド・ジップライン・エレベーター・スカイダイブ・ドロップタワー施設・二股分岐＆合流（自然な海上群島パノラマ＆中間高度既存雲配置版）
 import {
   BLOCK_TYPES,
   TRAMPOLINE_TIERS,
@@ -1110,6 +1110,7 @@ export function extendCourse(scene) {
     }
   }
 
+  // ★ 1. コース横の既存の雲（従来のふんわり雲を100%完全維持）
   if (idx % 2 === 0) {
     const cloudSide = (idx % 4 === 0) ? 1 : -1;
     const cloudMesh = createCloudMesh();
@@ -1121,33 +1122,43 @@ export function extendCourse(scene) {
     cloudObjects.push({ mesh: cloudMesh, stageIdx: idx, baseY: cloudY, offset: Math.random() * 10 });
   }
 
-  // ★ 海上ミニチュア小島の配置（スマホの縦長画面視野角 X = ±14m〜24m に適正化）
-  [-1, 1].forEach(side => {
-    if (Math.random() < 0.70) {
+  // ★ 2. 高度感の物差し：コースと海面の中間高度（Y = +5m 〜 +12m）にも既存の雲をふわりと漂わせる
+  // 高いステージに登った際、足元の下にいつもの雲が見え、その隙間から海面を見下ろせるため、直感的に高さを実感できる
+  if (Math.max(prev.y, nextY) >= 16.0 && Math.random() < 0.65) {
+    const midCloudMesh = createCloudMesh();
+    const midCloudSide = Math.random() < 0.5 ? 1 : -1;
+    const midCloudX = currentIslandX + midCloudSide * (15.0 + Math.random() * 16.0);
+    const midCloudY = 6.0 + Math.random() * 5.0; // 中間高度 Y = 6m〜11m
+    const midCloudZ = (prev.z + nextZ) / 2 + (Math.random() * 18.0 - 9.0);
+    midCloudMesh.position.set(midCloudX, midCloudY, midCloudZ);
+    scene.add(midCloudMesh);
+    cloudObjects.push({ mesh: midCloudMesh, stageIdx: idx, baseY: midCloudY, offset: Math.random() * 10 });
+  }
+
+  // ★ 3. 自然な海上群島（多島海アーキペラゴ）配置
+  // 「高い場所に登った瞬間に急に湧く」ピンポイント生成を完全廃止！
+  // 低空にいる時から遠近（近景・中景・遠景）に自然に島が散らばっており、登ると視界が開けて眼下に見渡せる現実と同じ自然な幾何学へ
+  const distanceZones = [
+    { minX: 16, maxX: 23, weight: 0.60, minScale: 0.80, maxScale: 1.15 }, // 近景ゾーン
+    { minX: 28, maxX: 42, weight: 0.50, minScale: 0.65, maxScale: 0.95 }, // 中景ゾーン
+    { minX: 48, maxX: 68, weight: 0.40, minScale: 0.55, maxScale: 0.85 }  // 遠景ゾーン
+  ];
+
+  distanceZones.forEach(zone => {
+    if (Math.random() < zone.weight) {
+      const side = Math.random() < 0.5 ? 1 : -1;
+      const isletScale = zone.minScale + Math.random() * (zone.maxScale - zone.minScale);
       const isletMesh = createOceanIsletMesh(
-        0.75 + Math.random() * 0.55,
-        Math.random() < 0.65 ? 'tropical' : 'rocky'
+        isletScale,
+        Math.random() < 0.68 ? 'tropical' : 'rocky'
       );
-      // 画面の視界に自然に入る位置（±14m〜24m）へ配置
-      const isletX = currentIslandX + side * (14 + Math.random() * 10);
-      const isletZ = nextZ + (Math.random() * 16 - 8);
+      const isletX = currentIslandX + side * (zone.minX + Math.random() * (zone.maxX - zone.minX));
+      const isletZ = nextZ + (Math.random() * 24.0 - 12.0);
       isletMesh.position.set(isletX, -42, isletZ);
       scene.add(isletMesh);
       oceanIslands.push({ meshGroup: isletMesh, stageIdx: idx });
     }
   });
-
-  // ★ スカイダイブ／ドロップタワー／垂直クライムなどの高高度・大落差ギミック時、
-  // 直下の見下ろし視界にパノラマ環礁を確実に配置（天空にいる実感を最大化）
-  if (type === 'skydive' || type === 'trapdoor' || type === 'vertical') {
-    const vistaIslet = createOceanIsletMesh(1.1 + Math.random() * 0.4, 'tropical');
-    const vistaSide = Math.random() < 0.5 ? 1 : -1;
-    const vistaX = currentIslandX + vistaSide * (11.0 + Math.random() * 6.0);
-    const vistaZ = (prev.z + nextZ) / 2 + (Math.random() * 8.0 - 4.0);
-    vistaIslet.position.set(vistaX, -42, vistaZ);
-    scene.add(vistaIslet);
-    oceanIslands.push({ meshGroup: vistaIslet, stageIdx: idx });
-  }
 }
 
 export function buildWorld(scene) {
@@ -1262,12 +1273,14 @@ export function buildWorld(scene) {
   seaMesh.receiveShadow = false;
   scene.add(seaMesh);
 
-  // ★ 初期配置の小島（画面の視界に入る X = ±16m〜22m に適正化）
+  // ★ 最初から海上一面に自然に広がっている群島（近景・中景・遠景の初期配置）
   const initialIslets = [
-    { x: -18, z: -15, scale: 1.1, type: 'tropical' },
-    { x: 19, z: 8, scale: 0.95, type: 'rocky' },
-    { x: -16, z: 22, scale: 0.85, type: 'tropical' },
-    { x: 21, z: -35, scale: 1.2, type: 'tropical' }
+    { x: -18, z: -15, scale: 1.05, type: 'tropical' }, // 近景
+    { x: 20, z: 10, scale: 0.95, type: 'rocky' },      // 近景
+    { x: -36, z: 22, scale: 0.85, type: 'tropical' },  // 中景
+    { x: 38, z: -40, scale: 0.90, type: 'tropical' },  // 中景
+    { x: -58, z: -60, scale: 0.75, type: 'tropical' }, // 遠景
+    { x: 55, z: -10, scale: 0.70, type: 'rocky' }      // 遠景
   ];
   initialIslets.forEach(cfg => {
     const islet = createOceanIsletMesh(cfg.scale, cfg.type);
