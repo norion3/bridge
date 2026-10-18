@@ -1,4 +1,4 @@
-// 物理移動判定・スカイウォーク歩行開放・ハッチ進入同期・リュック収納アニメーション連動・シームレス風音連携・スカイダイブ＆スライダーボーナス回収・合流島安全着地完全整合・お邪魔キャラ衝突判定・下層島誤ワープ完全防止版
+// 物理移動判定・スカイウォーク歩行開放・ハッチ進入同期・リュック収納アニメーション連動・シームレス風音連携・スカイダイブ＆スライダーボーナス回収・合流島安全着地完全整合・お邪魔キャラ衝突判定・下層島誤ワープ完全防止・ゲームバランス適正化（タックル上限クランプ＆サンダー鈍足速度マイルド化）版
 import {
   TEAMS,
   TRAMPOLINE_TIERS,
@@ -1019,7 +1019,8 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     speed = 28;
     if (char.isPlayer && soundRef) soundRef.playSlide();
   } else if (char.shrinkTimer > 0) {
-    speed = 3.6;
+    // ★ 提案仕様：サンダー被弾時の超鈍足化（3.6m/s）を 6.5m/s へ緩和し、スマホ操作のテンポ感を維持！
+    speed = 6.5;
   }
 
   let effectiveDirX = dirX;
@@ -1253,8 +1254,11 @@ export function tackleKnockout(scene, winner, loser) {
   if (loser.stunTimer > 0 || loser.invulnerableTimer > 0) return;
   loser.stunTimer = 1.4;
   if (soundRef) soundRef.playTackle();
-  const drops = Math.max(2, Math.floor(loser.stackCount * 0.5));
+
+  // ★ 提案仕様：タックル被弾時のドロップ数を35%かつ最大6個でクランプ（一撃粉砕・脱落を防止し逆転可能性を確保）
+  const drops = Math.min(6, Math.max(2, Math.floor(loser.stackCount * 0.35)));
   scatterBricks(scene, loser, drops);
+
   const kx = loser.pos.x - winner.pos.x, kz = loser.pos.z - winner.pos.z;
   const mag = Math.hypot(kx, kz) || 1;
   const pushX = (kx / mag) * 2.0;

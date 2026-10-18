@@ -1,4 +1,4 @@
-// コース伸長・浮島・橋・スライド・ジップライン・エレベーター・スカイダイブ・ドロップタワー施設・二股分岐＆合流・目鼻なし愛嬌お邪魔キャラ（Mulberry32確定論的PRNG＆シード共有骨組み対応版）
+// コース伸長・浮島・橋・スライド・ジップライン・エレベーター・スカイダイブ・ドロップタワー施設・二股分岐＆合流・目鼻なし愛嬌お邪魔キャラ（分岐ゲート×2撤廃・DDA連動バランシング版）
 import {
   BLOCK_TYPES,
   TRAMPOLINE_TIERS,
@@ -285,6 +285,67 @@ export function spawnGatesOnIsland(scene, stageIdx, islandZ, islandY, islandX = 
 
   createModifierGate(scene, stageIdx, islandX - 3.2, gateZ, islandY, p.left.op, p.left.val, p.left.label);
   createModifierGate(scene, stageIdx, islandX + 3.2, gateZ, islandY, p.right.op, p.right.val, p.right.label);
+}
+
+// ★ 分岐中継島専用：確定「×2」を完全撤廃し、動的難易度調整（DDA）と連動した適正ゲート選定
+function getForkThemeGates(themeRole) {
+  const playerCount = player ? player.stackCount : 0;
+
+  if (themeRole === 'shortcut') {
+    // スプリント型（Rush & Dive）：スピードとリスクの引き換え
+    if (playerCount >= 51) {
+      return [
+        { op: 'add', val: 4, label: '+4' },
+        { op: 'divide', val: 2, label: '÷2' }
+      ];
+    } else if (playerCount >= 26) {
+      return [
+        { op: 'add', val: 6, label: '+6' },
+        { op: 'subtract', val: 4, label: '-4' }
+      ];
+    } else {
+      return [
+        { op: 'add', val: 6, label: '+6' },
+        { op: 'add', val: 4, label: '+4' }
+      ];
+    }
+  } else if (themeRole === 'rich') {
+    // 資材ブースト型（Rich & Boost）：確定「×2」を廃止し、安心できる定数加算（+8, +10）へ適正化
+    if (playerCount >= 51) {
+      return [
+        { op: 'add', val: 6, label: '+6' },
+        { op: 'subtract', val: 4, label: '-4' }
+      ];
+    } else if (playerCount >= 26) {
+      return [
+        { op: 'add', val: 8, label: '+8' },
+        { op: 'subtract', val: 4, label: '-4' }
+      ];
+    } else {
+      return [
+        { op: 'add', val: 10, label: '+10' },
+        { op: 'add', val: 6, label: '+6' }
+      ];
+    }
+  } else {
+    // テクニカル型（Technical & Gimmick）：アイテムと小気味よい選択
+    if (playerCount >= 51) {
+      return [
+        { op: 'add', val: 4, label: '+4' },
+        { op: 'subtract', val: 6, label: '-6' }
+      ];
+    } else if (playerCount >= 26) {
+      return [
+        { op: 'add', val: 6, label: '+6' },
+        { op: 'subtract', val: 4, label: '-4' }
+      ];
+    } else {
+      return [
+        { op: 'add', val: 8, label: '+8' },
+        { op: 'subtract', val: 2, label: '-2' }
+      ];
+    }
+  }
 }
 
 // ★ スマート・ディレクターによる目鼻なしお邪魔キャラ出現制御（PRNG同期）
@@ -948,6 +1009,7 @@ export function extendCourseForkPatternB(scene) {
   CONNECTIONS.push({ from: forkIdx - 1, to: forkIdx, type: 'bridge' });
   createBridgeLinks(scene, forkIdx - 1, forkIdx, prev.z, forkZ, prev.r, forkR, prev.y, forkY, 'bridge', 0.0, false);
 
+  // ★ 確定「×2」の安売りを完全撤廃し、テーマの性格を明確化
   const themeA = {
     id: 'theme_a',
     name: 'Rush & Dive',
@@ -955,10 +1017,6 @@ export function extendCourseForkPatternB(scene) {
     deltaY: 26.0,
     connType: 'vertical',
     exitType: 'skydive',
-    gates: [
-      { op: 'add', val: 4, label: '+4' },
-      { op: 'divide', val: 2, label: '÷2' }
-    ],
     itemType: 'speed'
   };
 
@@ -969,10 +1027,6 @@ export function extendCourseForkPatternB(scene) {
     deltaY: 6.0,
     connType: 'bridge',
     exitType: 'slide',
-    gates: [
-      { op: 'add', val: 8, label: '+8' },
-      { op: 'multiply', val: 2, label: '×2' }
-    ],
     itemType: (seededRandom() < 0.5 ? 'thunder' : 'magnet')
   };
 
@@ -983,10 +1037,6 @@ export function extendCourseForkPatternB(scene) {
     deltaY: 14.0,
     connType: 'jump',
     exitType: (seededRandom() < 0.5 ? 'skydive' : 'slide'),
-    gates: [
-      { op: 'multiply', val: 2, label: '×2' },
-      { op: 'subtract', val: 6, label: '-6' }
-    ],
     itemType: 'attack'
   };
 
@@ -1025,8 +1075,13 @@ export function extendCourseForkPatternB(scene) {
   CONNECTIONS.push({ from: forkIdx, to: leftStageIdx, type: leftTheme.connType, branch: 'left' });
   createBridgeLinks(scene, forkIdx, leftStageIdx, forkZ, leftMidZ, forkR, leftMidR, forkY, leftMidY, leftTheme.connType, leftMidX, true);
 
-  createModifierGate(scene, leftStageIdx, leftMidX - 2.8, leftMidZ - 0.8, leftMidY, leftTheme.gates[0].op, leftTheme.gates[0].val, leftTheme.gates[0].label);
-  createModifierGate(scene, leftStageIdx, leftMidX + 2.8, leftMidZ - 0.8, leftMidY, leftTheme.gates[1].op, leftTheme.gates[1].val, leftTheme.gates[1].label);
+  // ★ 左中継島：DDA連動・適正定数加算ゲート生成（確定×2排除）
+  const leftGates = getForkThemeGates(leftTheme.role);
+  if (seededRandom() < 0.5) {
+    const tmp = leftGates[0]; leftGates[0] = leftGates[1]; leftGates[1] = tmp;
+  }
+  createModifierGate(scene, leftStageIdx, leftMidX - 2.8, leftMidZ - 0.8, leftMidY, leftGates[0].op, leftGates[0].val, leftGates[0].label);
+  createModifierGate(scene, leftStageIdx, leftMidX + 2.8, leftMidZ - 0.8, leftMidY, leftGates[1].op, leftGates[1].val, leftGates[1].label);
 
   if (leftTheme.itemType) {
     spawnItem(scene, leftStageIdx, leftTheme.itemType);
@@ -1056,8 +1111,13 @@ export function extendCourseForkPatternB(scene) {
   CONNECTIONS.push({ from: forkIdx, to: rightStageIdx, type: rightTheme.connType, branch: 'right' });
   createBridgeLinks(scene, forkIdx, rightStageIdx, forkZ, rightMidZ, forkR, rightMidR, forkY, rightMidY, rightTheme.connType, rightMidX, true);
 
-  createModifierGate(scene, rightStageIdx, rightMidX - 2.8, rightMidZ - 0.8, rightMidY, rightTheme.gates[0].op, rightTheme.gates[0].val, rightTheme.gates[0].label);
-  createModifierGate(scene, rightStageIdx, rightMidX + 2.8, rightMidZ - 0.8, rightMidY, rightTheme.gates[1].op, rightTheme.gates[1].val, rightTheme.gates[1].label);
+  // ★ 右中継島：DDA連動・適正定数加算ゲート生成（確定×2排除）
+  const rightGates = getForkThemeGates(rightTheme.role);
+  if (seededRandom() < 0.5) {
+    const tmp = rightGates[0]; rightGates[0] = rightGates[1]; rightGates[1] = tmp;
+  }
+  createModifierGate(scene, rightStageIdx, rightMidX - 2.8, rightMidZ - 0.8, rightMidY, rightGates[0].op, rightGates[0].val, rightGates[0].label);
+  createModifierGate(scene, rightStageIdx, rightMidX + 2.8, rightMidZ - 0.8, rightMidY, rightGates[1].op, rightGates[1].val, rightGates[1].label);
 
   if (rightTheme.itemType) {
     spawnItem(scene, rightStageIdx, rightTheme.itemType);
