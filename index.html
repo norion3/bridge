@@ -94,8 +94,8 @@
   <!-- タッチ・スワイプ入力受取レイヤー -->
   <div id="touch-control-layer"></div>
 
-  <!-- HUD オーバーレイ（画面上部：背景透過・クリーン文字配置・遠くの景色が100%抜ける設計） -->
-  <div class="fixed top-0 left-0 right-0 z-20 flex justify-between items-start safe-top-padding safe-x-padding pointer-events-none">
+  <!-- HUD オーバーレイ（画面上部：動的ヘッダー余白対応・背景透過・クリーン文字配置） -->
+  <div id="hud-top-container" class="fixed top-0 left-0 right-0 z-20 flex justify-between items-start safe-top-padding safe-x-padding pointer-events-none transition-all duration-300">
     <!-- 左上：階段スコア（SCOREラベル追加・背景透過・クリーン文字配置） -->
     <div class="flex items-baseline gap-1.5" style="text-shadow: 0 2px 8px rgba(0,0,0,0.85), 0 0 4px rgba(0,0,0,0.9);">
       <span class="text-xs sm:text-sm font-black text-amber-300 tracking-wider">SCORE</span>
@@ -113,6 +113,16 @@
       <span id="hud-stack-count" class="text-lg sm:text-xl font-black text-cyan-400 tracking-wide">0</span>
       <span class="text-xs font-bold text-cyan-200">個</span>
     </div>
+  </div>
+
+  <!-- 左下：ワンタップ即時リスタートボタン（GitHubでは快適リトライ、将来GRAVITYではホスト専用に自動切替） -->
+  <div class="fixed bottom-0 left-0 z-20 p-4 sm:p-6 safe-bottom-padding safe-x-padding pointer-events-none flex justify-start items-end">
+    <button id="btn-restart-quick" type="button" aria-label="Restart Game" 
+      class="pointer-events-auto w-11 h-11 rounded-full bg-slate-900/80 backdrop-blur-md border border-white/15 flex items-center justify-center shadow-lg hover:bg-slate-800 active:scale-90 transition cursor-pointer">
+      <svg class="w-5 h-5 text-amber-300 fill-none stroke-current" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+      </svg>
+    </button>
   </div>
 
   <!-- 右下：サウンドボタン -->

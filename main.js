@@ -1,4 +1,4 @@
-// メインエントリポイント：Three.js初期化・ダイナミックロックオン並走カメラ（完全連続滑らかLERP追従・カクつきゼロ）・メインループ・ネームプレート連動・スコアMicro-Pop＆30秒タイマー色変化
+// メインエントリポイント：Three.js初期化・ダイナミックロックオン並走カメラ（完全連続滑らかLERP追従・カクつきゼロ）・メインループ・ネームプレート連動・スコアMicro-Pop＆30秒タイマー色変化・左下リスタート＆GRAVITY動的余白骨組み対応
 import { SoundEngine } from './audio.js';
 import {
   TEAMS,
@@ -64,6 +64,17 @@ import {
 } from './systems.js';
 import { updateAICharacter } from './ai.js';
 
+// ★ GRAVITY環境 / 通常ブラウザ（GitHub Pages）の自動判別スイッチ（骨組み）
+export const IS_GRAVITY_APP = typeof window !== 'undefined' && !!window.AgentSDK;
+
+// ★ 将来のマルチプレイ同期用ステート（GitHub上では本人がホストのシングルプレイとして常時稼働）
+export const NetworkState = {
+  isMultiplayer: false,
+  isHost: true,
+  roomId: null,
+  myUserId: 'local_player'
+};
+
 const sound = new SoundEngine();
 
 let scene = null;
@@ -85,6 +96,20 @@ let scorePopTimer = null;
 let lastPlankPlacedTime = 0;
 
 const input = { x: 0, y: 0, active: false };
+
+// ★ GRAVITY環境の上部立ち入り禁止エリア動的オフセット（SDK存在時は74/98px、GitHub時は広々レイアウト）
+export function applyGravityTopInset() {
+  const hudContainer = document.getElementById('hud-top-container');
+  if (!hudContainer) return;
+
+  if (IS_GRAVITY_APP) {
+    const isTall = window.innerHeight >= 812;
+    const topInset = isTall ? 98 : 74;
+    hudContainer.style.paddingTop = `${topInset + 8}px`;
+  } else {
+    hudContainer.style.paddingTop = ''; // CSS の safe-top-padding をそのまま使用
+  }
+}
 
 // ★ 階段スコアの小気味よいポップ演出（連続設置でも数字が激しく揺れず見やすい設計）
 export function triggerScorePop() {
@@ -278,6 +303,28 @@ export function setupControls() {
     });
   }
 
+  // ★ 左下リスタートボタン（GitHub上ではF5リロード不要で即時リトライ可能！）
+  const quickRestartBtn = document.getElementById('btn-restart-quick');
+  if (quickRestartBtn) {
+    // 権限制御の骨組み：ホストまたはシングルプレイ時は表示
+    if (!NetworkState.isMultiplayer || NetworkState.isHost) {
+      quickRestartBtn.style.display = 'flex';
+    } else {
+      quickRestartBtn.style.display = 'none';
+    }
+
+    const onQuickRestart = (e) => {
+      if (e) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+      sound.init();
+      resetGame();
+    };
+    quickRestartBtn.addEventListener('click', onQuickRestart);
+    quickRestartBtn.addEventListener('touchend', onQuickRestart);
+  }
+
   const soundBtn = document.getElementById('btn-sound');
   const iconSoundOff = document.getElementById('icon-sound-off');
   const iconSoundOn = document.getElementById('icon-sound-on');
@@ -373,12 +420,14 @@ export function initThree() {
 
   for (let i = 0; i < 60; i++) manageBlockSpawns(scene, isGameOver);
   setupControls();
+  applyGravityTopInset(); // ★ 初期表示時の動的トップインセット適用
 
   window.addEventListener('resize', () => {
     if (!camera || !renderer) return;
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
+    applyGravityTopInset(); // リサイズ時も安全にインセット更新
   });
 }
 

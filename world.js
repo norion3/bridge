@@ -1,4 +1,4 @@
-// コース伸長・浮島・橋・スライド・ジップライン・エレベーター・スカイダイブ・ドロップタワー施設・二股分岐＆合流・目鼻なし愛嬌お邪魔キャラ（スマート出現ディレクター版）
+// コース伸長・浮島・橋・スライド・ジップライン・エレベーター・スカイダイブ・ドロップタワー施設・二股分岐＆合流・目鼻なし愛嬌お邪魔キャラ（Mulberry32確定論的PRNG＆シード共有骨組み対応版）
 import {
   BLOCK_TYPES,
   TRAMPOLINE_TIERS,
@@ -44,6 +44,25 @@ import {
 
 export { createModifierGate };
 
+// ★ 確定論的疑似乱数生成器（Mulberry32 PRNG）
+// 同一シード値を渡すことで、全クライアントが1文字も通信せずに100%同一のコース・アイテム・ギミックを生成可能！
+export let currentWorldSeed = 12345678;
+let _prngState = 12345678;
+
+export function setWorldSeed(seed = null) {
+  // シードが指定されていればそれを使用し、未指定（GitHubシングルプレイ時など）はMath.random()で新シードを自動生成
+  currentWorldSeed = (seed !== null && seed !== undefined) ? (seed >>> 0) : ((Math.random() * 0xFFFFFFFF) >>> 0);
+  _prngState = currentWorldSeed;
+  return currentWorldSeed;
+}
+
+export function seededRandom() {
+  _prngState = (_prngState + 0x6D2B79F5) | 0;
+  let t = Math.imul(_prngState ^ (_prngState >>> 15), 1 | _prngState);
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
+
 export const STAGES = [];
 export const CONNECTIONS = [];
 export const stageMeshes = [];
@@ -74,7 +93,7 @@ function getNextBagItem() {
   if (itemBag.length === 0) {
     itemBag = [...BASE_ITEMS];
     for (let i = itemBag.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
+      const j = Math.floor(seededRandom() * (i + 1));
       [itemBag[i], itemBag[j]] = [itemBag[j], itemBag[i]];
     }
   }
@@ -101,7 +120,7 @@ function getNextDescentGimmick() {
   if (descentBag.length === 0) {
     descentBag = [...DESCENT_GIMMICKS];
     for (let i = descentBag.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
+      const j = Math.floor(seededRandom() * (i + 1));
       [descentBag[i], descentBag[j]] = [descentBag[j], descentBag[i]];
     }
   }
@@ -112,7 +131,7 @@ function getNextAscentGimmick() {
   if (ascentBag.length === 0) {
     ascentBag = [...ASCENT_GIMMICKS];
     for (let i = ascentBag.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
+      const j = Math.floor(seededRandom() * (i + 1));
       [ascentBag[i], ascentBag[j]] = [ascentBag[j], ascentBag[i]];
     }
   }
@@ -139,8 +158,8 @@ export function spawnItem(scene, stageIdx, type = 'speed') {
   const centerX = stageInfo.x || 0.0;
 
   while (attempts < 20) {
-    const r = Math.sqrt(Math.random()) * (stageInfo.r - 2.8);
-    const theta = Math.random() * Math.PI * 2;
+    const r = Math.sqrt(seededRandom()) * (stageInfo.r - 2.8);
+    const theta = seededRandom() * Math.PI * 2;
     const candX = centerX + Math.cos(theta) * r;
     const candZ = stageInfo.z + Math.sin(theta) * r;
 
@@ -229,10 +248,10 @@ export function spawnGatesOnIsland(scene, stageIdx, islandZ, islandY, islandX = 
       { left: { op: 'add', val: 6, label: '+6' }, right: { op: 'subtract', val: 8, label: '-8' } },
       { left: { op: 'divide', val: 2, label: '÷2' }, right: { op: 'subtract', val: 4, label: '-4' } }
     ];
-    p = cautionPatterns[Math.floor(Math.random() * cautionPatterns.length)];
+    p = cautionPatterns[Math.floor(seededRandom() * cautionPatterns.length)];
   } else if (playerCount >= 26) {
-    if (Math.random() < 0.15) {
-      if (Math.random() < 0.5) {
+    if (seededRandom() < 0.15) {
+      if (seededRandom() < 0.5) {
         p = { left: { op: 'multiply', val: 2, label: '×2' }, right: { op: 'divide', val: 2, label: '÷2' } };
       } else {
         p = { left: { op: 'divide', val: 2, label: '÷2' }, right: { op: 'multiply', val: 2, label: '×2' } };
@@ -244,11 +263,11 @@ export function spawnGatesOnIsland(scene, stageIdx, islandZ, islandY, islandX = 
         { left: { op: 'add', val: 4, label: '+4' }, right: { op: 'subtract', val: 4, label: '-4' } },
         { left: { op: 'add', val: 6, label: '+6' }, right: { op: 'add', val: 4, label: '+4' } }
       ];
-      p = stablePatterns[Math.floor(Math.random() * stablePatterns.length)];
+      p = stablePatterns[Math.floor(seededRandom() * stablePatterns.length)];
     }
   } else {
-    if (Math.random() < 0.05) {
-      if (Math.random() < 0.5) {
+    if (seededRandom() < 0.05) {
+      if (seededRandom() < 0.5) {
         p = { left: { op: 'multiply', val: 2, label: '×2' }, right: { op: 'subtract', val: 4, label: '-4' } };
       } else {
         p = { left: { op: 'add', val: 4, label: '+4' }, right: { op: 'multiply', val: 2, label: '×2' } };
@@ -260,7 +279,7 @@ export function spawnGatesOnIsland(scene, stageIdx, islandZ, islandY, islandX = 
         { left: { op: 'subtract', val: 4, label: '-4' }, right: { op: 'add', val: 6, label: '+6' } },
         { left: { op: 'add', val: 4, label: '+4' }, right: { op: 'subtract', val: 2, label: '-2' } }
       ];
-      p = boostPatterns[Math.floor(Math.random() * boostPatterns.length)];
+      p = boostPatterns[Math.floor(seededRandom() * boostPatterns.length)];
     }
   }
 
@@ -268,7 +287,7 @@ export function spawnGatesOnIsland(scene, stageIdx, islandZ, islandY, islandX = 
   createModifierGate(scene, stageIdx, islandX + 3.2, gateZ, islandY, p.right.op, p.right.val, p.right.label);
 }
 
-// ★ スマート・ディレクターによる目鼻なしお邪魔キャラ出現制御
+// ★ スマート・ディレクターによる目鼻なしお邪魔キャラ出現制御（PRNG同期）
 export function spawnObstacleMobOnStage(scene, stageIdx, islandZ, islandY, islandX = 0.0) {
   // 1. ブラックリスト除外判定
   if (stageIdx <= 3) return; // 序盤チュートリアルは完全平穏
@@ -283,7 +302,7 @@ export function spawnObstacleMobOnStage(scene, stageIdx, islandZ, islandY, islan
 
   // 3. 5〜6ステージ経過後、35%の確率で出現（6ステージ以上なら確定）
   const spawnChance = (stagesSinceLastObstacle >= 6) ? 1.0 : 0.35;
-  if (Math.random() < spawnChance) {
+  if (seededRandom() < spawnChance) {
     stagesSinceLastObstacle = 0; // カウンターリセット
 
     // ゲートの手前（または島の中央付近）を左右に往復する安全なパトロール
@@ -302,7 +321,7 @@ export function spawnObstacleMobOnStage(scene, stageIdx, islandZ, islandY, islan
       centerX: islandX,
       rangeX: 3.2,
       currentX: islandX,
-      direction: (Math.random() < 0.5 ? 1 : -1),
+      direction: (seededRandom() < 0.5 ? 1 : -1),
       speed: 2.8,
       active: true,
       blownAway: false,
@@ -468,7 +487,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
 
     const shuffledLanes = ELEVATOR_CONFIG.LANES.map((cfg, idx) => ({ ...cfg, laneIdx: idx }));
     for (let i = shuffledLanes.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
+      const j = Math.floor(seededRandom() * (i + 1));
       const tempTier = shuffledLanes[i].speedTier;
       const tempDur = shuffledLanes[i].duration;
       const tempLabel = shuffledLanes[i].label;
@@ -710,7 +729,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
   if (isJump) {
     jumpTiers = [TRAMPOLINE_TIERS.normal, TRAMPOLINE_TIERS.high, TRAMPOLINE_TIERS.mega];
     for (let i = jumpTiers.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
+      const j = Math.floor(seededRandom() * (i + 1));
       [jumpTiers[i], jumpTiers[j]] = [jumpTiers[j], jumpTiers[i]];
     }
   }
@@ -902,7 +921,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
   }
 }
 
-// 高低差立体レイアウト ＆ 各ルート橋1本化 ＆ 隙間ゼロ完全接合コース生成
+// 高低差立体レイアウト ＆ 各ルート橋1本化 ＆ 隙間ゼロ完全接合コース生成（PRNG同期）
 export function extendCourseForkPatternB(scene) {
   const forkIdx = STAGES.length;
   const prev = STAGES[forkIdx - 1];
@@ -954,7 +973,7 @@ export function extendCourseForkPatternB(scene) {
       { op: 'add', val: 8, label: '+8' },
       { op: 'multiply', val: 2, label: '×2' }
     ],
-    itemType: (Math.random() < 0.5 ? 'thunder' : 'magnet')
+    itemType: (seededRandom() < 0.5 ? 'thunder' : 'magnet')
   };
 
   const themeC = {
@@ -963,7 +982,7 @@ export function extendCourseForkPatternB(scene) {
     role: 'technical',
     deltaY: 14.0,
     connType: 'jump',
-    exitType: (Math.random() < 0.5 ? 'skydive' : 'slide'),
+    exitType: (seededRandom() < 0.5 ? 'skydive' : 'slide'),
     gates: [
       { op: 'multiply', val: 2, label: '×2' },
       { op: 'subtract', val: 6, label: '-6' }
@@ -976,9 +995,9 @@ export function extendCourseForkPatternB(scene) {
     [themeB, themeC],
     [themeA, themeC]
   ];
-  const chosenPair = candidatePairs[Math.floor(Math.random() * candidatePairs.length)];
+  const chosenPair = candidatePairs[Math.floor(seededRandom() * candidatePairs.length)];
 
-  const shuffleLeft = (Math.random() < 0.5);
+  const shuffleLeft = (seededRandom() < 0.5);
   const leftTheme = shuffleLeft ? chosenPair[0] : chosenPair[1];
   const rightTheme = shuffleLeft ? chosenPair[1] : chosenPair[0];
 
@@ -1202,24 +1221,24 @@ export function extendCourse(scene) {
   if (idx % 2 === 0) {
     const cloudSide = (idx % 4 === 0) ? 1 : -1;
     const cloudMesh = createCloudMesh();
-    const cloudX = currentIslandX + cloudSide * (16 + Math.random() * 8);
-    const cloudY = (prev.y + nextY) / 2 + (Math.random() * 4 - 2);
+    const cloudX = currentIslandX + cloudSide * (16 + seededRandom() * 8);
+    const cloudY = (prev.y + nextY) / 2 + (seededRandom() * 4 - 2);
     const cloudZ = (prev.z + nextZ) / 2;
     cloudMesh.position.set(cloudX, cloudY, cloudZ);
     scene.add(cloudMesh);
-    cloudObjects.push({ mesh: cloudMesh, stageIdx: idx, baseY: cloudY, offset: Math.random() * 10 });
+    cloudObjects.push({ mesh: cloudMesh, stageIdx: idx, baseY: cloudY, offset: seededRandom() * 10 });
   }
 
   // 2. 高度感の物差し：コースと海面の中間高度（Y = +6m 〜 +11m）の既存雲
-  if (Math.max(prev.y, nextY) >= 16.0 && Math.random() < 0.65) {
+  if (Math.max(prev.y, nextY) >= 16.0 && seededRandom() < 0.65) {
     const midCloudMesh = createCloudMesh();
-    const midCloudSide = Math.random() < 0.5 ? 1 : -1;
-    const midCloudX = currentIslandX + midCloudSide * (15.0 + Math.random() * 16.0);
-    const midCloudY = 6.0 + Math.random() * 5.0;
-    const midCloudZ = (prev.z + nextZ) / 2 + (Math.random() * 18.0 - 9.0);
+    const midCloudSide = seededRandom() < 0.5 ? 1 : -1;
+    const midCloudX = currentIslandX + midCloudSide * (15.0 + seededRandom() * 16.0);
+    const midCloudY = 6.0 + seededRandom() * 5.0;
+    const midCloudZ = (prev.z + nextZ) / 2 + (seededRandom() * 18.0 - 9.0);
     midCloudMesh.position.set(midCloudX, midCloudY, midCloudZ);
     scene.add(midCloudMesh);
-    cloudObjects.push({ mesh: midCloudMesh, stageIdx: idx, baseY: midCloudY, offset: Math.random() * 10 });
+    cloudObjects.push({ mesh: midCloudMesh, stageIdx: idx, baseY: midCloudY, offset: seededRandom() * 10 });
   }
 
   // 3. 自然な海上群島（近景・中景・遠景）
@@ -1230,15 +1249,15 @@ export function extendCourse(scene) {
   ];
 
   distanceZones.forEach(zone => {
-    if (Math.random() < zone.weight) {
-      const side = Math.random() < 0.5 ? 1 : -1;
-      const isletScale = zone.minScale + Math.random() * (zone.maxScale - zone.minScale);
+    if (seededRandom() < zone.weight) {
+      const side = seededRandom() < 0.5 ? 1 : -1;
+      const isletScale = zone.minScale + seededRandom() * (zone.maxScale - zone.minScale);
       const isletMesh = createOceanIsletMesh(
         isletScale,
-        Math.random() < 0.68 ? 'tropical' : 'rocky'
+        seededRandom() < 0.68 ? 'tropical' : 'rocky'
       );
-      const isletX = currentIslandX + side * (zone.minX + Math.random() * (zone.maxX - zone.minX));
-      const isletZ = nextZ + (Math.random() * 24.0 - 12.0);
+      const isletX = currentIslandX + side * (zone.minX + seededRandom() * (zone.maxX - zone.minX));
+      const isletZ = nextZ + (seededRandom() * 24.0 - 12.0);
       isletMesh.position.set(isletX, -42, isletZ);
       scene.add(isletMesh);
       oceanIslands.push({ meshGroup: isletMesh, stageIdx: idx });
@@ -1246,7 +1265,10 @@ export function extendCourse(scene) {
   });
 }
 
-export function buildWorld(scene) {
+export function buildWorld(scene, seed = null) {
+  // ★ シード初期化（指定があればそのシードで完全同一コース生成、未指定ならランダム新シード生成）
+  setWorldSeed(seed);
+
   descentBag.length = 0;
   ascentBag.length = 0;
   itemBag.length = 0;
@@ -1557,8 +1579,8 @@ export function spawnSingleBlock(scene, stageIdx, targetTeam = null) {
   const eleB = stageBridges.find(b => b.isElevator);
 
   while (attempts < 25) {
-    const r = Math.sqrt(Math.random()) * (stageInfo.r - 2.2);
-    const theta = Math.random() * Math.PI * 2;
+    const r = Math.sqrt(seededRandom()) * (stageInfo.r - 2.2);
+    const theta = seededRandom() * Math.PI * 2;
     const candX = centerX + Math.cos(theta) * r;
     const candZ = stageInfo.z + Math.sin(theta) * r;
 
@@ -1610,7 +1632,7 @@ export function spawnSingleBlock(scene, stageIdx, targetTeam = null) {
   let poolItem = floorBlockPool.find(b => !b.active);
   if (!poolItem) return;
 
-  const team = targetTeam || BLOCK_TYPES[Math.floor(Math.random() * BLOCK_TYPES.length)];
+  const team = targetTeam || BLOCK_TYPES[Math.floor(seededRandom() * BLOCK_TYPES.length)];
   let mat;
   if (team.id === 'blue') mat = sharedMats.blockBlue;
   else if (team.id === 'red') mat = sharedMats.blockRed;
@@ -1619,7 +1641,7 @@ export function spawnSingleBlock(scene, stageIdx, targetTeam = null) {
 
   poolItem.mesh.material = mat;
   poolItem.mesh.position.set(validPos.x, stageInfo.y + 0.25, validPos.z);
-  poolItem.mesh.rotation.set(0, Math.random() * Math.PI, 0);
+  poolItem.mesh.rotation.set(0, seededRandom() * Math.PI, 0);
   poolItem.mesh.visible = true;
 
   poolItem.active = true;
