@@ -2,6 +2,7 @@
 // ★ UI・ロビー・GRAVITYレイアウト自動補正モジュール連携
 // ★ ステップ3: リモートプレイヤーの60fps Lerp並走補間・走りモーション・スタック同期結合
 // ★ ステップ2: window.currentSceneRef 公開によるワールド乱数シード完全同期パイプライン開通
+// ★ ブロック同期完全一致版: ゲスト側AI自律思考停止（ホスト追従）＆ ブロック補充のホスト主権化（乱数発散防止）
 import './dom.js';
 
 import { SoundEngine } from './audio.js';
@@ -466,16 +467,22 @@ export function animate(currentTime) {
     const moveDirX = input.active ? input.x : 0;
     const moveDirZ = input.active ? input.y : 0;
 
+    const isMulti = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive);
+    const isHost = isMulti && window.NetworkManager.isHost;
+    const isGuest = isMulti && !isHost;
+
     if (player) {
       updateSingleCharacter(scene, player, moveDirX, moveDirZ, dt, spawnPuffCloud, spawnSpeedStepRing);
     }
     for (let cIdx = 0; cIdx < characters.length; cIdx++) {
       const c = characters[cIdx];
-      // ★ リモートプレイヤー（c.isRemote）は自律AIルーチンをバイパスし、ネットワーク受信座標へ60fps Lerp補間！
-      if (!c.isPlayer && !c.isRemote) {
+      // ★【改善】ゲスト端末ではAIの自律思考（勝手なブロック拾い）を停止し、ホスト主権に完全追従
+      const shouldRunAI = !c.isPlayer && !c.isRemote && (!isGuest || !c.isAI);
+
+      if (shouldRunAI) {
         updateAICharacter(scene, c, dt, spawnPuffCloud, spawnSpeedStepRing);
-      } else if (c.isRemote && c.targetNetPos) {
-        // ★【ステップ3 新設】受信した相手の目標座標へ向けてシルクのように滑らかに吸着移動（カクつきゼロ）
+      } else if ((c.isRemote || (isGuest && c.isAI)) && c.targetNetPos) {
+        // ★ 受信した相手またはAIの目標座標へ向けてシルクのように滑らかに吸着移動（カクつきゼロ）
         const prevX = c.pos.x;
         const prevZ = c.pos.z;
         c.pos.lerp(c.targetNetPos, 0.25);
@@ -514,7 +521,10 @@ export function animate(currentTime) {
 
     blockSpawnTimer += dt;
     if (blockSpawnTimer > 0.5) {
-      manageBlockSpawns(scene, isGameOver);
+      // ★【改善】マルチプレイ時はホスト端末のみがブロック補充を実行（ゲスト端末での勝手な乱数発散・位置ズレを完全根絶）
+      if (!isGuest) {
+        manageBlockSpawns(scene, isGameOver);
+      }
       blockSpawnTimer = 0;
     }
 

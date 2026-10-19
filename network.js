@@ -1,5 +1,5 @@
 // network.js: AgentSDKラッパー ＆ 動的スロット・相互可視化・10Hz位置同期エンジン
-// ★ ステップ1：ホスト・ゲスト双方での同一シード完全整列＆古いブロック全消去（resetParticlePools）対応版
+// ★ マスターコード完全準拠版：幽霊部屋除外フィルタ・安全退出・階段架け(BUILD_PLANK)＆床ブロック取得(PICK_BLOCK)受信フック完全接続版
 
 import { characters, createNameplateMesh, updatePlayerName, bindLocalPlayerSlot, refreshCharacterStackVisuals } from './character.js';
 import { STAGES, buildWorld, manageBlockSpawns } from './world.js';
@@ -346,7 +346,14 @@ export const NetworkManager = {
           }
           break;
 
-        // ⑤ 全員同時リスタート
+        // ⑤ ★【ステップ1 新設】相手が床ブロックを拾った際のリアルタイム受信（床ブロック即時消去）
+        case 'PICK_BLOCK':
+          if (typeof window.applyRemoteBlockPicked === 'function') {
+            window.applyRemoteBlockPicked(packet.stageIdx, packet.poolIdx, packet.x, packet.z);
+          }
+          break;
+
+        // ⑥ 全員同時リスタート
         case 'RESTART_GAME':
           if (typeof window.onRemoteRestartReceived === 'function') {
             window.onRemoteRestartReceived(packet);

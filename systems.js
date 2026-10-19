@@ -1,5 +1,5 @@
 // 物理移動判定・スカイウォーク歩行開放・ハッチ進入同期・リュック収納アニメーション連動・シームレス風音連携・スカイダイブ＆スライダーボーナス回収・合流島安全着地完全整合・お邪魔キャラ衝突判定・下層島誤ワープ完全防止・ゲームバランス適正化（タックル上限クランプ＆サンダー鈍足速度マイルド化）版
-// ★ マスターコード完全準拠版：階段架け（BUILD_PLANK）＆床ブロック取得（PICK_BLOCK）リアルタイム同期組み込み
+// ★ マスターコード完全準拠版：階段架け（BUILD_PLANK）＆ プレイヤー/AI床ブロック取得（PICK_BLOCK）リアルタイム同期組み込み
 
 import {
   TEAMS,
@@ -108,7 +108,7 @@ export function applyRemotePlankBuilt(stageIdx, laneIdx, plankIdx, teamId) {
 }
 
 /**
- * ★【ステップ2 新設】リモートプレイヤーが床ブロックを拾った際の受信ハンドラ（該当ブロックの即時消去同期）
+ * ★ リモートプレイヤーまたはホスト側AIが床ブロックを拾った際の受信ハンドラ（該当ブロックの即時消去同期）
  */
 export function applyRemoteBlockPicked(stageIdx, poolIdx, x, z) {
   const stageBlocks = getFloorBlocksForStage(stageIdx);
@@ -1000,8 +1000,10 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
               duration: 0.55
             });
 
-            // ★【ステップ2 新設】自操作キャラのマグネット吸引時も他端末へ即時消去ブロードキャスト！
-            if (char.isPlayer && typeof window !== 'undefined' && window.AgentSDK) {
+            // ★【ステップ2 改善】プレイヤー または ホスト側のAI のマグネット吸引時も他端末へ即時消去ブロードキャスト！
+            const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
+            const shouldBroadcastMagnet = char.isPlayer || (isHost && char.isAI);
+            if (shouldBroadcastMagnet && typeof window !== 'undefined' && window.AgentSDK) {
               try {
                 window.AgentSDK.room.sendMessage({
                   message: JSON.stringify({
@@ -1239,8 +1241,10 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
           stageBlocks.splice(i, 1);
           addBrickToCharacter(char, char.team, 1, soundRef, updateHUDRef);
 
-          // ★【ステップ2 新設】自操作キャラが床ブロックを拾った際、他端末へ即時消去ブロードキャスト！
-          if (char.isPlayer && typeof window !== 'undefined' && window.AgentSDK) {
+          // ★【ステップ2 改善】自操作キャラ(isPlayer) または ホスト端末のAI(isAI) が拾った時に PICK_BLOCK を送信！
+          const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
+          const shouldBroadcastPick = char.isPlayer || (isHost && char.isAI);
+          if (shouldBroadcastPick && typeof window !== 'undefined' && window.AgentSDK) {
             try {
               window.AgentSDK.room.sendMessage({
                 message: JSON.stringify({
