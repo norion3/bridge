@@ -1,4 +1,6 @@
 // 物理移動判定・スカイウォーク歩行開放・ハッチ進入同期・リュック収納アニメーション連動・シームレス風音連携・スカイダイブ＆スライダーボーナス回収・合流島安全着地完全整合・お邪魔キャラ衝突判定・下層島誤ワープ完全防止・ゲームバランス適正化（タックル上限クランプ＆サンダー鈍足速度マイルド化）版
+// ★ マスターコード完全準拠版：階段架け（BUILD_PLANK）のリアルタイム送受信フック組み込み
+
 import {
   TEAMS,
   TRAMPOLINE_TIERS,
@@ -61,6 +63,53 @@ export function setSystemCallbacks(sound, updateHUD, onPlankPlaced = null) {
   soundRef = sound;
   updateHUDRef = updateHUD;
   onPlankPlacedCallback = onPlankPlaced;
+}
+
+/**
+ * ★ リモートプレイヤーが階段を設置した際の受信ハンドラ（段板カラー即時同期）
+ */
+export function applyRemotePlankBuilt(stageIdx, laneIdx, plankIdx, teamId) {
+  const localBridges = bridgesByStage.get(stageIdx) || [];
+  const onBridge = localBridges.find(b => b.laneIdx === laneIdx);
+  if (!onBridge || !onBridge.solidMesh || !onBridge.ghostMesh) return;
+
+  const currentP = onBridge.planks[plankIdx];
+  if (!currentP) return;
+
+  currentP.teamId = teamId;
+
+  const fromStg = STAGES[onBridge.stageIdx];
+  const bCenterX = fromStg ? (fromStg.x || 0.0) : 0.0;
+  const currentLaneX = (onBridge.actualBridgeX !== undefined)
+    ? onBridge.actualBridgeX
+    : (bCenterX + LANES[onBridge.laneIdx]);
+
+  // ゴースト非表示
+  dummyPlankObj.position.set(currentLaneX, currentP.y, currentP.z);
+  dummyPlankObj.rotation.set(0, 0, 0);
+  dummyPlankObj.scale.set(0, 0, 0);
+  dummyPlankObj.updateMatrix();
+  onBridge.ghostMesh.setMatrixAt(plankIdx, dummyPlankObj.matrix);
+  onBridge.ghostMesh.instanceMatrix.needsUpdate = true;
+
+  // 実体段板表示 ＆ カラー反映
+  dummyPlankObj.scale.set(1, 1, 1);
+  dummyPlankObj.updateMatrix();
+  onBridge.solidMesh.setMatrixAt(plankIdx, dummyPlankObj.matrix);
+  onBridge.solidMesh.instanceMatrix.needsUpdate = true;
+
+  if (teamId === 'blue') onBridge.solidMesh.setColorAt(plankIdx, COLOR_BLUE_PLANK);
+  else if (teamId === 'red') onBridge.solidMesh.setColorAt(plankIdx, COLOR_RED_PLANK);
+  else if (teamId === 'yellow') onBridge.solidMesh.setColorAt(plankIdx, COLOR_YELLOW_PLANK);
+
+  if (onBridge.solidMesh.instanceColor) {
+    onBridge.solidMesh.instanceColor.needsUpdate = true;
+  }
+}
+
+// グローバル公開（network.js から安全に呼べるように登録）
+if (typeof window !== 'undefined') {
+  window.applyRemotePlankBuilt = applyRemotePlankBuilt;
 }
 
 export function scatterBricks(scene, char, countToDrop) {
@@ -694,6 +743,23 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
                   }
                 }
 
+                // ★【リアルタイム同期フック】自操作キャラが階段を架けた時、他端末へ即時ブロードキャスト！
+                if (char.isPlayer && typeof window !== 'undefined' && window.AgentSDK) {
+                  try {
+                    window.AgentSDK.room.sendMessage({
+                      message: JSON.stringify({
+                        event: 'BUILD_PLANK',
+                        stageIdx: onBridge.stageIdx,
+                        laneIdx: onBridge.laneIdx,
+                        plankIdx: pIndex,
+                        teamId: char.team.id
+                      })
+                    });
+                  } catch (err) {
+                    console.warn('[systems.js] Failed to broadcast BUILD_PLANK:', err);
+                  }
+                }
+
                 if (char.isPlayer) {
                   if (soundRef) soundRef.playBuildPlank();
                   if (onPlankPlacedCallback) onPlankPlacedCallback();
@@ -1019,7 +1085,6 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
     speed = 28;
     if (char.isPlayer && soundRef) soundRef.playSlide();
   } else if (char.shrinkTimer > 0) {
-    // ★ 提案仕様：サンダー被弾時の超鈍足化（3.6m/s）を 6.5m/s へ緩和し、スマホ操作のテンポ感を維持！
     speed = 6.5;
   }
 
@@ -1255,7 +1320,6 @@ export function tackleKnockout(scene, winner, loser) {
   loser.stunTimer = 1.4;
   if (soundRef) soundRef.playTackle();
 
-  // ★ 提案仕様：タックル被弾時のドロップ数を35%かつ最大6個でクランプ（一撃粉砕・脱落を防止し逆転可能性を確保）
   const drops = Math.min(6, Math.max(2, Math.floor(loser.stackCount * 0.35)));
   scatterBricks(scene, loser, drops);
 

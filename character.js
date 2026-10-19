@@ -1,6 +1,6 @@
 // 3Dキャラクター外観構築・手足メッシュ・スタックプール・トロリー・ホバー展望リフト・スカイダイブ＆トラップドア姿勢管理・足元手前側（カメラ方向）フロスト投影ネームバッジ
-// ★ 即死バグ（elevatorPlatformFloorFloorGeo未定義エラー）を完全解消
-// ★ ステップ1: 背中ブロック色正常化・スロット名前汚染防止・トロリー誤表示根絶・ネームプレート常時復元対応
+// ★ 即死バグ解消済み
+// ★ ステップ1: 自操作キャラ(isPlayer)であってもチームカラー(赤・黄・青)のブロックマテリアルを厳格に適用
 import {
   TEAMS,
   MAX_VISUAL_STACK,
@@ -175,6 +175,9 @@ export function bindLocalPlayerSlot(slotIndex) {
         c.nameplateSprite.visible = true;
       }
     }
+
+    // スロット切り替え後にブロック色を確実に再描画
+    refreshCharacterStackVisuals(c);
   });
 
   if (typeof window !== 'undefined') {
@@ -267,7 +270,6 @@ export function createZiplineTrolleyMesh() {
 export function createElevatorCageMesh() {
   const lift = new THREE.Group();
 
-  // ★ タイポによる即死エラーを解消（elevatorPlatformFloorGeoのみに修正）
   const floorMesh = new THREE.Mesh(elevatorPlatformFloorGeo, sharedMats.elevatorDeckPlate);
   floorMesh.position.y = -0.08;
   floorMesh.castShadow = true;
@@ -424,22 +426,28 @@ export function createCharacterMesh(team) {
 
 /**
  * ★【ステップ1 改善版】背中ブロックのマテリアル取得
- * 他走者（!char.isPlayer）でも char.team.id === 'blue' のときは鮮やかな青マテリアルを返す！
+ * 自操作(char.isPlayer)であっても他走者であっても、char.team.id（赤・黄・青）に応じた
+ * 正しいスタックマテリアル配列を厳格に返却する。
  */
 export function getBrickMaterialForStackIndex(char, index) {
   const safeIdx = Math.min(index, MAX_VISUAL_STACK - 1);
-  if (!char.isPlayer) {
-    if (char.team.id === 'red') return botRedStackMaterials[safeIdx];
-    if (char.team.id === 'yellow') return botYellowStackMaterials[safeIdx];
-    // ★ 端末Bから見た相手（norion: !isPlayer かつ team.id === 'blue'）に青マテリアルを適用！
-    if (char.team.id === 'blue') return playerStackMaterials[safeIdx];
-    return sharedMats.blockNeutral;
+  if (!char || !char.team) return sharedMats.blockNeutral;
+
+  // チームカラー最優先判定
+  if (char.team.id === 'red') {
+    return botRedStackMaterials[safeIdx];
+  } else if (char.team.id === 'yellow') {
+    return botYellowStackMaterials[safeIdx];
+  } else if (char.team.id === 'blue') {
+    return playerStackMaterials[safeIdx];
   }
-  return playerStackMaterials[safeIdx];
+
+  return sharedMats.blockNeutral;
 }
 
 export function refreshCharacterStackVisuals(char) {
-  if (char.isPlayer) {
+  // 青チームの場合のみスタック蓄積量に応じたグラデーション色変化を更新
+  if (char.team && char.team.id === 'blue') {
     updatePlayerStackMaterials(char.stackCount);
   }
   const pool = char.meshObj.stackPool;

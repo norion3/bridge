@@ -1,5 +1,5 @@
 // network.js: AgentSDKラッパー ＆ 動的スロット・相互可視化・10Hz位置同期エンジン
-// ★ ステップ2: ゲストスロット1(赤)固定・多重名前汚染排除・ワールド乱数シード完全同期対応
+// ★ マスターコード完全準拠版：幽霊部屋除外フィルタ・安全退出・階段架け(BUILD_PLANK)受信フック接続
 
 import { characters, createNameplateMesh, updatePlayerName, bindLocalPlayerSlot, refreshCharacterStackVisuals } from './character.js';
 import { STAGES, buildWorld, manageBlockSpawns } from './world.js';
@@ -114,7 +114,7 @@ export const NetworkManager = {
   },
 
   /**
-   * 公開ルーム一覧の取得（連打防止の3秒クールダウン付き）
+   * 公開ルーム一覧の取得（連打防止の3秒クールダウン付き ＆ 幽霊部屋フィルタリング）
    */
   async getPublicRooms() {
     if (!this.isSDKAvailable) return [];
@@ -127,7 +127,12 @@ export const NetworkManager = {
     try {
       const res = await window.AgentSDK.room.getPublicRoomList();
       if (res && res.data && Array.isArray(res.data.list)) {
-        return res.data.list;
+        // ★【GRAVITY公式回答準拠】gamer_num === 0（誰もいない幽霊部屋）および満員部屋を除外
+        return res.data.list.filter(r => {
+          const count = Number(r.gamer_num) || 0;
+          const max = Number(r.max_players) || 3;
+          return count > 0 && count < max;
+        });
       }
     } catch (err) {
       console.error('[NetworkManager] Failed to get public rooms:', err);
@@ -209,7 +214,7 @@ export const NetworkManager = {
 
     safeShowGameScreen();
 
-    // ★ 端末B自身の自操作キャラを「スロット1（赤）」へ即座にバインド！
+    // 端末B自身の自操作キャラを「スロット1（赤）」へ即座にバインド！
     if (typeof bindLocalPlayerSlot === 'function') {
       bindLocalPlayerSlot(1);
     } else if (typeof window.bindLocalPlayerSlot === 'function') {
@@ -324,7 +329,14 @@ export const NetworkManager = {
           this._handleRemotePosition(packet);
           break;
 
-        // ④ 全員同時リスタート
+        // ④ ★ 階段設置パケットのリアルタイム受信（段板を即時塗り替え！）
+        case 'BUILD_PLANK':
+          if (typeof window.applyRemotePlankBuilt === 'function') {
+            window.applyRemotePlankBuilt(packet.stageIdx, packet.laneIdx, packet.plankIdx, packet.teamId);
+          }
+          break;
+
+        // ⑤ 全員同時リスタート
         case 'RESTART_GAME':
           if (typeof window.onRemoteRestartReceived === 'function') {
             window.onRemoteRestartReceived(packet);
@@ -343,7 +355,7 @@ export const NetworkManager = {
     if (!Array.isArray(syncedSlots)) return;
     this.slots = syncedSlots;
 
-    // ★ マップシードの同期（床ブロック配置をホストと100%完全一致させる）
+    // マップシードの同期（床ブロック配置をホストと100%完全一致させる）
     if (seed && this.currentSeed !== seed && !this.isHost) {
       this.currentSeed = seed;
       if (typeof window !== 'undefined' && window.currentSceneRef) {
@@ -535,6 +547,22 @@ export const NetworkManager = {
     }
   }
 };
+
+/**
+ * ★【GRAVITY公式回答ベストプラクティス】
+ * ページ離脱・リロード・画面バック時に確実に room.exit() を投げて幽霊部屋の残留を激減させる
+ */
+if (typeof window !== 'undefined') {
+  const onSafeLeave = () => {
+    if (NetworkManager.isMultiplayerActive && NetworkManager.isSDKAvailable) {
+      try {
+        window.AgentSDK.room.exit().catch(() => {}).finally(() => {});
+      } catch (e) {}
+    }
+  };
+  window.addEventListener('pagehide', onSafeLeave);
+  window.addEventListener('beforeunload', onSafeLeave);
+}
 
 /**
  * dom.js 内のボタンと NetworkManager を自動接続するフック
