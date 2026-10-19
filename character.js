@@ -1,5 +1,5 @@
 // 3Dキャラクター外観構築・手足メッシュ・スタックプール・トロリー・ホバー展望リフト・スカイダイブ＆トラップドア姿勢管理・足元手前側（カメラ方向）フロスト投影ネームバッジ
-// ★ ステップ1: 背中ブロック色（他走者blueの白化バグ解消）＆ スロット名前汚染防止対応
+// ★ ステップ1: 背中ブロック色正常化・スロット名前汚染防止・トロリー誤表示根絶・ネームプレート常時復元対応
 import {
   TEAMS,
   MAX_VISUAL_STACK,
@@ -109,13 +109,26 @@ export function updatePlayerName(newName) {
 
 /**
  * ★【ステップ1 改善版】自端末の担当スロット（0:青, 1:赤, 2:黄）に応じて自操作キャラを動的バインド！
- * 他のスロットに自端末の名前が混ざる多重波及バグを完全に遮断。
+ * 他のスロットに自端末の名前が混ざる多重波及バグを完全に遮断し、付帯ギミックメッシュを確実にリセット。
  */
 export function bindLocalPlayerSlot(slotIndex) {
   if (!characters || characters.length < 3) return;
   const targetSlot = Math.max(0, Math.min(2, Number(slotIndex) || 0));
 
   characters.forEach((c, idx) => {
+    // 付帯メッシュの初期非表示を強制徹底（ジップライン金具の残留を防止）
+    if (c.meshObj) {
+      if (c.meshObj.trolleyGroup) c.meshObj.trolleyGroup.visible = false;
+      if (c.meshObj.elevatorGroup) c.meshObj.elevatorGroup.visible = false;
+    }
+    c.onZipline = false;
+    c.onSlide = false;
+    c.onCurvedSlide = false;
+    c.onElevator = false;
+    c.onSkydive = false;
+    c.onTrapdoor = false;
+    c.onFreefall = false;
+
     if (idx === targetSlot) {
       // 自操作キャラ化
       c.isPlayer = true;
@@ -172,16 +185,19 @@ export function bindLocalPlayerSlot(slotIndex) {
 export function updateNameplatePosition(char) {
   if (!char || !char.nameplateSprite) return;
 
-  if (
-    char.onSlide ||
-    char.onCurvedSlide ||
-    char.onZipline ||
-    char.onSkydive ||
-    char.onTrapdoor ||
-    char.onFreefall
-  ) {
-    char.nameplateSprite.visible = false;
-    return;
+  // ★ リモートプレイヤー（char.isRemote）の場合はフラグ誤判定でネームプレートが消えないよう保護
+  if (!char.isRemote) {
+    if (
+      char.onSlide ||
+      char.onCurvedSlide ||
+      char.onZipline ||
+      char.onSkydive ||
+      char.onTrapdoor ||
+      char.onFreefall
+    ) {
+      char.nameplateSprite.visible = false;
+      return;
+    }
   }
 
   char.nameplateSprite.visible = true;
@@ -243,13 +259,14 @@ export function createZiplineTrolleyMesh() {
   capR.position.x = barWidth / 2;
   group.add(capR);
 
+  group.visible = false;
   return group;
 }
 
 export function createElevatorCageMesh() {
   const lift = new THREE.Group();
 
-  const floorMesh = new THREE.Mesh(elevatorPlatformFloorGeo, sharedMats.elevatorDeckPlate);
+  const floorMesh = new THREE.Mesh(elevatorPlatformFloorFloorGeo || elevatorPlatformFloorGeo, sharedMats.elevatorDeckPlate);
   floorMesh.position.y = -0.08;
   floorMesh.castShadow = true;
   floorMesh.receiveShadow = true;
@@ -383,6 +400,7 @@ export function createCharacterMesh(team) {
 
   const elevatorGroup = createElevatorCageMesh();
   elevatorGroup.position.set(0, 0, 0);
+  elevatorGroup.visible = false;
   root.add(elevatorGroup);
 
   return {
@@ -514,6 +532,9 @@ export function resetCharacterPose(char) {
   char.meshObj.rightLeg.rotation.set(0, 0, 0);
   char.meshObj.body.position.y = 0.65;
   char.meshObj.head.position.y = 1.25;
+  
+  if (char.meshObj.trolleyGroup) char.meshObj.trolleyGroup.visible = false;
+  if (char.meshObj.elevatorGroup) char.meshObj.elevatorGroup.visible = false;
   
   packCharacterLuggage(char, 0);
 }
@@ -837,8 +858,8 @@ export function resetCharacters(STAGES) {
       c.elevatorChoice = undefined;
     }
 
-    c.meshObj.trolleyGroup.visible = false;
-    c.meshObj.elevatorGroup.visible = false;
+    if (c.meshObj.trolleyGroup) c.meshObj.trolleyGroup.visible = false;
+    if (c.meshObj.elevatorGroup) c.meshObj.elevatorGroup.visible = false;
     
     resetCharacterPose(c);
   });

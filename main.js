@@ -1,6 +1,7 @@
 // メインエントリポイント：Three.js初期化・ダイナミックロックオン並走カメラ（完全連続滑らかLERP追従・カクつきゼロ）・メインループ・ネームプレート連動・スコアMicro-Pop＆30秒タイマー色変化・左下リスタート＆GRAVITY動的余白骨組み対応
 // ★ UI・ロビー・GRAVITYレイアウト自動補正モジュール連携
 // ★ ステップ3: リモートプレイヤーの60fps Lerp並走補間・走りモーション・スタック同期結合
+// ★ ステップ2: window.currentSceneRef 公開によるワールド乱数シード完全同期パイプライン開通
 import './dom.js';
 
 import { SoundEngine } from './audio.js';
@@ -391,6 +392,10 @@ export function initThree() {
   if (!container) return;
 
   scene = new THREE.Scene();
+  // ★【ステップ2 新設】network.js からシード再生成時に参照できるようグローバル登録！
+  if (typeof window !== 'undefined') {
+    window.currentSceneRef = scene;
+  }
   scene.background = new THREE.Color(0x7dd3fc);
   scene.fog = new THREE.FogExp2(0x7dd3fc, 0.0032);
 
