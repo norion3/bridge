@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>階段を架けろ！ - GRAVITYテスト環境</title>
+  <!-- 外部ライブラリ（既存ゲームと同一構成） -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #090d16;
+    }
+    #app-container {
+      width: 100%;
+      height: 100%;
+      position: relative;
+    }
+  </style>
+</head>
+<body>
+  <!-- 空の親コンテナ（GRAVITYと同じ構造） -->
+  <div id="app-container"></div>
+
+  <!-- テスト用ブートスクリプト -->
+  <script type="module">
+    import { mountAllUI, UIController } from './dom.js';
+
+    // 1. DOM要素の動的マウント
+    const container = document.getElementById('app-container');
+    mountAllUI(container);
+
+    // 2. ロビー画面を表示
+    UIController.showLobby();
+
+    // 3. 「ソロモードで開始」ボタン押下時の動作確認
+    const soloBtn = document.getElementById('btn-start-solo');
+    if (soloBtn) {
+      soloBtn.addEventListener('click', async () => {
+        // ロビーを閉じてHUDを表示
+        UIController.showGame();
+
+        // 既存のメインスクリプトを安全に呼び出し
+        console.log('[gravity_test] ソロモードを起動します...');
+        try {
+          await import('./main.js');
+        } catch (err) {
+          console.error('[gravity_test] ゲームの読み込みに失敗しました:', err);
+        }
+      });
+    }
+
+    // 4. その他のボタン動作ログ確認
+    document.getElementById('btn-create-public')?.addEventListener('click', () => {
+      alert('【テスト動作確認】「公開ルームを作成」が押されました。\n※Phase 4でAgentSDKと接続します。');
+    });
+
+    document.getElementById('btn-create-private')?.addEventListener('click', () => {
+      alert('【テスト動作確認】「プライベートルームを作成」が押されました。\n※Phase 4でAgentSDKと接続します。');
+    });
+
+    document.getElementById('btn-refresh-rooms')?.addEventListener('click', () => {
+      const listContainer = document.getElementById('room-list-container');
+      if (listContainer) {
+        listContainer.innerHTML = '<div style="font-size: 13px; color: #38bdf8; padding: 16px 0; text-align: center;">ルーム一覧を更新しました（テスト用ダミー）</div>';
+      }
+    });
+  </script>
+</body>
+</html>
