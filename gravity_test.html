@@ -44,10 +44,21 @@
         // ロビーを閉じてHUDを表示
         UIController.showGame();
 
-        // 既存のメインスクリプトを安全に呼び出し
         console.log('[gravity_test] ソロモードを起動します...');
         try {
-          await import('./main.js');
+          const mainModule = await import('./main.js');
+
+          // ゲーム開始トリガー（もしmain側にstart関数があれば呼び出し、または画面クリックをエミュレート）
+          if (mainModule && typeof mainModule.startGame === 'function') {
+            mainModule.startGame();
+          } else {
+            // 既存の入力レイヤーを一度タップしてスタートさせる
+            const touchLayer = document.getElementById('touch-control-layer');
+            if (touchLayer) {
+              touchLayer.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+              touchLayer.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+            }
+          }
         } catch (err) {
           console.error('[gravity_test] ゲームの読み込みに失敗しました:', err);
         }
