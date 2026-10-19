@@ -1,4 +1,5 @@
 // 3Dキャラクター外観構築・手足メッシュ・スタックプール・トロリー・ホバー展望リフト・スカイダイブ＆トラップドア姿勢管理・足元手前側（カメラ方向）フロスト投影ネームバッジ
+// ★ ステップ2: 動的スロットバインド（端末Bでは赤、端末Cでは黄を自操作キャラ・カメラ追従対象へ動的切り替え）対応
 import {
   TEAMS,
   MAX_VISUAL_STACK,
@@ -96,7 +97,6 @@ export function updatePlayerName(newName) {
   if (player) {
     player.name = newName;
     if (player.nameplateSprite) {
-      // 既存メッシュのマテリアル・テクスチャを解放して再生成
       if (player.nameplateSprite.material && player.nameplateSprite.material.map) {
         player.nameplateSprite.material.map.dispose();
       }
@@ -107,11 +107,64 @@ export function updatePlayerName(newName) {
   }
 }
 
+/**
+ * ★【ステップ2 新設】自端末の担当スロット（0:青, 1:赤, 2:黄）に応じて自操作キャラを動的バインド！
+ * 端末B（ゲスト1）では「赤」が自分の操作キャラになり、カメラ追従やスワイプ入力が赤に切り替わります。
+ */
+export function bindLocalPlayerSlot(slotIndex) {
+  if (!characters || characters.length < 3) return;
+  const targetSlot = Math.max(0, Math.min(2, Number(slotIndex) || 0));
+
+  characters.forEach((c, idx) => {
+    if (idx === targetSlot) {
+      // 自操作キャラ化
+      c.isPlayer = true;
+      c.isAI = false;
+      c.isRemote = false;
+      player = c; // main.js の操作・カメラ対象を即座にスイッチ！
+
+      const myName = (typeof window !== 'undefined' && window.GRAVITY_USER_NAME)
+        ? String(window.GRAVITY_USER_NAME)
+        : 'YOU';
+      c.name = myName;
+
+      // ネームプレートを「自キャラ（シアン枠）」に更新
+      if (c.nameplateSprite) {
+        if (c.nameplateSprite.material && c.nameplateSprite.material.map) {
+          c.nameplateSprite.material.map.dispose();
+        }
+        const newMesh = createNameplateMesh(myName, true);
+        c.nameplateSprite.material = newMesh.material;
+        c.nameplateSprite.visible = true;
+      }
+    } else {
+      // 相手またはAI
+      c.isPlayer = false;
+      // すでにリモートフラグが付いていない場合は初期AI状態を維持
+      if (!c.isRemote) {
+        c.isAI = true;
+      }
+      // ネームプレートを「他走者用枠（シアン枠なし）」に更新
+      if (c.nameplateSprite) {
+        if (c.nameplateSprite.material && c.nameplateSprite.material.map) {
+          c.nameplateSprite.material.map.dispose();
+        }
+        const newMesh = createNameplateMesh(c.name || (idx === 0 ? 'norion' : (idx === 1 ? 'CPU 1' : 'CPU 2')), false);
+        c.nameplateSprite.material = newMesh.material;
+        c.nameplateSprite.visible = true;
+      }
+    }
+  });
+
+  if (typeof window !== 'undefined') {
+    window.MY_PLAYER_SLOT = targetSlot;
+  }
+}
+
 // 足元追従：見下ろしカメラから見て開けている画面手前側（カメラ方向: +Z 1.15m）へオフセット配置
 export function updateNameplatePosition(char) {
   if (!char || !char.nameplateSprite) return;
 
-  // スライダー（直線・S字）・スカイダイブ・ジップライン・トラップドア搭乗中は非表示にして滑走アクションに集中！
   if (
     char.onSlide ||
     char.onCurvedSlide ||
@@ -124,15 +177,12 @@ export function updateNameplatePosition(char) {
     return;
   }
 
-  // 平地走行・階段建設・島でのブロック収集時は手前足元に表示！
   char.nameplateSprite.visible = true;
-
   const isShrunk = (char.shrinkTimer > 0);
 
   char.nameplateSprite.scale.set(1.0, 1.0, 1.0);
-
   const targetX = char.pos.x;
-  const targetY = char.pos.y + 0.05; // 床面スレスレ
+  const targetY = char.pos.y + 0.05;
   const targetZ = char.pos.z + (isShrunk ? 0.82 : 1.15);
 
   char.nameplateSprite.position.set(targetX, targetY, targetZ);
@@ -189,7 +239,6 @@ export function createZiplineTrolleyMesh() {
   return group;
 }
 
-// 邪魔なワイヤーを完全撤去したオープンホバー展望リフト
 export function createElevatorCageMesh() {
   const lift = new THREE.Group();
 
@@ -237,7 +286,6 @@ export function createElevatorCageMesh() {
   return lift;
 }
 
-// 合意済みの単色ポップ造形（バイザー・手足アクセントなどの余計な装飾なし）を厳格維持
 export function createCharacterMesh(team) {
   const root = new THREE.Group();
   let mat;
@@ -375,7 +423,6 @@ export function refreshCharacterStackVisuals(char) {
   }
 }
 
-// スカイダイブ時に頭や体の一部が突き抜けないよう、背中側（-Z方向）に安全にオフセット配置
 export function packCharacterLuggage(char, packProgress) {
   if (!char || !char.meshObj || !char.meshObj.stackGroup) return;
   
@@ -403,7 +450,6 @@ export function setStackGhostMode(char, isGhost) {
   char.isGhostStacked = false;
 }
 
-// スカイダイブ専用ポーズ（北向き Y=Math.PI、うつ伏せダイブ姿勢）
 export function applySkydivePose(char, dirX, rollAngle) {
   char.meshObj.root.rotation.order = 'YXZ';
   char.meshObj.root.rotation.set(1.1, Math.PI, rollAngle);
@@ -422,7 +468,6 @@ export function applySkydivePose(char, dirX, rollAngle) {
   char.meshObj.head.position.y = 1.10;
 }
 
-// トラップドア専用ポーズ：コミカルな必死の空中ジタバタあがきアニメーション
 export function applyTrapdoorPose(char, dirX, timeSec) {
   char.meshObj.root.rotation.order = 'XYZ';
   
@@ -445,7 +490,6 @@ export function applyTrapdoorPose(char, dirX, timeSec) {
   char.meshObj.head.position.y = 1.25 + Math.sin(timeSec * 32) * 0.04;
 }
 
-// ニュートラル姿勢への完全リセット
 export function resetCharacterPose(char) {
   char.meshObj.root.rotation.order = 'XYZ';
   char.meshObj.root.rotation.set(0, Math.PI, 0);
@@ -486,19 +530,17 @@ export function removeBrickFromCharacter(char, updateHUD = null) {
 export function setupCharacters(scene, STAGES) {
   characters.length = 0;
 
-  // 1. ローカルプレイヤーの生成（名前解決: window.GRAVITY_USER_NAME があれば優先、なければ 'YOU'）
-  const playerName = (typeof window !== 'undefined' && window.GRAVITY_USER_NAME) ? String(window.GRAVITY_USER_NAME) : 'YOU';
+  // 1. スロット0: 青（ホスト担当枠）
   const pMesh = createCharacterMesh(TEAMS.BLUE);
   pMesh.root.rotation.set(0, Math.PI, 0);
   scene.add(pMesh.root);
 
-  // 足元の床面に水平投影されるフロストネームバッジ
-  const pNameplate = createNameplateMesh(playerName, true);
+  const pNameplate = createNameplateMesh('norion', true);
   scene.add(pNameplate);
 
-  player = {
+  const char0 = {
     isPlayer: true,
-    name: playerName,
+    name: 'norion',
     nameplateSprite: pNameplate,
     team: TEAMS.BLUE,
     meshObj: pMesh,
@@ -553,11 +595,12 @@ export function setupCharacters(scene, STAGES) {
     magnetActive: false,
     magnetTimer: 0
   };
-  pMesh.root.position.copy(player.pos);
-  updateNameplatePosition(player);
-  characters.push(player);
+  pMesh.root.position.copy(char0.pos);
+  updateNameplatePosition(char0);
+  characters.push(char0);
+  player = char0; // デフォルト自操作はスロット0
 
-  // 2. 赤Bot（CPU 1）の生成
+  // 2. スロット1: 赤（ゲスト1担当枠 / 初期はCPU 1）
   const b1Mesh = createCharacterMesh(TEAMS.RED);
   b1Mesh.root.rotation.set(0, Math.PI, 0);
   scene.add(b1Mesh.root);
@@ -565,7 +608,7 @@ export function setupCharacters(scene, STAGES) {
   const b1Nameplate = createNameplateMesh('CPU 1', false);
   scene.add(b1Nameplate);
 
-  const bot1 = {
+  const char1 = {
     isPlayer: false,
     name: 'CPU 1',
     nameplateSprite: b1Nameplate,
@@ -630,11 +673,11 @@ export function setupCharacters(scene, STAGES) {
     searchCooldown: 0,
     targetBlock: null
   };
-  b1Mesh.root.position.copy(bot1.pos);
-  updateNameplatePosition(bot1);
-  characters.push(bot1);
+  b1Mesh.root.position.copy(char1.pos);
+  updateNameplatePosition(char1);
+  characters.push(char1);
 
-  // 3. 黄Bot（CPU 2）の生成
+  // 3. スロット2: 黄（ゲスト2担当枠 / 初期はCPU 2）
   const b2Mesh = createCharacterMesh(TEAMS.YELLOW);
   b2Mesh.root.rotation.set(0, Math.PI, 0);
   scene.add(b2Mesh.root);
@@ -642,7 +685,7 @@ export function setupCharacters(scene, STAGES) {
   const b2Nameplate = createNameplateMesh('CPU 2', false);
   scene.add(b2Nameplate);
 
-  const bot2 = {
+  const char2 = {
     isPlayer: false,
     name: 'CPU 2',
     nameplateSprite: b2Nameplate,
@@ -707,15 +750,20 @@ export function setupCharacters(scene, STAGES) {
     searchCooldown: 0.06,
     targetBlock: null
   };
-  b2Mesh.root.position.copy(bot2.pos);
-  updateNameplatePosition(bot2);
-  characters.push(bot2);
+  b2Mesh.root.position.copy(char2.pos);
+  updateNameplatePosition(char2);
+  characters.push(char2);
+
+  // 初期化完了時、もし事前にスロット指定があれば即座にバインド
+  if (typeof window !== 'undefined' && window.MY_PLAYER_SLOT !== undefined) {
+    bindLocalPlayerSlot(window.MY_PLAYER_SLOT);
+  }
 
   return { player, characters };
 }
 
 export function resetCharacters(STAGES) {
-  characters.forEach(c => {
+  characters.forEach((c, idx) => {
     c.stackCount = 0;
     refreshCharacterStackVisuals(c);
     c.stunTimer = 0;
@@ -782,14 +830,10 @@ export function resetCharacters(STAGES) {
     resetCharacterPose(c);
   });
 
-  const pName = (typeof window !== 'undefined' && window.GRAVITY_USER_NAME) ? String(window.GRAVITY_USER_NAME) : 'YOU';
-  if (player && STAGES[0]) {
-    player.pos.set(0, STAGES[0].y, STAGES[0].z + 4);
-    player.meshObj.root.position.copy(player.pos);
-    updateNameplatePosition(player);
-    if (player.name !== pName) {
-      updatePlayerName(pName);
-    }
+  if (characters[0] && STAGES[0]) {
+    characters[0].pos.set(0, STAGES[0].y, STAGES[0].z + 4);
+    characters[0].meshObj.root.position.copy(characters[0].pos);
+    updateNameplatePosition(characters[0]);
   }
   if (characters[1] && STAGES[0]) {
     characters[1].pos.set(-4.0, STAGES[0].y, STAGES[0].z + 4);
@@ -801,4 +845,14 @@ export function resetCharacters(STAGES) {
     characters[2].meshObj.root.position.copy(characters[2].pos);
     updateNameplatePosition(characters[2]);
   }
+
+  // 自操作キャラのネームプレートを再確認
+  if (player && typeof window !== 'undefined' && window.GRAVITY_USER_NAME) {
+    updatePlayerName(window.GRAVITY_USER_NAME);
+  }
+}
+
+// 外部連携用グローバルフック
+if (typeof window !== 'undefined') {
+  window.bindLocalPlayerSlot = bindLocalPlayerSlot;
 }

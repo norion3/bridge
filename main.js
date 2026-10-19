@@ -1,6 +1,6 @@
 // メインエントリポイント：Three.js初期化・ダイナミックロックオン並走カメラ（完全連続滑らかLERP追従・カクつきゼロ）・メインループ・ネームプレート連動・スコアMicro-Pop＆30秒タイマー色変化・左下リスタート＆GRAVITY動的余白骨組み対応
 // ★ UI・ロビー・GRAVITYレイアウト自動補正モジュール連携
-// ★ Phase 4 ステップ2: リモートプレイヤー（c.isRemote）のAI自律思考完全停止バイパス
+// ★ ステップ3: リモートプレイヤーの60fps Lerp並走補間・走りモーション・スタック同期結合
 import './dom.js';
 
 import { SoundEngine } from './audio.js';
@@ -25,7 +25,8 @@ import {
   resetCharacters,
   setCharacterCallbacks,
   addBrickToCharacter,
-  updateNameplatePosition
+  updateNameplatePosition,
+  refreshCharacterStackVisuals
 } from './character.js';
 
 import {
@@ -67,6 +68,11 @@ import {
   scatterBricks
 } from './systems.js';
 import { updateAICharacter } from './ai.js';
+
+// ★ network.js から相手のスタック数変化時に呼び出せるようグローバルフックを登録
+if (typeof window !== 'undefined') {
+  window.refreshRemoteStackVisuals = refreshCharacterStackVisuals;
+}
 
 // ★ GRAVITY環境 / 通常ブラウザ（GitHub Pages）の自動判別スイッチ（骨組み）
 export const IS_GRAVITY_APP = typeof window !== 'undefined' && !!window.AgentSDK;
@@ -460,10 +466,37 @@ export function animate(currentTime) {
     }
     for (let cIdx = 0; cIdx < characters.length; cIdx++) {
       const c = characters[cIdx];
-      // ★ Phase 4 ステップ2: 入室したリモートプレイヤー（c.isRemote）は自律AIルーチンをバイパスして完全静止
+      // ★ リモートプレイヤー（c.isRemote）は自律AIルーチンをバイパスし、ネットワーク受信座標へ60fps Lerp補間！
       if (!c.isPlayer && !c.isRemote) {
         updateAICharacter(scene, c, dt, spawnPuffCloud, spawnSpeedStepRing);
+      } else if (c.isRemote && c.targetNetPos) {
+        // ★【ステップ3 新設】受信した相手の目標座標へ向けてシルクのように滑らかに吸着移動（カクつきゼロ）
+        const prevX = c.pos.x;
+        const prevZ = c.pos.z;
+        c.pos.lerp(c.targetNetPos, 0.25);
+        c.meshObj.root.position.copy(c.pos);
+
+        if (c.targetNetRotY !== undefined) {
+          c.meshObj.root.rotation.y = THREE.MathUtils.lerp(c.meshObj.root.rotation.y, c.targetNetRotY, 0.25);
+        }
+
+        // 移動距離から手足の走りモーション（スイング）を再現
+        const stepDist = Math.hypot(c.pos.x - prevX, c.pos.z - prevZ);
+        if (stepDist > 0.001) {
+          c.walkCycle = (c.walkCycle || 0) + stepDist * 5.5;
+          const swing = Math.sin(c.walkCycle) * 0.45;
+          c.meshObj.leftLeg.rotation.x = swing;
+          c.meshObj.rightLeg.rotation.x = -swing;
+          c.meshObj.leftArm.rotation.x = -swing * 0.8;
+          c.meshObj.rightArm.rotation.x = swing * 0.8;
+        } else {
+          c.meshObj.leftLeg.rotation.x = 0;
+          c.meshObj.rightLeg.rotation.x = 0;
+          c.meshObj.leftArm.rotation.x = 0;
+          c.meshObj.rightArm.rotation.x = 0;
+        }
       }
+
       if (c.dockBounceTimer > 0) {
         c.dockBounceTimer -= dt;
         if (c.dockBounceTimer <= 0) {

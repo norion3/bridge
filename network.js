@@ -1,5 +1,5 @@
-// network.js: AgentSDKラッパー ＆ シームレス途中参加（ドロップイン）型マルチプレイ管理モジュール
-// GRAVITY音声ルーム連携最適化：待機室なし即出走 ＆ ゲスト入室時にAIを完全停止してスタート地点直立配置
+// network.js: AgentSDKラッパー ＆ 動的スロット・相互可視化・10Hz位置同期エンジン
+// 2人・3人・途中参加・途中退出が100%破綻しない完全同期モデル
 
 import { characters, createNameplateMesh, updatePlayerName } from './character.js';
 import { STAGES } from './world.js';
@@ -16,7 +16,6 @@ function safeShowGameScreen() {
     console.warn('[network.js] UIController.showGame deferred:', e);
   }
 
-  // DOMを直接取得して確実に非表示化（二重保証）
   const staticLobby = document.getElementById('test-lobby-overlay');
   if (staticLobby) staticLobby.style.setProperty('display', 'none', 'important');
 
@@ -26,7 +25,6 @@ function safeShowGameScreen() {
   const waitingScreen = document.getElementById('screen-waiting');
   if (waitingScreen) waitingScreen.classList.add('hidden');
 
-  // スタートモーダル（TAP TO START）を自動スキップ
   const startModal = document.getElementById('modal-start');
   if (startModal) {
     startModal.style.setProperty('display', 'none', 'important');
@@ -43,13 +41,22 @@ export const NetworkManager = {
   isSDKAvailable: typeof window !== 'undefined' && !!window.AgentSDK,
   currentRoomId: null,
   myUser: { name: 'YOU', user_id: 'local_user', portrait: '' },
-  roomMembers: [],
+  
+  // スロット配列（0:青, 1:赤, 2:黄）
+  // 各スロット: { slot: number, userId: string|null, name: string, isAI: boolean }
+  slots: [
+    { slot: 0, userId: null, name: 'norion', isAI: false },
+    { slot: 1, userId: null, name: 'CPU 1', isAI: true },
+    { slot: 2, userId: null, name: 'CPU 2', isAI: true }
+  ],
+  
   isHost: false,
   isMultiplayerActive: false,
-  mySlot: 0, // 0: 青(ホスト), 1: 赤(ゲスト1), 2: 黄(ゲスト2)
+  mySlot: 0, // 自端末の担当スロット（ホスト:0, ゲスト1:1, ゲスト2:2）
 
   _hasRegisteredListener: false,
   _lastRefreshTime: 0,
+  _syncIntervalId: null,
 
   /**
    * 初期化：ユーザー情報取得およびメッセージリスナー登録
@@ -63,7 +70,7 @@ export const NetworkManager = {
       const res = await window.AgentSDK.user.getMyUserInfo();
       if (res && res.data) {
         this.myUser = {
-          user_id: res.data.user_id,
+          user_id: String(res.data.user_id),
           name: res.data.name || 'プレイヤー',
           portrait: res.data.portrait || res.data.portait || ''
         };
@@ -112,7 +119,7 @@ export const NetworkManager = {
     if (!this.isSDKAvailable) return [];
     const now = Date.now();
     if (now - this._lastRefreshTime < 3000) {
-      return null; // クールダウン中
+      return null;
     }
     this._lastRefreshTime = now;
 
@@ -128,7 +135,7 @@ export const NetworkManager = {
   },
 
   /**
-   * 公開ルーム作成（待機室なしで即座にゲーム本編へ出走！）
+   * 公開ルーム作成（ホスト: スロット0「青」担当）
    */
   async createRoom(isPrivate = false) {
     await this.init();
@@ -147,25 +154,26 @@ export const NetworkManager = {
     }
 
     this.currentRoomId = createdRoomId;
-    this.roomMembers = [this.myUser];
     this.isHost = true;
-    this.mySlot = 0;
+    this.mySlot = 0; // ホストは青(スロット0)
     this.isMultiplayerActive = true;
 
-    // ロビー画面を閉じて即座にゲーム画面を表示
+    this.slots[0] = { slot: 0, userId: this.myUser.user_id, name: this.myUser.name, isAI: false };
+    this.slots[1] = { slot: 1, userId: null, name: 'CPU 1', isAI: true };
+    this.slots[2] = { slot: 2, userId: null, name: 'CPU 2', isAI: true };
+
     safeShowGameScreen();
 
-    // 自キャラの名前を即時反映
     if (window.GRAVITY_USER_NAME) {
       updatePlayerName(window.GRAVITY_USER_NAME);
     }
 
+    this._startPositionBroadcasting();
     return this.currentRoomId;
   },
 
   /**
-   * ルーム参加（ゲストとしてスタート地点 Stage 0 から出走）
-   * ★ ステップ1改修: res.code !== 0 での誤判定リターンを完全撤廃し、確実にゲーム画面へ遷移
+   * ルーム参加（ゲスト: 空きスロットへ割り当て）
    */
   async joinRoom(roomId) {
     if (!roomId) return false;
@@ -182,129 +190,56 @@ export const NetworkManager = {
 
     this.currentRoomId = roomId;
     this.isHost = false;
-    this.mySlot = 1; // ゲスト1は赤スロット
+    // 初期の仮スロットは1(赤)。ホストからのWelcome同期で確定する
+    this.mySlot = 1;
     this.isMultiplayerActive = true;
 
-    // ★ 端末Bのロビー画面を確実に消去してゲーム本編を表示
     safeShowGameScreen();
 
-    // ゲスト自身のキャラクターをスタート地点に整列
-    this._setupGuestLocalCharacter();
+    // ホストに対して「入室完了通知＆スロット同期リクエスト」を送信
+    this._sendCustomMessage({
+      event: 'REQUEST_ROOM_SYNC',
+      userId: this.myUser.user_id,
+      name: this.myUser.name
+    });
 
+    this._startPositionBroadcasting();
     return true;
   },
 
   /**
-   * ゲストが入室した時の処理（走っていたAIを消去し、ゲストをスタート地点に配置）
+   * ゲストが入室した時の処理（ホスト・他ゲスト共通）
    */
   _handleUserJoined(data) {
-    const userId = data.user_id;
+    const userId = String(data.user_id);
     if (!userId || userId === this.myUser.user_id) return;
 
     const guestName = data.user_name || 'ゲスト';
-    const guestPortrait = data.portrait || data.portait || '';
 
-    const existingIdx = this.roomMembers.findIndex(m => String(m.user_id) === String(userId));
-    if (existingIdx === -1) {
-      this.roomMembers.push({
-        user_id: userId,
-        name: guestName,
-        portrait: guestPortrait
-      });
-    }
-
-    // 入室してきたスロットを判定（2人目ならスロット1:赤、3人目ならスロット2:黄）
-    const targetSlot = this.roomMembers.length - 1;
-    if (targetSlot === 1 || targetSlot === 2) {
-      this._replaceAIWithGuest(targetSlot, guestName);
-    }
-  },
-
-  /**
-   * 指定スロットの自律AIを停止・沈黙させ、入室したゲストをスタート地点（Stage 0）に直立静止配置
-   */
-  _replaceAIWithGuest(slotIndex, guestName) {
-    const targetChar = characters[slotIndex];
-    if (!targetChar) return;
-
-    // 1. AIフラグ解除・リモートプレイヤーフラグ設定
-    targetChar.isAI = false;
-    targetChar.isRemote = true; // リモートプレイヤーフラグ（ステップ2でmain.jsが参照）
-    targetChar.aiState = 'IDLE_WAIT_INPUT';
-    targetChar.aiDirX = 0;
-    targetChar.aiDirZ = 0;
-    targetChar.searchCooldown = 999999;
-    targetChar.targetBlock = null;
-    targetChar.name = guestName;
-
-    // 2. 所持ブロックと背中スタックをリセット
-    targetChar.stackCount = 0;
-    if (targetChar.meshObj && targetChar.meshObj.stackPool) {
-      targetChar.meshObj.stackPool.forEach(b => { b.visible = false; });
-    }
-
-    // 3. スタート地点（Stage 0）へ直立整列配置
-    if (STAGES && STAGES[0]) {
-      const offsetX = (slotIndex === 1) ? -4.0 : 4.0;
-      targetChar.pos.set(offsetX, STAGES[0].y, STAGES[0].z + 4);
-      targetChar.meshObj.root.position.copy(targetChar.pos);
-      targetChar.meshObj.root.rotation.set(0, Math.PI, 0); // 南（階段手前）向きに直立
-      targetChar.currentStage = 0;
-    }
-
-    // 4. 足元のネームプレートをゲストの本名で再生成して差し替え
-    if (targetChar.nameplateSprite) {
-      if (targetChar.nameplateSprite.material && targetChar.nameplateSprite.material.map) {
-        targetChar.nameplateSprite.material.map.dispose();
+    // ホスト側：空きスロットを探してゲストを割り当て
+    if (this.isHost) {
+      let targetSlot = -1;
+      if (this.slots[1].isAI) {
+        targetSlot = 1; // 赤
+      } else if (this.slots[2].isAI) {
+        targetSlot = 2; // 黄
       }
-      const newMesh = createNameplateMesh(guestName, false);
-      targetChar.nameplateSprite.material = newMesh.material;
-      targetChar.nameplateSprite.visible = true;
-      targetChar.nameplateSprite.position.set(targetChar.pos.x, targetChar.pos.y + 0.05, targetChar.pos.z + 1.15);
-    }
-  },
 
-  /**
-   * ゲスト端末側：自分が操作するキャラクターをスタート地点に整列
-   */
-  _setupGuestLocalCharacter() {
-    const myChar = characters[this.mySlot] || characters[0];
-    if (myChar && STAGES && STAGES[0]) {
-      myChar.pos.set(-4.0, STAGES[0].y, STAGES[0].z + 4);
-      myChar.meshObj.root.position.copy(myChar.pos);
-      myChar.meshObj.root.rotation.set(0, Math.PI, 0);
-      myChar.currentStage = 0;
-      myChar.stackCount = 0;
+      if (targetSlot !== -1) {
+        this.slots[targetSlot] = {
+          slot: targetSlot,
+          userId: userId,
+          name: guestName,
+          isAI: false
+        };
 
-      if (window.GRAVITY_USER_NAME) {
-        myChar.name = window.GRAVITY_USER_NAME;
-        if (myChar.nameplateSprite) {
-          if (myChar.nameplateSprite.material && myChar.nameplateSprite.material.map) {
-            myChar.nameplateSprite.material.map.dispose();
-          }
-          const newMesh = createNameplateMesh(window.GRAVITY_USER_NAME, true);
-          myChar.nameplateSprite.material = newMesh.material;
-          myChar.nameplateSprite.visible = true;
-        }
-      }
-    }
-  },
+        this._bindRemoteSlot(targetSlot, guestName);
 
-  /**
-   * プレイヤー退出ハンドラ
-   */
-  _handleUserExited(data) {
-    const userId = data.user_id;
-    const idx = this.roomMembers.findIndex(m => String(m.user_id) === String(userId));
-    if (idx !== -1) {
-      this.roomMembers.splice(idx, 1);
-      // 退出した枠をAIに戻す処理
-      if (idx === 1 && characters[1]) {
-        characters[1].isAI = true;
-        characters[1].isRemote = false;
-        characters[1].aiState = 'COLLECT';
-        characters[1].searchCooldown = 0;
-        characters[1].name = 'CPU 1';
+        // ★ Welcomeハンドシェイク：新入室者および全員に最新スロット構成を配信
+        this._sendCustomMessage({
+          event: 'ROOM_MEMBERS_SYNC',
+          slots: this.slots
+        });
       }
     }
   },
@@ -316,8 +251,34 @@ export const NetworkManager = {
     if (!data || !data.msg_data) return;
     try {
       const packet = JSON.parse(data.msg_data);
-      if (packet.event === 'RESTART_GAME' && typeof window.onRemoteRestartReceived === 'function') {
-        window.onRemoteRestartReceived(packet);
+
+      switch (packet.event) {
+        // ① ホストから届いたスロット構成の完全同期（相互可視化）
+        case 'ROOM_MEMBERS_SYNC':
+          this._applyRoomMembersSync(packet.slots);
+          break;
+
+        // ② 新入室者からの同期リクエスト（ホストが最新状態を即時返信）
+        case 'REQUEST_ROOM_SYNC':
+          if (this.isHost) {
+            this._sendCustomMessage({
+              event: 'ROOM_MEMBERS_SYNC',
+              slots: this.slots
+            });
+          }
+          break;
+
+        // ③ 10Hzリアルタイム位置パケットの受信
+        case 'POS':
+          this._handleRemotePosition(packet);
+          break;
+
+        // ④ 全員同時リスタート
+        case 'RESTART_GAME':
+          if (typeof window.onRemoteRestartReceived === 'function') {
+            window.onRemoteRestartReceived(packet);
+          }
+          break;
       }
     } catch (e) {
       console.warn('[NetworkManager] Failed to parse message:', e);
@@ -325,16 +286,182 @@ export const NetworkManager = {
   },
 
   /**
+   * ホストから受信したスロット構成を自画面に反映（端末Bでも端末Aが見えるようになる！）
+   */
+  _applyRoomMembersSync(syncedSlots) {
+    if (!Array.isArray(syncedSlots)) return;
+    this.slots = syncedSlots;
+
+    syncedSlots.forEach((s) => {
+      // 自分がどのスロットにいるか確定
+      if (String(s.userId) === String(this.myUser.user_id)) {
+        this.mySlot = s.slot;
+        window.MY_PLAYER_SLOT = s.slot; // character.js / main.js 連携用
+      } else if (!s.isAI && s.userId) {
+        // 他のプレイヤー（リモート走者）としてセットアップ
+        this._bindRemoteSlot(s.slot, s.name);
+      } else if (s.isAI) {
+        // AIとして復帰
+        this._restoreSlotToAI(s.slot);
+      }
+    });
+  },
+
+  /**
+   * 指定スロットをリモートプレイヤーとしてバインド（AI停止＆ネームプレート表示）
+   */
+  _bindRemoteSlot(slotIndex, playerName) {
+    const targetChar = characters[slotIndex];
+    if (!targetChar) return;
+
+    targetChar.isAI = false;
+    targetChar.isRemote = true; // リモートプレイヤーフラグ
+    targetChar.aiState = 'REMOTE_IDLE';
+    targetChar.aiDirX = 0;
+    targetChar.aiDirZ = 0;
+    targetChar.name = playerName;
+
+    // ネームプレートの更新
+    if (targetChar.nameplateSprite) {
+      if (targetChar.nameplateSprite.material && targetChar.nameplateSprite.material.map) {
+        targetChar.nameplateSprite.material.map.dispose();
+      }
+      const newMesh = createNameplateMesh(playerName, false);
+      targetChar.nameplateSprite.material = newMesh.material;
+      targetChar.nameplateSprite.visible = true;
+    }
+  },
+
+  /**
+   * 指定スロットを自律AI（CPU）へ安全に復帰
+   */
+  _restoreSlotToAI(slotIndex) {
+    const targetChar = characters[slotIndex];
+    if (!targetChar) return;
+
+    targetChar.isAI = true;
+    targetChar.isRemote = false;
+    targetChar.aiState = 'COLLECT';
+    targetChar.searchCooldown = 0;
+    targetChar.name = (slotIndex === 1) ? 'CPU 1' : 'CPU 2';
+
+    if (targetChar.nameplateSprite) {
+      if (targetChar.nameplateSprite.material && targetChar.nameplateSprite.material.map) {
+        targetChar.nameplateSprite.material.map.dispose();
+      }
+      const newMesh = createNameplateMesh(targetChar.name, false);
+      targetChar.nameplateSprite.material = newMesh.material;
+      targetChar.nameplateSprite.visible = true;
+    }
+  },
+
+  /**
+   * 10Hz（100ms周期）での自キャラ位置ブロードキャスト
+   */
+  _startPositionBroadcasting() {
+    if (this._syncIntervalId) clearInterval(this._syncIntervalId);
+
+    this._syncIntervalId = setInterval(() => {
+      if (!this.isMultiplayerActive || !this.isSDKAvailable) return;
+
+      const myChar = characters[this.mySlot];
+      if (!myChar) return;
+
+      this._sendCustomMessage({
+        event: 'POS',
+        slot: this.mySlot,
+        x: Number(myChar.pos.x.toFixed(2)),
+        y: Number(myChar.pos.y.toFixed(2)),
+        z: Number(myChar.pos.z.toFixed(2)),
+        rotY: Number(myChar.meshObj.root.rotation.y.toFixed(2)),
+        stack: myChar.stackCount || 0,
+        stage: myChar.currentStage || 0
+      });
+    }, 100);
+  },
+
+  /**
+   * 受信したリモートキャラの最新座標を格納（main.js のLerp補間用）
+   */
+  _handleRemotePosition(packet) {
+    if (packet.slot === this.mySlot) return; // 自分のパケットは無視
+
+    const targetChar = characters[packet.slot];
+    if (!targetChar) return;
+
+    // 次のフレームでLerp補間するためのターゲット座標
+    if (!targetChar.targetNetPos) {
+      targetChar.targetNetPos = new THREE.Vector3();
+    }
+    targetChar.targetNetPos.set(packet.x, packet.y, packet.z);
+    targetChar.targetNetRotY = packet.rotY;
+
+    // スタック数に変化があれば同期
+    if (targetChar.stackCount !== packet.stack) {
+      targetChar.stackCount = packet.stack;
+      if (typeof window.refreshRemoteStackVisuals === 'function') {
+        window.refreshRemoteStackVisuals(targetChar);
+      }
+    }
+  },
+
+  /**
+   * カスタムメッセージ送信ヘルパー
+   */
+  _sendCustomMessage(msgObj) {
+    if (!this.isSDKAvailable || !this.currentRoomId) return;
+    try {
+      window.AgentSDK.room.sendMessage({
+        room_id: this.currentRoomId,
+        msg_data: JSON.stringify(msgObj)
+      });
+    } catch (e) {
+      console.warn('[NetworkManager] sendMessage failed:', e);
+    }
+  },
+
+  /**
+   * プレイヤー退出ハンドラ（退出したスロットを即座にAIへ復元！）
+   */
+  _handleUserExited(data) {
+    const userId = String(data.user_id);
+    const exitedSlotIdx = this.slots.findIndex(s => String(s.userId) === userId);
+
+    if (exitedSlotIdx !== -1) {
+      console.log(`[NetworkManager] User exited from slot ${exitedSlotIdx}, restoring AI.`);
+      this.slots[exitedSlotIdx] = {
+        slot: exitedSlotIdx,
+        userId: null,
+        name: (exitedSlotIdx === 1) ? 'CPU 1' : 'CPU 2',
+        isAI: true
+      };
+
+      this._restoreSlotToAI(exitedSlotIdx);
+
+      // ホストなら最新スロット構成を全員に再ブロードキャスト
+      if (this.isHost) {
+        this._sendCustomMessage({
+          event: 'ROOM_MEMBERS_SYNC',
+          slots: this.slots
+        });
+      }
+    }
+  },
+
+  /**
    * ルーム退出
    */
   async exitRoom() {
+    if (this._syncIntervalId) {
+      clearInterval(this._syncIntervalId);
+      this._syncIntervalId = null;
+    }
     if (this.isSDKAvailable) {
       try {
         await window.AgentSDK.room.exit();
       } catch (e) {}
     }
     this.currentRoomId = null;
-    this.roomMembers = [];
     this.isHost = false;
     this.isMultiplayerActive = false;
     this.mySlot = 0;
