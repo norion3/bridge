@@ -34,16 +34,21 @@ export function injectStyles() {
       z-index: 10;
       touch-action: none;
     }
-    .gravity-screen-overlay {
+
+    /* ロビー画面 ＆ 待機画面：GRAVITY上部バー（戻る・拡大・閉じる）との被りを完全排除 */
+    .gravity-screen-overlay,
+    #test-lobby-overlay {
       position: absolute;
       inset: 0;
-      z-index: 50;
+      z-index: 100;
       display: flex;
       flex-direction: column;
       align-items: center;
       background: radial-gradient(circle at top, #1e293b 0%, #090d16 100%);
       color: #ffffff;
       padding: 16px 20px;
+      /* GRAVITYアプリ上部UI領域を確実に避ける安全余白 */
+      padding-top: max(84px, env(safe-area-inset-top, 24px)) !important;
       overflow-y: auto;
       -webkit-overflow-scrolling: touch;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -51,7 +56,8 @@ export function injectStyles() {
     .gravity-screen-overlay.hidden {
       display: none !important;
     }
-    .gravity-card {
+    .gravity-card,
+    .lobby-card {
       width: 100%;
       max-width: 380px;
       display: flex;
@@ -59,7 +65,8 @@ export function injectStyles() {
       align-items: center;
       gap: 12px;
     }
-    .gravity-btn-green {
+    .gravity-btn-green,
+    .btn-green {
       width: 100%;
       padding: 15px 20px;
       background-color: #5bb35d;
@@ -72,11 +79,13 @@ export function injectStyles() {
       box-shadow: 0 4px 14px rgba(91, 179, 93, 0.35);
       transition: transform 0.1s ease, background-color 0.15s ease;
     }
-    .gravity-btn-green:active {
+    .gravity-btn-green:active,
+    .btn-green:active {
       transform: scale(0.97);
       background-color: #4da34f;
     }
-    .gravity-btn-gray {
+    .gravity-btn-gray,
+    .btn-gray {
       width: 100%;
       padding: 15px 20px;
       background-color: #64748b;
@@ -89,7 +98,8 @@ export function injectStyles() {
       box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
       transition: transform 0.1s ease, background-color 0.15s ease;
     }
-    .gravity-btn-gray:active {
+    .gravity-btn-gray:active,
+    .btn-gray:active {
       transform: scale(0.97);
       background-color: #475569;
     }
@@ -166,8 +176,61 @@ export function injectStyles() {
  */
 export function getTopInset() {
   const isGravity = typeof window !== 'undefined' && !!window.AgentSDK;
-  if (!isGravity) return 16;
-  return window.innerHeight >= 812 ? 98 : 74;
+  if (!isGravity) return 24;
+  return window.innerHeight >= 812 ? 98 : 84;
+}
+
+/**
+ * GRAVITY AgentSDKからユーザー名を取得してロビー画面へ即座に反映する
+ */
+export async function syncGravityUserName() {
+  let displayName = 'プレイヤー';
+
+  if (typeof window !== 'undefined' && window.AgentSDK && window.AgentSDK.user) {
+    try {
+      const res = await window.AgentSDK.user.getMyUserInfo();
+      if (res && res.data && res.data.name) {
+        displayName = res.data.name;
+        window.GRAVITY_USER_NAME = displayName;
+      }
+    } catch (err) {
+      console.warn('[dom.js] Failed to get user info from AgentSDK:', err);
+    }
+  }
+
+  // 1. 動的テンプレート内の要素を更新
+  const dynamicGreeting = document.getElementById('lobby-user-greeting');
+  if (dynamicGreeting) {
+    dynamicGreeting.textContent = `ようこそ ${displayName} さん`;
+  }
+
+  // 2. gravity_loader.html にすでにある既存ロビー要素も更新
+  const staticGreeting = document.querySelector('#test-lobby-overlay .lobby-card > div:nth-child(2)');
+  if (staticGreeting) {
+    staticGreeting.textContent = `ようこそ ${displayName} さん`;
+  }
+}
+
+/**
+ * 既存の静的要素（gravity_loader.html）が存在する場合のテキスト・レイアウト自動補正
+ */
+export function patchExistingLobbyLabels() {
+  // タイトル：「マルチプレイロビー」➔「階段を架けろ！」
+  const titleEl = document.querySelector('#test-lobby-overlay .lobby-card > div:nth-child(1)');
+  if (titleEl) {
+    titleEl.textContent = '階段を架けろ！';
+    titleEl.style.fontSize = '26px';
+    titleEl.style.fontWeight = '900';
+    titleEl.style.letterSpacing = '0.04em';
+  }
+
+  // ボタン：「ソロモードで開始 (フォールバック)」➔「1人で遊ぶ」
+  const soloBtn = document.getElementById('btn-start-solo');
+  if (soloBtn) {
+    soloBtn.textContent = '1人で遊ぶ';
+    soloBtn.style.fontSize = '16px';
+    soloBtn.style.fontWeight = '800';
+  }
 }
 
 /**
@@ -227,15 +290,17 @@ export function mountAllUI(container) {
     </div>
 
     <!-- 画面1: マルチプレイロビー -->
-    <div id="screen-lobby" class="gravity-screen-overlay" style="padding-top: ${topInset + 12}px;">
+    <div id="screen-lobby" class="gravity-screen-overlay">
       <div class="gravity-card">
-        <div style="font-size: 26px; font-weight: 900; letter-spacing: 0.05em; margin: 4px 0;">マルチプレイロビー</div>
+        <!-- ★ タイトル：「階段を架けろ！」 -->
+        <div style="font-size: 26px; font-weight: 900; letter-spacing: 0.05em; margin: 4px 0;">階段を架けろ！</div>
         <div id="lobby-user-greeting" style="font-size: 14px; color: #94a3b8; margin-bottom: 8px;">ようこそ プレイヤー さん</div>
         <div style="width: 100%; height: 1px; background: rgba(255,255,255,0.12); margin-bottom: 8px;"></div>
 
         <button id="btn-create-public" type="button" class="gravity-btn-green">公開ルームを作成</button>
         <button id="btn-create-private" type="button" class="gravity-btn-green" style="background-color: #4da34f;">プライベートルームを作成</button>
-        <button id="btn-start-solo" type="button" class="gravity-btn-gray">ソロモードで開始 (フォールバック)</button>
+        <!-- ★ ボタン：「1人で遊ぶ」 -->
+        <button id="btn-start-solo" type="button" class="gravity-btn-gray">1人で遊ぶ</button>
 
         <div style="width: 100%; margin-top: 16px; display: flex; flex-direction: column;">
           <div style="font-size: 18px; font-weight: 800; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
@@ -250,7 +315,7 @@ export function mountAllUI(container) {
     </div>
 
     <!-- 画面2: 待機部屋画面 -->
-    <div id="screen-waiting" class="gravity-screen-overlay hidden" style="padding-top: ${topInset + 12}px;">
+    <div id="screen-waiting" class="gravity-screen-overlay hidden">
       <div class="gravity-card">
         <div id="waiting-room-tag" style="font-size: 13px; color: #38bdf8; font-weight: 700;">ROOM #-----</div>
         <div style="font-size: 22px; font-weight: 900; margin: 4px 0;">マッチング待機中</div>
@@ -265,6 +330,9 @@ export function mountAllUI(container) {
       </div>
     </div>
   `;
+
+  // マウント後にユーザーネームを同期
+  syncGravityUserName();
 }
 
 /**
@@ -304,3 +372,19 @@ export const UIController = {
     if (hudSound) hudSound.style.display = displayVal;
   }
 };
+
+/**
+ * 初期化実行ルーチン（自動フック）
+ */
+export function initDOMEnhancements() {
+  injectStyles();
+  patchExistingLobbyLabels();
+  syncGravityUserName();
+}
+
+// スクリプト読み込み時に安全に自動実行
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initDOMEnhancements);
+} else {
+  initDOMEnhancements();
+}
