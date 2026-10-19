@@ -5,10 +5,13 @@
  * 必要なスタイル（CSS）をheadタグ内に動的注入する
  */
 export function injectStyles() {
-  if (document.getElementById('gravity-bridge-styles')) return;
+  let style = document.getElementById('gravity-bridge-styles');
+  if (!style) {
+    style = document.createElement('style');
+    style.id = 'gravity-bridge-styles';
+    document.head.appendChild(style);
+  }
 
-  const style = document.createElement('style');
-  style.id = 'gravity-bridge-styles';
   style.textContent = `
     * {
       -webkit-touch-callout: none;
@@ -35,7 +38,7 @@ export function injectStyles() {
       touch-action: none;
     }
 
-    /* ロビー画面 ＆ 待機画面：GRAVITY上部バー（戻る・拡大・閉じる）との被りを完全排除 */
+    /* ロビー画面 ＆ 待機画面：ポップで爽やかな青空・マリンフロストデザイン */
     .gravity-screen-overlay,
     #test-lobby-overlay {
       position: absolute;
@@ -44,11 +47,12 @@ export function injectStyles() {
       display: flex;
       flex-direction: column;
       align-items: center;
-      background: radial-gradient(circle at top, #1e293b 0%, #090d16 100%);
+      /* ゲーム本編の青空・海と一体感のあるリッチなマリンブルーグラデーション */
+      background: radial-gradient(circle at 50% 10%, rgba(14, 165, 233, 0.95) 0%, rgba(15, 23, 42, 0.97) 100%) !important;
       color: #ffffff;
-      padding: 16px 20px;
-      /* GRAVITYアプリ上部UI領域を確実に避ける安全余白 */
-      padding-top: max(84px, env(safe-area-inset-top, 24px)) !important;
+      padding: 16px 22px;
+      /* GRAVITYアプリ上部UIバー（ノッチ・戻る・拡大・共有）との被りを完全に根絶する安全余白 */
+      padding-top: max(112px, env(safe-area-inset-top, 44px) + 64px) !important;
       overflow-y: auto;
       -webkit-overflow-scrolling: touch;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -63,79 +67,75 @@ export function injectStyles() {
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 12px;
+      gap: 14px;
     }
+
+    /* ★ メインボタン「1人で遊ぶ」：自キャラカラーの鮮やかなポップブルー＆ゴールドシャドウ */
+    .btn-solo-hero {
+      width: 100%;
+      padding: 18px 24px;
+      background: linear-gradient(135deg, #38bdf8 0%, #0284c7 100%) !important;
+      color: #ffffff !important;
+      font-size: 19px !important;
+      font-weight: 900 !important;
+      letter-spacing: 0.04em;
+      border: 2px solid rgba(255, 255, 255, 0.5) !important;
+      border-radius: 18px !important;
+      cursor: pointer;
+      box-shadow: 0 8px 22px rgba(2, 132, 199, 0.45), 0 2px 4px rgba(0, 0, 0, 0.2) !important;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: transform 0.1s ease, box-shadow 0.15s ease;
+    }
+    .btn-solo-hero:active {
+      transform: scale(0.96) !important;
+      box-shadow: 0 4px 12px rgba(2, 132, 199, 0.35) !important;
+    }
+
+    /* サブボタン：爽やかなエメラルドミント（公開ルーム作成） */
     .gravity-btn-green,
     .btn-green {
       width: 100%;
       padding: 15px 20px;
-      background-color: #5bb35d;
-      color: #ffffff;
-      font-size: 16px;
-      font-weight: 800;
-      border: none;
-      border-radius: 12px;
+      background: linear-gradient(135deg, #10b981 0%, #059669 100%) !important;
+      color: #ffffff !important;
+      font-size: 15px !important;
+      font-weight: 800 !important;
+      border: 1px solid rgba(255, 255, 255, 0.3) !important;
+      border-radius: 14px !important;
       cursor: pointer;
-      box-shadow: 0 4px 14px rgba(91, 179, 93, 0.35);
-      transition: transform 0.1s ease, background-color 0.15s ease;
+      box-shadow: 0 5px 16px rgba(16, 185, 129, 0.35) !important;
+      transition: transform 0.1s ease;
     }
     .gravity-btn-green:active,
     .btn-green:active {
       transform: scale(0.97);
-      background-color: #4da34f;
     }
-    .gravity-btn-gray,
-    .btn-gray {
+
+    /* サブボタン：落ち着いたティールグリーン（プライベート作成） */
+    .btn-private {
+      background: linear-gradient(135deg, #0d9488 0%, #0f766e 100%) !important;
+      box-shadow: 0 5px 16px rgba(13, 148, 136, 0.35) !important;
+    }
+
+    /* 公開ルーム一覧カード：透明感のあるすっきりしたホワイトフロスト調 */
+    .room-list-box {
       width: 100%;
-      padding: 15px 20px;
-      background-color: #64748b;
-      color: #ffffff;
-      font-size: 15px;
-      font-weight: 800;
-      border: none;
-      border-radius: 12px;
-      cursor: pointer;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-      transition: transform 0.1s ease, background-color 0.15s ease;
+      background: rgba(255, 255, 255, 0.08) !important;
+      border: 1px solid rgba(255, 255, 255, 0.18) !important;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border-radius: 16px !important;
+      padding: 18px 16px;
+      margin-top: 6px;
     }
-    .gravity-btn-gray:active,
-    .btn-gray:active {
-      transform: scale(0.97);
-      background-color: #475569;
-    }
-    .gravity-btn-blue {
-      width: 100%;
-      padding: 15px 20px;
-      background-color: #0284c7;
-      color: #ffffff;
-      font-size: 16px;
-      font-weight: 800;
-      border: none;
-      border-radius: 12px;
-      cursor: pointer;
-      box-shadow: 0 4px 14px rgba(2, 132, 199, 0.35);
-      transition: transform 0.1s ease, background-color 0.15s ease;
-    }
-    .gravity-btn-blue:active {
-      transform: scale(0.97);
-      background-color: #0369a1;
-    }
-    .gravity-btn-disabled {
-      width: 100%;
-      padding: 15px 20px;
-      background-color: #334155;
-      color: #64748b;
-      font-size: 15px;
-      font-weight: 800;
-      border: none;
-      border-radius: 12px;
-      cursor: not-allowed;
-      box-shadow: none;
-    }
+
     .gravity-room-item {
       width: 100%;
-      background: rgba(30, 41, 59, 0.7);
-      border: 1px solid rgba(255, 255, 255, 0.1);
+      background: rgba(255, 255, 255, 0.12);
+      border: 1px solid rgba(255, 255, 255, 0.2);
       border-radius: 12px;
       padding: 12px 16px;
       display: flex;
@@ -144,8 +144,8 @@ export function injectStyles() {
       margin-bottom: 8px;
     }
     .gravity-member-slot {
-      background: rgba(30, 41, 59, 0.6);
-      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.2);
       border-radius: 12px;
       padding: 10px 14px;
       display: flex;
@@ -164,11 +164,10 @@ export function injectStyles() {
       font-weight: 900;
       color: #fff;
     }
-    .slot-blue { background-color: #0066ff; }
+    .slot-blue { background-color: #0284c7; }
     .slot-red { background-color: #ef4444; }
     .slot-yellow { background-color: #f59e0b; }
   `;
-  document.head.appendChild(style);
 }
 
 /**
@@ -177,7 +176,7 @@ export function injectStyles() {
 export function getTopInset() {
   const isGravity = typeof window !== 'undefined' && !!window.AgentSDK;
   if (!isGravity) return 24;
-  return window.innerHeight >= 812 ? 98 : 84;
+  return window.innerHeight >= 812 ? 112 : 96;
 }
 
 /**
@@ -201,35 +200,78 @@ export async function syncGravityUserName() {
   // 1. 動的テンプレート内の要素を更新
   const dynamicGreeting = document.getElementById('lobby-user-greeting');
   if (dynamicGreeting) {
-    dynamicGreeting.textContent = `ようこそ ${displayName} さん`;
+    dynamicGreeting.innerHTML = `ようこそ <span style="color: #fde047; font-weight: 800;">${displayName}</span> さん`;
   }
 
   // 2. gravity_loader.html にすでにある既存ロビー要素も更新
   const staticGreeting = document.querySelector('#test-lobby-overlay .lobby-card > div:nth-child(2)');
   if (staticGreeting) {
-    staticGreeting.textContent = `ようこそ ${displayName} さん`;
+    staticGreeting.innerHTML = `ようこそ <span style="color: #fde047; font-weight: 800;">${displayName}</span> さん`;
   }
 }
 
 /**
- * 既存の静的要素（gravity_loader.html）が存在する場合のテキスト・レイアウト自動補正
+ * 既存の静的要素（gravity_loader.html）が存在する場合のテキスト・レイアウト・順序自動補正
  */
 export function patchExistingLobbyLabels() {
-  // タイトル：「マルチプレイロビー」➔「階段を架けろ！」
-  const titleEl = document.querySelector('#test-lobby-overlay .lobby-card > div:nth-child(1)');
+  const overlay = document.getElementById('test-lobby-overlay');
+  if (!overlay) return;
+
+  const card = overlay.querySelector('.lobby-card');
+  if (!card) return;
+
+  // タイトル：「階段を架けろ！」（ポップな立体スタイル）
+  const titleEl = card.querySelector('div:nth-child(1)');
   if (titleEl) {
     titleEl.textContent = '階段を架けろ！';
-    titleEl.style.fontSize = '26px';
+    titleEl.style.fontSize = '30px';
     titleEl.style.fontWeight = '900';
-    titleEl.style.letterSpacing = '0.04em';
+    titleEl.style.letterSpacing = '0.05em';
+    titleEl.style.color = '#ffffff';
+    titleEl.style.textShadow = '0 3px 12px rgba(2, 132, 199, 0.8), 0 2px 4px rgba(0, 0, 0, 0.4)';
+    titleEl.style.margin = '4px 0 2px 0';
   }
 
-  // ボタン：「ソロモードで開始 (フォールバック)」➔「1人で遊ぶ」
+  // 挨拶テキストのスタイリング
+  const greetingEl = card.querySelector('div:nth-child(2)');
+  if (greetingEl) {
+    greetingEl.style.color = '#bae6fd';
+    greetingEl.style.fontSize = '14px';
+    greetingEl.style.marginBottom = '6px';
+  }
+
+  // ボタンの順序入れ替え：【1人で遊ぶ】を一番上に配置！
   const soloBtn = document.getElementById('btn-start-solo');
+  const createPublicBtn = card.querySelector('button:nth-of-type(1)');
+  const createPrivateBtn = card.querySelector('button:nth-of-type(2)');
+
   if (soloBtn) {
-    soloBtn.textContent = '1人で遊ぶ';
-    soloBtn.style.fontSize = '16px';
-    soloBtn.style.fontWeight = '800';
+    soloBtn.textContent = '▶ 1人で遊ぶ';
+    soloBtn.className = 'btn-solo-hero';
+  }
+
+  if (createPublicBtn && createPublicBtn !== soloBtn) {
+    createPublicBtn.className = 'gravity-btn-green';
+  }
+  if (createPrivateBtn && createPrivateBtn !== soloBtn) {
+    createPrivateBtn.className = 'gravity-btn-green btn-private';
+  }
+
+  // DOMツリー上で soloBtn を挨拶文（2番目の要素）の直後へ移動
+  if (soloBtn && greetingEl && soloBtn.previousElementSibling !== greetingEl) {
+    greetingEl.after(soloBtn);
+  }
+
+  // 公開ルーム一覧の外観調整
+  const roomSection = card.querySelector('div:last-child');
+  if (roomSection) {
+    roomSection.classList.add('room-list-box');
+    const header = roomSection.querySelector('div:first-child');
+    if (header) {
+      header.style.color = '#e0f2fe';
+      header.style.fontSize = '16px';
+      header.style.fontWeight = '800';
+    }
   }
 }
 
@@ -293,22 +335,24 @@ export function mountAllUI(container) {
     <div id="screen-lobby" class="gravity-screen-overlay">
       <div class="gravity-card">
         <!-- ★ タイトル：「階段を架けろ！」 -->
-        <div style="font-size: 26px; font-weight: 900; letter-spacing: 0.05em; margin: 4px 0;">階段を架けろ！</div>
-        <div id="lobby-user-greeting" style="font-size: 14px; color: #94a3b8; margin-bottom: 8px;">ようこそ プレイヤー さん</div>
-        <div style="width: 100%; height: 1px; background: rgba(255,255,255,0.12); margin-bottom: 8px;"></div>
+        <div style="font-size: 30px; font-weight: 900; letter-spacing: 0.05em; margin: 4px 0 2px 0; color: #ffffff; text-shadow: 0 3px 12px rgba(2, 132, 199, 0.8), 0 2px 4px rgba(0, 0, 0, 0.4);">階段を架けろ！</div>
+        <div id="lobby-user-greeting" style="font-size: 14px; color: #bae6fd; margin-bottom: 6px;">ようこそ プレイヤー さん</div>
+
+        <!-- ★ メインボタン：「1人で遊ぶ」を最優先で一番上に配置！ -->
+        <button id="btn-start-solo" type="button" class="btn-solo-hero">▶ 1人で遊ぶ</button>
+
+        <div style="width: 100%; height: 1px; background: rgba(255,255,255,0.2); margin: 4px 0;"></div>
 
         <button id="btn-create-public" type="button" class="gravity-btn-green">公開ルームを作成</button>
-        <button id="btn-create-private" type="button" class="gravity-btn-green" style="background-color: #4da34f;">プライベートルームを作成</button>
-        <!-- ★ ボタン：「1人で遊ぶ」 -->
-        <button id="btn-start-solo" type="button" class="gravity-btn-gray">1人で遊ぶ</button>
+        <button id="btn-create-private" type="button" class="gravity-btn-green btn-private">プライベートルームを作成</button>
 
-        <div style="width: 100%; margin-top: 16px; display: flex; flex-direction: column;">
-          <div style="font-size: 18px; font-weight: 800; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
+        <div class="room-list-box" style="width: 100%; margin-top: 8px;">
+          <div style="font-size: 16px; font-weight: 800; color: #e0f2fe; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
             <span>公開ルーム一覧</span>
-            <button id="btn-refresh-rooms" type="button" style="background: none; border: 1px solid rgba(255,255,255,0.2); border-radius: 8px; color: #94a3b8; font-size: 12px; padding: 4px 10px; cursor: pointer;">更新</button>
+            <button id="btn-refresh-rooms" type="button" style="background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.3); border-radius: 8px; color: #ffffff; font-size: 12px; font-weight: 700; padding: 4px 10px; cursor: pointer;">更新</button>
           </div>
           <div id="room-list-container" style="width: 100%;">
-            <div style="font-size: 14px; color: #94a3b8; padding: 24px 0; text-align: center;">公開ルームはありません</div>
+            <div style="font-size: 14px; color: #bae6fd; padding: 20px 0; text-align: center;">公開ルームはありません</div>
           </div>
         </div>
       </div>
@@ -317,16 +361,16 @@ export function mountAllUI(container) {
     <!-- 画面2: 待機部屋画面 -->
     <div id="screen-waiting" class="gravity-screen-overlay hidden">
       <div class="gravity-card">
-        <div id="waiting-room-tag" style="font-size: 13px; color: #38bdf8; font-weight: 700;">ROOM #-----</div>
-        <div style="font-size: 22px; font-weight: 900; margin: 4px 0;">マッチング待機中</div>
-        <div style="width: 100%; height: 1px; background: rgba(255,255,255,0.12); margin-bottom: 8px;"></div>
+        <div id="waiting-room-tag" style="font-size: 13px; color: #38bdf8; font-weight: 800; background: rgba(56, 189, 248, 0.15); padding: 4px 12px; border-radius: 20px; border: 1px solid rgba(56, 189, 248, 0.4);">ROOM #-----</div>
+        <div style="font-size: 24px; font-weight: 900; margin: 4px 0; color: #ffffff; text-shadow: 0 2px 8px rgba(0,0,0,0.5);">マッチング待機中</div>
+        <div style="width: 100%; height: 1px; background: rgba(255,255,255,0.2); margin-bottom: 8px;"></div>
 
         <div id="waiting-members-list" style="width: 100%; display: flex; flex-direction: column; gap: 10px; margin: 16px 0;">
           <!-- 動的スロット要素 -->
         </div>
 
-        <button id="btn-host-start" type="button" class="gravity-btn-blue">ゲーム開始</button>
-        <button id="btn-leave-room" type="button" class="gravity-btn-gray" style="margin-top: 8px;">ロビーへ戻る</button>
+        <button id="btn-host-start" type="button" class="btn-solo-hero" style="font-size: 18px !important;">ゲーム開始</button>
+        <button id="btn-leave-room" type="button" class="gravity-btn-gray" style="margin-top: 8px; background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25); color: #ffffff; padding: 14px; border-radius: 14px; font-weight: 800;">ロビーへ戻る</button>
       </div>
     </div>
   `;
