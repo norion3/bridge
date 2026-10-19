@@ -1,9 +1,43 @@
 // network.js: AgentSDKラッパー ＆ シームレス途中参加（ドロップイン）型マルチプレイ管理モジュール
-// GRAVITY音声ルーム連携最適化：待機室なし即出走 ＆ ゲスト入室時にAIを安全消去してスタート地点配置
+// GRAVITY音声ルーム連携最適化：待機室なし即出走 ＆ ゲスト入室時にAIを完全停止してスタート地点直立配置
 
-import { UIController } from './dom.js';
 import { characters, createNameplateMesh, updatePlayerName } from './character.js';
 import { STAGES } from './world.js';
+
+/**
+ * 画面切り替えの例外安全ヘルパー（ロビー幕を確実に消し去る）
+ */
+function safeShowGameScreen() {
+  try {
+    if (typeof window !== 'undefined' && window.UIController && typeof window.UIController.showGame === 'function') {
+      window.UIController.showGame();
+    }
+  } catch (e) {
+    console.warn('[network.js] UIController.showGame deferred:', e);
+  }
+
+  // DOMを直接取得して確実に非表示化（二重保証）
+  const staticLobby = document.getElementById('test-lobby-overlay');
+  if (staticLobby) staticLobby.style.setProperty('display', 'none', 'important');
+
+  const dynamicLobby = document.getElementById('screen-lobby');
+  if (dynamicLobby) dynamicLobby.classList.add('hidden');
+
+  const waitingScreen = document.getElementById('screen-waiting');
+  if (waitingScreen) waitingScreen.classList.add('hidden');
+
+  // スタートモーダル（TAP TO START）を自動スキップ
+  const startModal = document.getElementById('modal-start');
+  if (startModal) {
+    startModal.style.setProperty('display', 'none', 'important');
+    startModal.classList.add('hidden');
+  }
+
+  const startBtn = document.getElementById('btn-start');
+  if (startBtn) {
+    startBtn.click();
+  }
+}
 
 export const NetworkManager = {
   isSDKAvailable: typeof window !== 'undefined' && !!window.AgentSDK,
@@ -119,17 +153,11 @@ export const NetworkManager = {
     this.isMultiplayerActive = true;
 
     // ロビー画面を閉じて即座にゲーム画面を表示
-    UIController.showGame();
+    safeShowGameScreen();
 
     // 自キャラの名前を即時反映
     if (window.GRAVITY_USER_NAME) {
       updatePlayerName(window.GRAVITY_USER_NAME);
-    }
-
-    // スタートモーダルが存在する場合は自動タップして出走
-    const startBtn = document.getElementById('btn-start');
-    if (startBtn) {
-      startBtn.click();
     }
 
     return this.currentRoomId;
@@ -160,17 +188,11 @@ export const NetworkManager = {
     this.mySlot = 1; // ゲスト1は赤スロット
     this.isMultiplayerActive = true;
 
-    // ロビーを閉じて即座に出走
-    UIController.showGame();
+    // ★ 端末Bのロビー画面を確実に消去してゲーム本編を表示
+    safeShowGameScreen();
 
-    // ゲスト自身の自キャラを赤スロットとしてスタートラインに整列
+    // ゲスト自身のキャラクターをスタート地点に整列
     this._setupGuestLocalCharacter();
-
-    // スタートモーダルを自動スキップして即走れる状態にする
-    const startBtn = document.getElementById('btn-start');
-    if (startBtn) {
-      startBtn.click();
-    }
 
     return true;
   },
@@ -202,28 +224,34 @@ export const NetworkManager = {
   },
 
   /**
-   * 指定スロットの自律AIを停止・消去し、入室したゲストをスタート地点（Stage 0）に配置
+   * 指定スロットの自律AIを停止・沈黙させ、入室したゲストをスタート地点（Stage 0）に直立静止配置
    */
   _replaceAIWithGuest(slotIndex, guestName) {
     const targetChar = characters[slotIndex];
     if (!targetChar) return;
 
-    // 1. AIの自律走行ルーチンを完全停止
+    // 1. ★ AIの思考・自律走行ルーチンを完全沈黙
     targetChar.isAI = false;
-    targetChar.aiState = 'HUMAN_CONTROLLED';
+    targetChar.isRemote = true; // リモートプレイヤーフラグ
+    targetChar.aiState = 'IDLE_WAIT_INPUT';
+    targetChar.aiDirX = 0;
+    targetChar.aiDirZ = 0;
+    targetChar.searchCooldown = 999999; // AIのターゲットブロック索敵を完全停止
+    targetChar.targetBlock = null;
     targetChar.name = guestName;
 
-    // 2. 所持ブロックと階段スタックをリセット
+    // 2. 所持ブロックと背中スタックをリセット
     targetChar.stackCount = 0;
     if (targetChar.meshObj && targetChar.meshObj.stackPool) {
       targetChar.meshObj.stackPool.forEach(b => { b.visible = false; });
     }
 
-    // 3. スタート地点（Stage 0）へ配置
+    // 3. スタート地点（Stage 0）へ直立整列配置
     if (STAGES && STAGES[0]) {
       const offsetX = (slotIndex === 1) ? -4.0 : 4.0;
       targetChar.pos.set(offsetX, STAGES[0].y, STAGES[0].z + 4);
       targetChar.meshObj.root.position.copy(targetChar.pos);
+      targetChar.meshObj.root.rotation.set(0, Math.PI, 0); // 南（階段手前）向きに直立
       targetChar.currentStage = 0;
     }
 
@@ -243,11 +271,11 @@ export const NetworkManager = {
    * ゲスト端末側：自分が操作するキャラクターをスタート地点に整列
    */
   _setupGuestLocalCharacter() {
-    // ゲスト端末では赤（スロット1）を自キャラとしてスタート地点に配置
     const myChar = characters[this.mySlot] || characters[0];
     if (myChar && STAGES && STAGES[0]) {
       myChar.pos.set(-4.0, STAGES[0].y, STAGES[0].z + 4);
       myChar.meshObj.root.position.copy(myChar.pos);
+      myChar.meshObj.root.rotation.set(0, Math.PI, 0);
       myChar.currentStage = 0;
       myChar.stackCount = 0;
 
@@ -273,9 +301,12 @@ export const NetworkManager = {
     const idx = this.roomMembers.findIndex(m => String(m.user_id) === String(userId));
     if (idx !== -1) {
       this.roomMembers.splice(idx, 1);
-      // 退出した枠をAIに戻す処理（安全維持）
+      // 退出した枠をAIに戻す処理
       if (idx === 1 && characters[1]) {
         characters[1].isAI = true;
+        characters[1].isRemote = false;
+        characters[1].aiState = 'COLLECT';
+        characters[1].searchCooldown = 0;
         characters[1].name = 'CPU 1';
       }
     }
@@ -310,7 +341,9 @@ export const NetworkManager = {
     this.isHost = false;
     this.isMultiplayerActive = false;
     this.mySlot = 0;
-    UIController.showLobby();
+    if (typeof window !== 'undefined' && window.UIController && typeof window.UIController.showLobby === 'function') {
+      window.UIController.showLobby();
+    }
   }
 };
 
