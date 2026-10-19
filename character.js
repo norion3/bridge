@@ -1,4 +1,5 @@
 // 3Dキャラクター外観構築・手足メッシュ・スタックプール・トロリー・ホバー展望リフト・スカイダイブ＆トラップドア姿勢管理・足元手前側（カメラ方向）フロスト投影ネームバッジ
+// ★ 即死バグ（elevatorPlatformFloorFloorGeo未定義エラー）を完全解消
 // ★ ステップ1: 背中ブロック色正常化・スロット名前汚染防止・トロリー誤表示根絶・ネームプレート常時復元対応
 import {
   TEAMS,
@@ -266,7 +267,8 @@ export function createZiplineTrolleyMesh() {
 export function createElevatorCageMesh() {
   const lift = new THREE.Group();
 
-  const floorMesh = new THREE.Mesh(elevatorPlatformFloorFloorGeo || elevatorPlatformFloorGeo, sharedMats.elevatorDeckPlate);
+  // ★ タイポによる即死エラーを解消（elevatorPlatformFloorGeoのみに修正）
+  const floorMesh = new THREE.Mesh(elevatorPlatformFloorGeo, sharedMats.elevatorDeckPlate);
   floorMesh.position.y = -0.08;
   floorMesh.castShadow = true;
   floorMesh.receiveShadow = true;
