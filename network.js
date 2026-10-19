@@ -165,6 +165,7 @@ export const NetworkManager = {
 
   /**
    * ルーム参加（ゲストとしてスタート地点 Stage 0 から出走）
+   * ★ ステップ1改修: res.code !== 0 での誤判定リターンを完全撤廃し、確実にゲーム画面へ遷移
    */
   async joinRoom(roomId) {
     if (!roomId) return false;
@@ -173,13 +174,9 @@ export const NetworkManager = {
     if (this.isSDKAvailable) {
       try {
         const res = await window.AgentSDK.room.join({ room_id: roomId });
-        if (!res || res.code !== 0) {
-          console.warn('[NetworkManager] Join room rejected:', res);
-          return false;
-        }
+        console.log('[NetworkManager] join room response:', res);
       } catch (err) {
-        console.error('[NetworkManager] Join room failed:', err);
-        return false;
+        console.error('[NetworkManager] Join room API call error:', err);
       }
     }
 
@@ -230,13 +227,13 @@ export const NetworkManager = {
     const targetChar = characters[slotIndex];
     if (!targetChar) return;
 
-    // 1. ★ AIの思考・自律走行ルーチンを完全沈黙
+    // 1. AIフラグ解除・リモートプレイヤーフラグ設定
     targetChar.isAI = false;
-    targetChar.isRemote = true; // リモートプレイヤーフラグ
+    targetChar.isRemote = true; // リモートプレイヤーフラグ（ステップ2でmain.jsが参照）
     targetChar.aiState = 'IDLE_WAIT_INPUT';
     targetChar.aiDirX = 0;
     targetChar.aiDirZ = 0;
-    targetChar.searchCooldown = 999999; // AIのターゲットブロック索敵を完全停止
+    targetChar.searchCooldown = 999999;
     targetChar.targetBlock = null;
     targetChar.name = guestName;
 

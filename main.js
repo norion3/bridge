@@ -1,5 +1,6 @@
 // メインエントリポイント：Three.js初期化・ダイナミックロックオン並走カメラ（完全連続滑らかLERP追従・カクつきゼロ）・メインループ・ネームプレート連動・スコアMicro-Pop＆30秒タイマー色変化・左下リスタート＆GRAVITY動的余白骨組み対応
 // ★ UI・ロビー・GRAVITYレイアウト自動補正モジュール連携
+// ★ Phase 4 ステップ2: リモートプレイヤー（c.isRemote）のAI自律思考完全停止バイパス
 import './dom.js';
 
 import { SoundEngine } from './audio.js';
@@ -459,7 +460,8 @@ export function animate(currentTime) {
     }
     for (let cIdx = 0; cIdx < characters.length; cIdx++) {
       const c = characters[cIdx];
-      if (!c.isPlayer) {
+      // ★ Phase 4 ステップ2: 入室したリモートプレイヤー（c.isRemote）は自律AIルーチンをバイパスして完全静止
+      if (!c.isPlayer && !c.isRemote) {
         updateAICharacter(scene, c, dt, spawnPuffCloud, spawnSpeedStepRing);
       }
       if (c.dockBounceTimer > 0) {
