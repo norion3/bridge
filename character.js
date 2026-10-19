@@ -90,8 +90,24 @@ export function createNameplateMesh(nameText, isLocalPlayer = false) {
 
 export const createNameplateSprite = createNameplateMesh;
 
+// ★【Phase 3.5 新設】GRAVITYで非同期取得された名前を後から自キャラ足元に即時反映する関数
+export function updatePlayerName(newName) {
+  if (!newName) return;
+  if (player) {
+    player.name = newName;
+    if (player.nameplateSprite) {
+      // 既存メッシュのマテリアル・テクスチャを解放して再生成
+      if (player.nameplateSprite.material && player.nameplateSprite.material.map) {
+        player.nameplateSprite.material.map.dispose();
+      }
+      const newMesh = createNameplateMesh(newName, true);
+      player.nameplateSprite.material = newMesh.material;
+      player.nameplateSprite.visible = true;
+    }
+  }
+}
+
 // 足元追従：見下ろしカメラから見て開けている画面手前側（カメラ方向: +Z 1.15m）へオフセット配置
-// ★ 案A適用：スライダー（直線・S字）・高速アクション搭乗中はスマートに非表示化！
 export function updateNameplatePosition(char) {
   if (!char || !char.nameplateSprite) return;
 
@@ -113,13 +129,10 @@ export function updateNameplatePosition(char) {
 
   const isShrunk = (char.shrinkTimer > 0);
 
-  // ★ ユーザー様ご提案：ちびキャラ時もスケールは普通サイズ（等倍）を維持！
   char.nameplateSprite.scale.set(1.0, 1.0, 1.0);
 
-  // 見下ろしカメラがある手前側（+Z方向）の開けた床面へ配置！タワーや身体で遮られない
   const targetX = char.pos.x;
   const targetY = char.pos.y + 0.05; // 床面スレスレ
-  // ちびキャラ時は歩幅に合わせて手前オフセットを少し寄せる (+0.82m)
   const targetZ = char.pos.z + (isShrunk ? 0.82 : 1.15);
 
   char.nameplateSprite.position.set(targetX, targetY, targetZ);
@@ -769,10 +782,14 @@ export function resetCharacters(STAGES) {
     resetCharacterPose(c);
   });
 
+  const pName = (typeof window !== 'undefined' && window.GRAVITY_USER_NAME) ? String(window.GRAVITY_USER_NAME) : 'YOU';
   if (player && STAGES[0]) {
     player.pos.set(0, STAGES[0].y, STAGES[0].z + 4);
     player.meshObj.root.position.copy(player.pos);
     updateNameplatePosition(player);
+    if (player.name !== pName) {
+      updatePlayerName(pName);
+    }
   }
   if (characters[1] && STAGES[0]) {
     characters[1].pos.set(-4.0, STAGES[0].y, STAGES[0].z + 4);
