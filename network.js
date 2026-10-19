@@ -1,9 +1,10 @@
 // network.js: AgentSDKラッパー ＆ 動的スロット・相互可視化・10Hz位置同期エンジン
-// ★ マスターコード完全準拠版：幽霊部屋除外フィルタ・安全退出・階段架け(BUILD_PLANK)＆床ブロック取得(PICK_BLOCK)受信フック完全接続版
+// ★ マスターコード完全準拠版：幽霊部屋除外フィルタ・安全退出・階段架け(BUILD_PLANK)＆床ブロック取得(PICK_BLOCK)＆新ブロック補充(SPAWN_BLOCK)受信フック完全接続版
+// ★ ステップ2：ゲスト入室時のワールドスナップショット（床ブロック・設置階段）一括同期組み込み版
 
 import { characters, createNameplateMesh, updatePlayerName, bindLocalPlayerSlot, refreshCharacterStackVisuals } from './character.js';
-import { STAGES, buildWorld, manageBlockSpawns } from './world.js';
-import { resetParticlePools } from './particles.js';
+import { STAGES, buildWorld, manageBlockSpawns, bridges } from './world.js';
+import { resetParticlePools, floorBlockPool } from './particles.js';
 
 /**
  * 画面切り替えの例外安全ヘルパー（ロビー幕を確実に消し去る）
@@ -36,6 +37,47 @@ function safeShowGameScreen() {
   if (startBtn) {
     startBtn.click();
   }
+}
+
+/**
+ * ★【ステップ2 新設】ホスト端末の世界状態（現在の床ブロック・設置済み階段段板）を収集
+ */
+function captureWorldSnapshot() {
+  const blocks = [];
+  if (Array.isArray(floorBlockPool)) {
+    floorBlockPool.forEach((b, idx) => {
+      if (b && b.active && !b.attracting && b.pos) {
+        blocks.push({
+          poolIdx: idx,
+          stageIdx: b.stageIdx || 0,
+          x: Number(b.pos.x.toFixed(2)),
+          y: Number(b.pos.y.toFixed(2)),
+          z: Number(b.pos.z.toFixed(2)),
+          teamId: (b.team && b.team.id) ? b.team.id : 'neutral'
+        });
+      }
+    });
+  }
+
+  const planks = [];
+  if (Array.isArray(bridges)) {
+    bridges.forEach(b => {
+      if (b && Array.isArray(b.planks) && !b.isSlide && !b.isJump) {
+        b.planks.forEach((p, pIdx) => {
+          if (p && p.teamId) {
+            planks.push({
+              stageIdx: b.stageIdx,
+              laneIdx: b.laneIdx,
+              plankIdx: pIdx,
+              teamId: p.teamId
+            });
+          }
+        });
+      }
+    });
+  }
+
+  return { blocks, planks };
 }
 
 export const NetworkManager = {
@@ -172,7 +214,7 @@ export const NetworkManager = {
       ? Math.abs(createdRoomId.split('').reduce((acc, char) => (acc << 5) - acc + char.charCodeAt(0), 0))
       : Math.floor(Math.random() * 90000000) + 10000000;
 
-    // ★【ステップ1 改善】ホスト自身も決定したシードで床ブロックプールを全リセットし、同一シードで再整列！
+    // ★ ホスト自身も決定したシードで床ブロックプールを全リセットし、同一シードで再整列！
     if (typeof window !== 'undefined' && window.currentSceneRef) {
       resetParticlePools();
       buildWorld(window.currentSceneRef, this.currentSeed);
@@ -243,7 +285,7 @@ export const NetworkManager = {
   },
 
   /**
-   * ゲストが入室した時の処理（ホスト側: スロット1「赤」へ確実に割り当て）
+   * ゲストが入室した時の処理（ホスト側: スロット1「赤」へ確実に割り当て ＆ 現在の世界状態スナップショット配信）
    */
   _handleUserJoined(data) {
     if (!data) return;
@@ -273,11 +315,12 @@ export const NetworkManager = {
 
       this._bindRemoteSlot(targetSlot, guestName);
 
-      // Welcomeハンドシェイク：ホストのワールド乱数シードとスロット構成を配信！
+      // ★ Welcomeハンドシェイク：ホストのワールド乱数シード、スロット構成、現在の世界状態スナップショットを配信！
       this._sendCustomMessage({
         event: 'ROOM_MEMBERS_SYNC',
         slots: this.slots,
-        seed: this.currentSeed
+        seed: this.currentSeed,
+        snapshot: captureWorldSnapshot()
       });
     }
   },
@@ -297,12 +340,12 @@ export const NetworkManager = {
       if (!packet || !packet.event) return;
 
       switch (packet.event) {
-        // ① ホストから届いたスロット構成＆マップシードの完全同期
+        // ① ホストから届いたスロット構成＆マップシード＆世界状態スナップショットの完全同期
         case 'ROOM_MEMBERS_SYNC':
-          this._applyRoomMembersSync(packet.slots, packet.seed);
+          this._applyRoomMembersSync(packet.slots, packet.seed, packet.snapshot);
           break;
 
-        // ② 新入室者からの同期リクエスト（ホストが最新状態とシードを即時返信）
+        // ② 新入室者からの同期リクエスト（ホストが最新状態とシードとスナップショットを即時返信）
         case 'REQUEST_ROOM_SYNC':
           if (this.isHost) {
             const reqUserId = String(packet.userId || '');
@@ -329,7 +372,8 @@ export const NetworkManager = {
             this._sendCustomMessage({
               event: 'ROOM_MEMBERS_SYNC',
               slots: this.slots,
-              seed: this.currentSeed
+              seed: this.currentSeed,
+              snapshot: captureWorldSnapshot()
             });
           }
           break;
@@ -346,14 +390,21 @@ export const NetworkManager = {
           }
           break;
 
-        // ⑤ ★【ステップ1 新設】相手が床ブロックを拾った際のリアルタイム受信（床ブロック即時消去）
+        // ⑤ ★ 相手が床ブロックを拾った際のリアルタイム受信（床ブロック即時消去）
         case 'PICK_BLOCK':
           if (typeof window.applyRemoteBlockPicked === 'function') {
             window.applyRemoteBlockPicked(packet.stageIdx, packet.poolIdx, packet.x, packet.z);
           }
           break;
 
-        // ⑥ 全員同時リスタート
+        // ⑥ ★ ホストが新ブロックを補充した際のリアルタイム受信（ゲスト側へ即時出現反映）
+        case 'SPAWN_BLOCK':
+          if (typeof window.applyRemoteBlockSpawned === 'function') {
+            window.applyRemoteBlockSpawned(packet.stageIdx, packet.poolIdx, packet.x, packet.y, packet.z, packet.teamId);
+          }
+          break;
+
+        // ⑦ 全員同時リスタート
         case 'RESTART_GAME':
           if (typeof window.onRemoteRestartReceived === 'function') {
             window.onRemoteRestartReceived(packet);
@@ -366,21 +417,47 @@ export const NetworkManager = {
   },
 
   /**
-   * ホストから受信したスロット構成＆シード値を自画面に反映
+   * ★【ステップ2 改善】ホストから受信したスロット構成、シード値、世界状態スナップショットを自画面に反映
    */
-  _applyRoomMembersSync(syncedSlots, seed) {
+  _applyRoomMembersSync(syncedSlots, seed, snapshot = null) {
     if (!Array.isArray(syncedSlots)) return;
     this.slots = syncedSlots;
 
-    // ★【ステップ1 改善】ホストと同じ乱数シードでブロックプールを全消去リセットし、同一ブロックを同時整列！
+    // 初回シード同期時：ワールド構築 ＆ ホストのスナップショットで現在の床ブロックと階段を一括完全再現！
     if (seed && (!this._seedApplied || this.currentSeed !== seed) && !this.isHost) {
       this.currentSeed = seed;
       this._seedApplied = true;
       if (typeof window !== 'undefined' && window.currentSceneRef) {
         resetParticlePools();
         buildWorld(window.currentSceneRef, seed);
-        for (let i = 0; i < 60; i++) manageBlockSpawns(window.currentSceneRef, false);
+
+        if (snapshot && Array.isArray(snapshot.blocks)) {
+          // ホストの現在のアクティブ床ブロック一覧を正確に再現配置（初期生成乱数に頼らず現物同期）
+          snapshot.blocks.forEach(b => {
+            if (typeof window.applyRemoteBlockSpawned === 'function') {
+              window.applyRemoteBlockSpawned(b.stageIdx, b.poolIdx, b.x, b.y, b.z, b.teamId);
+            }
+          });
+        } else {
+          for (let i = 0; i < 60; i++) manageBlockSpawns(window.currentSceneRef, false);
+        }
+
+        // 入室前にホストや先行走者が架けた階段段板を一括復元
+        if (snapshot && Array.isArray(snapshot.planks)) {
+          snapshot.planks.forEach(p => {
+            if (typeof window.applyRemotePlankBuilt === 'function') {
+              window.applyRemotePlankBuilt(p.stageIdx, p.laneIdx, p.plankIdx, p.teamId);
+            }
+          });
+        }
       }
+    } else if (!this.isHost && snapshot && Array.isArray(snapshot.planks)) {
+      // 既に初期化済みの場合でも階段段板データを安全に上書き反映
+      snapshot.planks.forEach(p => {
+        if (typeof window.applyRemotePlankBuilt === 'function') {
+          window.applyRemotePlankBuilt(p.stageIdx, p.laneIdx, p.plankIdx, p.teamId);
+        }
+      });
     }
 
     syncedSlots.forEach((s) => {
@@ -538,7 +615,8 @@ export const NetworkManager = {
         this._sendCustomMessage({
           event: 'ROOM_MEMBERS_SYNC',
           slots: this.slots,
-          seed: this.currentSeed
+          seed: this.currentSeed,
+          snapshot: captureWorldSnapshot()
         });
       }
     }

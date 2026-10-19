@@ -1,4 +1,5 @@
 // コース伸長・浮島・橋・スライド・ジップライン・エレベーター・スカイダイブ・ドロップタワー施設・二股分岐＆合流・目鼻なし愛嬌お邪魔キャラ（分岐ゲート×2撤廃・DDA連動バランシング版）
+// ★ ステップ1：ホストによる新ブロック補充同期（SPAWN_BLOCK送信＆安全な空きスロット配置ハンドラ）組み込み版
 import {
   BLOCK_TYPES,
   TRAMPOLINE_TIERS,
@@ -145,6 +146,51 @@ export function getFloorBlocksForStage(stageIdx) {
     floorBlocksByStage.set(stageIdx, bucket);
   }
   return bucket;
+}
+
+/**
+ * ★【ステップ1 改善版】ホストから新ブロック補充パケットを受信した際の反映ハンドラ
+ * poolIdx の強制上書きをやめ、空いている安全なスロットを探して配置（既存ブロックのワープ上書き消滅を完全根絶）
+ */
+export function applyRemoteBlockSpawned(stageIdx, poolIdx, x, y, z, teamId) {
+  const stageInfo = STAGES[stageIdx];
+  if (!stageInfo) return;
+
+  // 指定されたスロットが空いていれば優先使用し、使用中なら空いているスロットを安全に探索
+  let poolItem = null;
+  if (poolIdx >= 0 && poolIdx < floorBlockPool.length && !floorBlockPool[poolIdx].active) {
+    poolItem = floorBlockPool[poolIdx];
+  } else {
+    poolItem = floorBlockPool.find(b => !b.active);
+  }
+  if (!poolItem) return;
+
+  const team = BLOCK_TYPES.find(t => t.id === teamId) || BLOCK_TYPES[0];
+  let mat;
+  if (teamId === 'blue') mat = sharedMats.blockBlue;
+  else if (teamId === 'red') mat = sharedMats.blockRed;
+  else if (teamId === 'yellow') mat = sharedMats.blockYellow;
+  else mat = sharedMats.blockNeutral;
+
+  poolItem.mesh.material = mat;
+  poolItem.mesh.position.set(x, y !== undefined ? y : (stageInfo.y + 0.25), z);
+  poolItem.mesh.rotation.set(0, 0, 0);
+  poolItem.mesh.visible = true;
+
+  poolItem.active = true;
+  poolItem.team = team;
+  poolItem.pos = poolItem.mesh.position;
+  poolItem.stageIdx = stageIdx;
+  poolItem.attracting = false;
+
+  const stageBlocks = getFloorBlocksForStage(stageIdx);
+  if (!stageBlocks.includes(poolItem)) {
+    stageBlocks.push(poolItem);
+  }
+}
+
+if (typeof window !== 'undefined') {
+  window.applyRemoteBlockSpawned = applyRemoteBlockSpawned;
 }
 
 export function spawnItem(scene, stageIdx, type = 'speed') {
@@ -1141,7 +1187,7 @@ export function extendCourseForkPatternB(scene) {
 
   const mergeMeshGroup = createIslandMesh(mergeR, mergeY, mergeZ, 0.0);
   scene.add(mergeMeshGroup);
-  stageMeshes.push({ meshGroup: mergeMeshGroup, stageIdx: mergeStageIdx });
+  stageMeshes.push({ meshGroup: mergeStageIdx, stageIdx: mergeStageIdx });
 
   CONNECTIONS.push({ from: leftStageIdx, to: mergeStageIdx, type: leftTheme.exitType, branch: 'left' });
   createBridgeLinks(scene, leftStageIdx, mergeStageIdx, leftMidZ, mergeZ, leftMidR, mergeR, leftMidY, mergeY, leftTheme.exitType, leftMidX, true);
@@ -1711,6 +1757,28 @@ export function spawnSingleBlock(scene, stageIdx, targetTeam = null) {
   poolItem.attracting = false;
 
   stageBlocks.push(poolItem);
+
+  // ★【ステップ1 新設】マルチプレイ時、ホストが補充したブロック情報を他端末へ即時ブロードキャスト！
+  const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
+  const isMulti = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive);
+  if (isMulti && isHost && typeof window !== 'undefined' && window.AgentSDK) {
+    const poolIdx = floorBlockPool.indexOf(poolItem);
+    try {
+      window.AgentSDK.room.sendMessage({
+        message: JSON.stringify({
+          event: 'SPAWN_BLOCK',
+          poolIdx: poolIdx,
+          stageIdx: stageIdx,
+          x: Number(validPos.x.toFixed(2)),
+          y: Number((stageInfo.y + 0.25).toFixed(2)),
+          z: Number(validPos.z.toFixed(2)),
+          teamId: team.id
+        })
+      });
+    } catch (err) {
+      console.warn('[world.js] Failed to broadcast SPAWN_BLOCK:', err);
+    }
+  }
 }
 
 export function manageBlockSpawns(scene, isGameOver = false) {
