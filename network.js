@@ -1,6 +1,6 @@
 // network.js: AgentSDKラッパー ＆ 動的スロット・相互可視化・10Hz位置同期エンジン
-// ★ マスターコード完全準拠版：幽霊部屋除外フィルタ・安全退出・階段架け(BUILD_PLANK)＆床ブロック取得(PICK_BLOCK)＆新ブロック補充(SPAWN_BLOCK)受信フック完全接続版
-// ★ ステップ2：ゲスト入室時のワールドスナップショット（床ブロック・設置階段）一括同期組み込み版
+// ★ Phase 1 実装版：勝手な移動根絶（自律AI乗っ取り遮断）＆ キャラあべこべ根絶（clientId動的任命）＆ 入室不能根絶（事前クリーンアップ）
+// ★ ワールドスナップショット・階段架け(BUILD_PLANK)＆床ブロック取得(PICK_BLOCK)＆新ブロック補充(SPAWN_BLOCK)完全準拠
 
 import { characters, createNameplateMesh, updatePlayerName, bindLocalPlayerSlot, refreshCharacterStackVisuals } from './character.js';
 import { STAGES, buildWorld, manageBlockSpawns, bridges } from './world.js';
@@ -40,7 +40,7 @@ function safeShowGameScreen() {
 }
 
 /**
- * ★【ステップ2 新設】ホスト端末の世界状態（現在の床ブロック・設置済み階段段板）を収集
+ * ホスト端末の世界状態（現在の床ブロック・設置済み階段段板）を収集
  */
 function captureWorldSnapshot() {
   const blocks = [];
@@ -80,17 +80,33 @@ function captureWorldSnapshot() {
   return { blocks, planks };
 }
 
+/**
+ * 端末固有のセッションIDを生成（同一アカウントテストでも互いを100%別人として識別）
+ */
+function generateClientId() {
+  if (typeof window !== 'undefined' && window.sessionStorage) {
+    let saved = window.sessionStorage.getItem('bridge_client_id');
+    if (!saved) {
+      saved = 'client_' + Math.random().toString(36).substring(2, 9) + '_' + Date.now();
+      window.sessionStorage.setItem('bridge_client_id', saved);
+    }
+    return saved;
+  }
+  return 'client_' + Math.random().toString(36).substring(2, 9) + '_' + Date.now();
+}
+
 export const NetworkManager = {
   isSDKAvailable: typeof window !== 'undefined' && !!window.AgentSDK,
   currentRoomId: null,
+  clientId: generateClientId(), // ★ 端末固有セッショントークン
   myUser: { name: 'YOU', user_id: 'local_user', portrait: '' },
   
   // スロット配列（0:青, 1:赤, 2:黄）
-  // 厳格ルール: スロット0=ホスト(青), スロット1=ゲスト1(赤), スロット2=CPU2(黄)またはゲスト2
+  // 厳格ルール: ホストが権威サーバーとして空きスロットへ動的任命
   slots: [
-    { slot: 0, userId: null, name: 'norion', isAI: false },
-    { slot: 1, userId: null, name: 'CPU 1', isAI: true },
-    { slot: 2, userId: null, name: 'CPU 2', isAI: true }
+    { slot: 0, clientId: null, userId: null, name: 'norion', isAI: false },
+    { slot: 1, clientId: null, userId: null, name: 'CPU 1', isAI: true },
+    { slot: 2, clientId: null, userId: null, name: 'CPU 2', isAI: true }
   ],
   
   isHost: false,
@@ -171,7 +187,7 @@ export const NetworkManager = {
     try {
       const res = await window.AgentSDK.room.getPublicRoomList();
       if (res && res.data && Array.isArray(res.data.list)) {
-        // ★【GRAVITY公式回答準拠】gamer_num === 0（誰もいない幽霊部屋）および満員部屋を除外
+        // gamer_num === 0（誰もいない幽霊部屋）および満員部屋を除外
         return res.data.list.filter(r => {
           const count = Number(r.gamer_num) || 0;
           const max = Number(r.max_players) || 3;
@@ -185,10 +201,18 @@ export const NetworkManager = {
   },
 
   /**
-   * 公開ルーム作成（ホスト: スロット0「青」担当 ＆ ワールド乱数シード生成＆ホスト自身も同一シード再生成）
+   * 公開ルーム作成（ホスト: スロット0「青」担当 ＆ 直前exitでゴースト解放）
    */
   async createRoom(isPrivate = false) {
     await this.init();
+
+    // ★【入室不能根絶】直前の残留切断セッションを解放してから新規作成
+    if (this.isSDKAvailable) {
+      try {
+        await window.AgentSDK.room.exit();
+      } catch (e) {}
+    }
+
     let createdRoomId = 'local_room_' + Math.floor(Math.random() * 1000);
 
     if (this.isSDKAvailable) {
@@ -214,16 +238,17 @@ export const NetworkManager = {
       ? Math.abs(createdRoomId.split('').reduce((acc, char) => (acc << 5) - acc + char.charCodeAt(0), 0))
       : Math.floor(Math.random() * 90000000) + 10000000;
 
-    // ★ ホスト自身も決定したシードで床ブロックプールを全リセットし、同一シードで再整列！
+    // ホスト自身も決定したシードで床ブロックプールを全リセットし、同一シードで再整列！
     if (typeof window !== 'undefined' && window.currentSceneRef) {
       resetParticlePools();
       buildWorld(window.currentSceneRef, this.currentSeed);
       for (let i = 0; i < 60; i++) manageBlockSpawns(window.currentSceneRef, false);
     }
 
-    this.slots[0] = { slot: 0, userId: this.myUser.user_id, name: this.myUser.name, isAI: false };
-    this.slots[1] = { slot: 1, userId: null, name: 'CPU 1', isAI: true };
-    this.slots[2] = { slot: 2, userId: null, name: 'CPU 2', isAI: true };
+    // ホストのスロット0を自身の clientId で厳格固定
+    this.slots[0] = { slot: 0, clientId: this.clientId, userId: this.myUser.user_id, name: this.myUser.name, isAI: false };
+    this.slots[1] = { slot: 1, clientId: null, userId: null, name: 'CPU 1', isAI: true };
+    this.slots[2] = { slot: 2, clientId: null, userId: null, name: 'CPU 2', isAI: true };
 
     safeShowGameScreen();
 
@@ -243,11 +268,18 @@ export const NetworkManager = {
   },
 
   /**
-   * ルーム参加（ゲスト1: スロット1「赤」へ厳格バインド）
+   * ルーム参加（ゲスト: 直前exitでゴースト解放 ＆ 一意なclientIdで申請）
    */
   async joinRoom(roomId) {
     if (!roomId) return false;
     await this.init();
+
+    // ★【入室不能根絶】直前の残留切断セッションを解放してから参加
+    if (this.isSDKAvailable) {
+      try {
+        await window.AgentSDK.room.exit();
+      } catch (e) {}
+    }
 
     if (this.isSDKAvailable) {
       try {
@@ -260,22 +292,19 @@ export const NetworkManager = {
 
     this.currentRoomId = roomId;
     this.isHost = false;
-    this.mySlot = 1; // 最初のゲストは例外なくスロット1(赤)に固定
+    this.mySlot = 1; // 初期フォールバックはスロット1(赤)
     this.isMultiplayerActive = true;
     this._seedApplied = false;
 
+    // ★【勝手な移動根絶】参加した瞬間、スロット0（ホスト）を即座にリモート固定し自端末AIによる乗っ取りを物理遮断
+    this._bindRemoteSlot(0, 'ホスト');
+
     safeShowGameScreen();
 
-    // 端末B自身の自操作キャラを「スロット1（赤）」へ即座にバインド！
-    if (typeof bindLocalPlayerSlot === 'function') {
-      bindLocalPlayerSlot(1);
-    } else if (typeof window.bindLocalPlayerSlot === 'function') {
-      window.bindLocalPlayerSlot(1);
-    }
-
-    // ホストに対して「入室完了通知＆スロット・シード同期リクエスト」を送信
+    // ホストに対して一意な clientId を含めた同期リクエストを送信
     this._sendCustomMessage({
       event: 'REQUEST_ROOM_SYNC',
+      clientId: this.clientId,
       userId: this.myUser.user_id,
       name: this.myUser.name
     });
@@ -285,37 +314,16 @@ export const NetworkManager = {
   },
 
   /**
-   * ゲストが入室した時の処理（ホスト側: スロット1「赤」へ確実に割り当て ＆ 現在の世界状態スナップショット配信）
+   * ゲストが入室した時の処理（ホスト側）
    */
   _handleUserJoined(data) {
     if (!data) return;
     const userId = String(data.user_id || '');
     if (!userId || userId === String(this.myUser.user_id)) return;
 
-    const guestName = data.user_name || 'ゲスト';
-
     if (this.isHost) {
-      // 2人対戦時は確実にスロット1(赤)へゲストを割り当て
-      let targetSlot = 1;
-      if (!this.slots[1].isAI && this.slots[1].userId !== userId) {
-        targetSlot = 2; // 3人目の場合のみ黄へ
-      }
-
-      this.slots[targetSlot] = {
-        slot: targetSlot,
-        userId: userId,
-        name: guestName,
-        isAI: false
-      };
-
-      // 黄(スロット2)が巻き込まれて書き換わらないようCPU 2を明示保護
-      if (targetSlot === 1) {
-        this.slots[2] = { slot: 2, userId: null, name: 'CPU 2', isAI: true };
-      }
-
-      this._bindRemoteSlot(targetSlot, guestName);
-
-      // ★ Welcomeハンドシェイク：ホストのワールド乱数シード、スロット構成、現在の世界状態スナップショットを配信！
+      // ゲストからの REQUEST_ROOM_SYNC (clientId付き) を待って正確に割り当てるため、
+      // ここでは既存の最新構成をウェルカム配信
       this._sendCustomMessage({
         event: 'ROOM_MEMBERS_SYNC',
         slots: this.slots,
@@ -326,7 +334,7 @@ export const NetworkManager = {
   },
 
   /**
-   * ★ カスタムメッセージ受信ハンドラ（GRAVITY公式回答準拠）
+   * カスタムメッセージ受信ハンドラ
    */
   _handleCustomMessage(data) {
     if (!data) return;
@@ -345,30 +353,42 @@ export const NetworkManager = {
           this._applyRoomMembersSync(packet.slots, packet.seed, packet.snapshot);
           break;
 
-        // ② 新入室者からの同期リクエスト（ホストが最新状態とシードとスナップショットを即時返信）
+        // ② ★【キャラあべこべ根絶】新入室者からのリクエスト（ホストがclientIdに基づき空きスロットを動的任命）
         case 'REQUEST_ROOM_SYNC':
           if (this.isHost) {
+            const reqClientId = packet.clientId;
             const reqUserId = String(packet.userId || '');
-            if (reqUserId && reqUserId !== String(this.myUser.user_id)) {
-              let targetSlot = 1;
-              if (!this.slots[1].isAI && this.slots[1].userId !== reqUserId) {
-                targetSlot = 2;
+            const reqName = packet.name || 'ゲスト';
+
+            // 自身の端末からのエコーは除外
+            if (reqClientId && reqClientId !== this.clientId) {
+              // 既に割り当て済みか確認
+              let targetSlot = this.slots.findIndex(s => s.clientId === reqClientId);
+
+              if (targetSlot === -1) {
+                // 空いているスロット（isAI === true）を順番に任命（1:赤 ➔ 2:黄）
+                if (this.slots[1].isAI) {
+                  targetSlot = 1;
+                } else if (this.slots[2].isAI) {
+                  targetSlot = 2;
+                }
               }
 
-              this.slots[targetSlot] = {
-                slot: targetSlot,
-                userId: reqUserId,
-                name: packet.name || 'ゲスト',
-                isAI: false
-              };
+              if (targetSlot !== -1) {
+                this.slots[targetSlot] = {
+                  slot: targetSlot,
+                  clientId: reqClientId,
+                  userId: reqUserId,
+                  name: reqName,
+                  isAI: false
+                };
 
-              if (targetSlot === 1) {
-                this.slots[2] = { slot: 2, userId: null, name: 'CPU 2', isAI: true };
+                // ホスト側画面でも即座に該当キャラを完全リモート化（AI乗っ取りを物理遮断）
+                this._bindRemoteSlot(targetSlot, reqName);
               }
-
-              this._bindRemoteSlot(targetSlot, packet.name || 'ゲスト');
             }
 
+            // 任命結果と最新世界状態を全員へ配信
             this._sendCustomMessage({
               event: 'ROOM_MEMBERS_SYNC',
               slots: this.slots,
@@ -383,21 +403,21 @@ export const NetworkManager = {
           this._handleRemotePosition(packet);
           break;
 
-        // ④ ★ 階段設置パケットのリアルタイム受信（段板を即時塗り替え！）
+        // ④ 階段設置パケットのリアルタイム受信
         case 'BUILD_PLANK':
           if (typeof window.applyRemotePlankBuilt === 'function') {
             window.applyRemotePlankBuilt(packet.stageIdx, packet.laneIdx, packet.plankIdx, packet.teamId);
           }
           break;
 
-        // ⑤ ★ 相手が床ブロックを拾った際のリアルタイム受信（床ブロック即時消去）
+        // ⑤ 相手が床ブロックを拾った際のリアルタイム受信
         case 'PICK_BLOCK':
           if (typeof window.applyRemoteBlockPicked === 'function') {
             window.applyRemoteBlockPicked(packet.stageIdx, packet.poolIdx, packet.x, packet.z);
           }
           break;
 
-        // ⑥ ★ ホストが新ブロックを補充した際のリアルタイム受信（ゲスト側へ即時出現反映）
+        // ⑥ ホストが新ブロックを補充した際のリアルタイム受信
         case 'SPAWN_BLOCK':
           if (typeof window.applyRemoteBlockSpawned === 'function') {
             window.applyRemoteBlockSpawned(packet.stageIdx, packet.poolIdx, packet.x, packet.y, packet.z, packet.teamId);
@@ -417,13 +437,13 @@ export const NetworkManager = {
   },
 
   /**
-   * ★【ステップ2 改善】ホストから受信したスロット構成、シード値、世界状態スナップショットを自画面に反映
+   * ★【キャラあべこべ＆勝手な移動根絶】同期パケット適用ハンドラ
    */
   _applyRoomMembersSync(syncedSlots, seed, snapshot = null) {
     if (!Array.isArray(syncedSlots)) return;
     this.slots = syncedSlots;
 
-    // 初回シード同期時：ワールド構築 ＆ ホストのスナップショットで現在の床ブロックと階段を一括完全再現！
+    // 初回シード同期時：ワールド構築 ＆ ホストのスナップショットで現在の床ブロックと階段を一括完全再現
     if (seed && (!this._seedApplied || this.currentSeed !== seed) && !this.isHost) {
       this.currentSeed = seed;
       this._seedApplied = true;
@@ -432,7 +452,6 @@ export const NetworkManager = {
         buildWorld(window.currentSceneRef, seed);
 
         if (snapshot && Array.isArray(snapshot.blocks)) {
-          // ホストの現在のアクティブ床ブロック一覧を正確に再現配置（初期生成乱数に頼らず現物同期）
           snapshot.blocks.forEach(b => {
             if (typeof window.applyRemoteBlockSpawned === 'function') {
               window.applyRemoteBlockSpawned(b.stageIdx, b.poolIdx, b.x, b.y, b.z, b.teamId);
@@ -442,7 +461,6 @@ export const NetworkManager = {
           for (let i = 0; i < 60; i++) manageBlockSpawns(window.currentSceneRef, false);
         }
 
-        // 入室前にホストや先行走者が架けた階段段板を一括復元
         if (snapshot && Array.isArray(snapshot.planks)) {
           snapshot.planks.forEach(p => {
             if (typeof window.applyRemotePlankBuilt === 'function') {
@@ -452,7 +470,6 @@ export const NetworkManager = {
         }
       }
     } else if (!this.isHost && snapshot && Array.isArray(snapshot.planks)) {
-      // 既に初期化済みの場合でも階段段板データを安全に上書き反映
       snapshot.planks.forEach(p => {
         if (typeof window.applyRemotePlankBuilt === 'function') {
           window.applyRemotePlankBuilt(p.stageIdx, p.laneIdx, p.plankIdx, p.teamId);
@@ -460,8 +477,12 @@ export const NetworkManager = {
       });
     }
 
+    // ★【最重要】clientId による自端末スロットの確定（同一アカウント norion 同士でも絶対に被らない）
     syncedSlots.forEach((s) => {
-      if (String(s.userId) === String(this.myUser.user_id)) {
+      const isMyClient = (s.clientId && s.clientId === this.clientId) || (!s.clientId && this.isHost && s.slot === 0);
+
+      if (isMyClient) {
+        // 自操作キャラ確定
         this.mySlot = s.slot;
         window.MY_PLAYER_SLOT = s.slot;
         if (typeof bindLocalPlayerSlot === 'function') {
@@ -469,28 +490,42 @@ export const NetworkManager = {
         } else if (typeof window.bindLocalPlayerSlot === 'function') {
           window.bindLocalPlayerSlot(s.slot);
         }
-      } else if (!s.isAI && s.userId) {
+      } else if (!s.isAI && (s.clientId || s.userId)) {
+        // ★【勝手な移動根絶】他人間プレイヤーのスロットは、直ちに自端末AI思考を完全停止しリモート固定！
         this._bindRemoteSlot(s.slot, s.name);
       } else if (s.isAI) {
+        // 人間がいないスロットのみCPUとして自律走行
         this._restoreSlotToAI(s.slot);
       }
     });
   },
 
   /**
-   * 指定スロットをリモートプレイヤーとしてバインド
+   * ★【勝手な移動根絶】指定スロットを自律AI思考から完全に切り離し、完全静止（リモート受信待ち）に固定
    */
   _bindRemoteSlot(slotIndex, playerName) {
     const targetChar = characters[slotIndex];
     if (!targetChar) return;
 
+    // 自端末の ai.js による自動操作を物理遮断
     targetChar.isPlayer = false;
     targetChar.isAI = false;
     targetChar.isRemote = true;
     targetChar.aiState = 'REMOTE_IDLE';
     targetChar.aiDirX = 0;
     targetChar.aiDirZ = 0;
+    targetChar.targetBlock = null;
+    targetChar.searchCooldown = 999999;
     targetChar.name = playerName;
+
+    // 相手が操作していない時に勝手に歩かないよう、直ちに静止ポーズへ整列
+    targetChar.walkCycle = 0;
+    if (targetChar.meshObj) {
+      if (targetChar.meshObj.leftLeg) targetChar.meshObj.leftLeg.rotation.x = 0;
+      if (targetChar.meshObj.rightLeg) targetChar.meshObj.rightLeg.rotation.x = 0;
+      if (targetChar.meshObj.leftArm) targetChar.meshObj.leftArm.rotation.x = 0;
+      if (targetChar.meshObj.rightArm) targetChar.meshObj.rightArm.rotation.x = 0;
+    }
 
     // リモートプレイヤーの背中スタック色を更新
     refreshCharacterStackVisuals(targetChar);
@@ -547,6 +582,7 @@ export const NetworkManager = {
       this._sendCustomMessage({
         event: 'POS',
         slot: this.mySlot,
+        clientId: this.clientId,
         x: Number(myChar.pos.x.toFixed(2)),
         y: Number(myChar.pos.y.toFixed(2)),
         z: Number(myChar.pos.z.toFixed(2)),
@@ -561,10 +597,14 @@ export const NetworkManager = {
    * 受信したリモートキャラの最新座標を格納（main.js のLerp補間用）
    */
   _handleRemotePosition(packet) {
-    if (packet.slot === this.mySlot) return;
+    if (packet.slot === this.mySlot || packet.clientId === this.clientId) return;
 
     const targetChar = characters[packet.slot];
     if (!targetChar) return;
+
+    // パケットを受信したスロットは確実にリモート属性を維持
+    targetChar.isRemote = true;
+    targetChar.isAI = false;
 
     if (!targetChar.targetNetPos) {
       targetChar.targetNetPos = new THREE.Vector3();
@@ -579,7 +619,7 @@ export const NetworkManager = {
   },
 
   /**
-   * ★ カスタムメッセージ送信ヘルパー（GRAVITY公式回答準拠）
+   * カスタムメッセージ送信ヘルパー
    */
   _sendCustomMessage(msgObj) {
     if (!this.isSDKAvailable) return;
@@ -600,10 +640,11 @@ export const NetworkManager = {
     const userId = String(data.user_id || '');
     const exitedSlotIdx = this.slots.findIndex(s => String(s.userId) === userId);
 
-    if (exitedSlotIdx !== -1) {
+    if (exitedSlotIdx !== -1 && exitedSlotIdx !== 0) {
       console.log(`[NetworkManager] User exited from slot ${exitedSlotIdx}, restoring AI.`);
       this.slots[exitedSlotIdx] = {
         slot: exitedSlotIdx,
+        clientId: null,
         userId: null,
         name: (exitedSlotIdx === 1) ? 'CPU 1' : 'CPU 2',
         isAI: true
@@ -647,7 +688,6 @@ export const NetworkManager = {
 };
 
 /**
- * ★【GRAVITY公式回答ベストプラクティス】
  * ページ離脱・リロード・画面バック時に確実に room.exit() を投げて幽霊部屋の残留を激減させる
  */
 if (typeof window !== 'undefined') {

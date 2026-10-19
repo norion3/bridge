@@ -2,7 +2,7 @@
 // ★ UI・ロビー・GRAVITYレイアウト自動補正モジュール連携
 // ★ ステップ3: リモートプレイヤーの60fps Lerp並走補間・走りモーション・スタック同期結合
 // ★ ステップ2: window.currentSceneRef 公開によるワールド乱数シード完全同期パイプライン開通
-// ★ ブロック同期完全一致版: ゲスト側AI自律思考停止（ホスト追従）＆ ブロック補充のホスト主権化（乱数発散防止）
+// ★ Phase 2 実装版：AI判定二重ガード（リモート/人間スロットのAI乗っ取り遮断 ＆ CPU走者の自律走行復帰）
 import './dom.js';
 
 import { SoundEngine } from './audio.js';
@@ -476,13 +476,21 @@ export function animate(currentTime) {
     }
     for (let cIdx = 0; cIdx < characters.length; cIdx++) {
       const c = characters[cIdx];
-      // ★【改善】ゲスト端末ではAIの自律思考（勝手なブロック拾い）を停止し、ホスト主権に完全追従
-      const shouldRunAI = !c.isPlayer && !c.isRemote && (!isGuest || !c.isAI);
+      // 自操作キャラは上の updateSingleCharacter で処理済みのため除外
+      if (c === player || c.isPlayer) continue;
+
+      // ★【Phase 2 二重ガード】人間スロットまたはリモート属性のキャラを厳格に識別
+      const isHumanSlot = isMulti && window.NetworkManager && Array.isArray(window.NetworkManager.slots) &&
+        window.NetworkManager.slots[cIdx] && !window.NetworkManager.slots[cIdx].isAI;
+      const isRemotePlayer = c.isRemote || isHumanSlot;
+
+      // 自律AIとして走れるのは「人間でもリモートでもなく、AI属性を持つ空きスロット（例: 黄色CPU2）」のみ
+      const shouldRunAI = !isRemotePlayer && c.isAI;
 
       if (shouldRunAI) {
         updateAICharacter(scene, c, dt, spawnPuffCloud, spawnSpeedStepRing);
-      } else if ((c.isRemote || (isGuest && c.isAI)) && c.targetNetPos) {
-        // ★ 受信した相手またはAIの目標座標へ向けてシルクのように滑らかに吸着移動（カクつきゼロ）
+      } else if (isRemotePlayer && c.targetNetPos) {
+        // ★ 受信した相手プレイヤーの目標座標へ向けて滑らかに吸着移動（カクつきゼロ）
         const prevX = c.pos.x;
         const prevZ = c.pos.z;
         c.pos.lerp(c.targetNetPos, 0.25);
@@ -492,9 +500,9 @@ export function animate(currentTime) {
           c.meshObj.root.rotation.y = THREE.MathUtils.lerp(c.meshObj.root.rotation.y, c.targetNetRotY, 0.25);
         }
 
-        // 移動距離から手足の走りモーション（スイング）を再現
+        // 移動距離から手足の走りモーション（★ 0.008m 以下の静止時は手足をピタッと直立不動にリセット）
         const stepDist = Math.hypot(c.pos.x - prevX, c.pos.z - prevZ);
-        if (stepDist > 0.001) {
+        if (stepDist > 0.008) {
           c.walkCycle = (c.walkCycle || 0) + stepDist * 5.5;
           const swing = Math.sin(c.walkCycle) * 0.45;
           c.meshObj.leftLeg.rotation.x = swing;
@@ -507,6 +515,12 @@ export function animate(currentTime) {
           c.meshObj.leftArm.rotation.x = 0;
           c.meshObj.rightArm.rotation.x = 0;
         }
+      } else if (isRemotePlayer && !c.targetNetPos) {
+        // まだ座標を受信していないリモート待機中は完全直立不動
+        c.meshObj.leftLeg.rotation.x = 0;
+        c.meshObj.rightLeg.rotation.x = 0;
+        c.meshObj.leftArm.rotation.x = 0;
+        c.meshObj.rightArm.rotation.x = 0;
       }
 
       if (c.dockBounceTimer > 0) {
@@ -521,7 +535,7 @@ export function animate(currentTime) {
 
     blockSpawnTimer += dt;
     if (blockSpawnTimer > 0.5) {
-      // ★【改善】マルチプレイ時はホスト端末のみがブロック補充を実行（ゲスト端末での勝手な乱数発散・位置ズレを完全根絶）
+      // マルチプレイ時はホスト端末のみがブロック補充を実行（ゲスト端末での勝手な乱数発散・位置ズレを完全根絶）
       if (!isGuest) {
         manageBlockSpawns(scene, isGameOver);
       }
