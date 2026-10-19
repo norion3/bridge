@@ -1,5 +1,8 @@
 // dom.js: 画面UI・HUD・ロビー・待機室の動的生成モジュール
 // 既存のゲームコードには一切干渉せず、指定されたコンテナ内にUI要素を安全に構築します。
+// ★ Phase 3.5: 取得した名前を即座に自キャラ足元ネームプレートへ反映する連携を追加
+
+import { updatePlayerName } from './character.js';
 
 /**
  * 必要なスタイル（CSS）をheadタグ内に動的注入する
@@ -180,7 +183,7 @@ export function getTopInset() {
 }
 
 /**
- * GRAVITY AgentSDKからユーザー名を取得してロビー画面へ即座に反映する
+ * GRAVITY AgentSDKからユーザー名を取得してロビー画面および自キャラ足元に即座に反映する
  */
 export async function syncGravityUserName() {
   let displayName = 'プレイヤー';
@@ -191,6 +194,13 @@ export async function syncGravityUserName() {
       if (res && res.data && res.data.name) {
         displayName = res.data.name;
         window.GRAVITY_USER_NAME = displayName;
+        
+        // ★【Phase 3.5】名前が取得できた瞬間に、3D空間内の自キャラ足元ネームプレートを即座に「norion」へ書き換える！
+        try {
+          updatePlayerName(displayName);
+        } catch (e) {
+          console.warn('[dom.js] updatePlayerName call deferred:', e);
+        }
       }
     } catch (err) {
       console.warn('[dom.js] Failed to get user info from AgentSDK:', err);
@@ -248,6 +258,13 @@ export function patchExistingLobbyLabels() {
   if (soloBtn) {
     soloBtn.textContent = '▶ 1人で遊ぶ';
     soloBtn.className = 'btn-solo-hero';
+    
+    // ★【二重セーフティ】「1人で遊ぶ」が押された瞬間にも自キャラ足元ネームプレートを最新名で再同期
+    soloBtn.addEventListener('click', () => {
+      if (window.GRAVITY_USER_NAME) {
+        updatePlayerName(window.GRAVITY_USER_NAME);
+      }
+    });
   }
 
   if (createPublicBtn && createPublicBtn !== soloBtn) {
