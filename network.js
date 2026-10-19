@@ -1,7 +1,7 @@
 // network.js: AgentSDKラッパー ＆ 動的スロット・相互可視化・10Hz位置同期エンジン
 // 2人・3人・途中参加・途中退出が100%破綻しない完全同期モデル
 
-import { characters, createNameplateMesh, updatePlayerName } from './character.js';
+import { characters, createNameplateMesh, updatePlayerName, bindLocalPlayerSlot } from './character.js';
 import { STAGES } from './world.js';
 
 /**
@@ -164,6 +164,13 @@ export const NetworkManager = {
 
     safeShowGameScreen();
 
+    // ★ ホストの自操作キャラをスロット0（青）へバインド
+    if (typeof bindLocalPlayerSlot === 'function') {
+      bindLocalPlayerSlot(0);
+    } else if (typeof window.bindLocalPlayerSlot === 'function') {
+      window.bindLocalPlayerSlot(0);
+    }
+
     if (window.GRAVITY_USER_NAME) {
       updatePlayerName(window.GRAVITY_USER_NAME);
     }
@@ -190,11 +197,18 @@ export const NetworkManager = {
 
     this.currentRoomId = roomId;
     this.isHost = false;
-    // 初期の仮スロットは1(赤)。ホストからのWelcome同期で確定する
+    // 初期の仮スロットは1(赤)
     this.mySlot = 1;
     this.isMultiplayerActive = true;
 
     safeShowGameScreen();
+
+    // ★【ここが添付ファイルで抜けていました！】端末B自身の自操作キャラを「スロット1（赤）」へ即座にバインド！
+    if (typeof bindLocalPlayerSlot === 'function') {
+      bindLocalPlayerSlot(1);
+    } else if (typeof window.bindLocalPlayerSlot === 'function') {
+      window.bindLocalPlayerSlot(1);
+    }
 
     // ホストに対して「入室完了通知＆スロット同期リクエスト」を送信
     this._sendCustomMessage({
@@ -211,8 +225,9 @@ export const NetworkManager = {
    * ゲストが入室した時の処理（ホスト・他ゲスト共通）
    */
   _handleUserJoined(data) {
-    const userId = String(data.user_id);
-    if (!userId || userId === this.myUser.user_id) return;
+    if (!data) return;
+    const userId = String(data.user_id || '');
+    if (!userId || userId === String(this.myUser.user_id)) return;
 
     const guestName = data.user_name || 'ゲスト';
 
@@ -245,12 +260,22 @@ export const NetworkManager = {
   },
 
   /**
-   * カスタムメッセージ受信ハンドラ
+   * カスタムメッセージ受信ハンドラ（データ構造の揺らぎを完全吸収）
    */
   _handleCustomMessage(data) {
-    if (!data || !data.msg_data) return;
+    if (!data) return;
     try {
-      const packet = JSON.parse(data.msg_data);
+      // ★【ここが添付ファイルで抜けていました！】プロパティ階層やデータ型の差異をすべて安全に吸収
+      let rawData = data.msg_data || data.message || data.data || data;
+      let packet = null;
+
+      if (typeof rawData === 'string') {
+        packet = JSON.parse(rawData);
+      } else if (typeof rawData === 'object') {
+        packet = rawData;
+      }
+
+      if (!packet || !packet.event) return;
 
       switch (packet.event) {
         // ① ホストから届いたスロット構成の完全同期（相互可視化）
@@ -261,6 +286,24 @@ export const NetworkManager = {
         // ② 新入室者からの同期リクエスト（ホストが最新状態を即時返信）
         case 'REQUEST_ROOM_SYNC':
           if (this.isHost) {
+            // リクエストしてきたユーザーがスロットにまだいなければ割り当て
+            const reqUserId = String(packet.userId || '');
+            if (reqUserId && reqUserId !== String(this.myUser.user_id)) {
+              let targetSlot = -1;
+              if (this.slots[1].isAI) targetSlot = 1;
+              else if (this.slots[2].isAI) targetSlot = 2;
+
+              if (targetSlot !== -1) {
+                this.slots[targetSlot] = {
+                  slot: targetSlot,
+                  userId: reqUserId,
+                  name: packet.name || 'ゲスト',
+                  isAI: false
+                };
+                this._bindRemoteSlot(targetSlot, packet.name || 'ゲスト');
+              }
+            }
+
             this._sendCustomMessage({
               event: 'ROOM_MEMBERS_SYNC',
               slots: this.slots
@@ -296,7 +339,13 @@ export const NetworkManager = {
       // 自分がどのスロットにいるか確定
       if (String(s.userId) === String(this.myUser.user_id)) {
         this.mySlot = s.slot;
-        window.MY_PLAYER_SLOT = s.slot; // character.js / main.js 連携用
+        window.MY_PLAYER_SLOT = s.slot;
+        // ★ 自操作キャラのスロット切り替えを確実に実行！
+        if (typeof bindLocalPlayerSlot === 'function') {
+          bindLocalPlayerSlot(s.slot);
+        } else if (typeof window.bindLocalPlayerSlot === 'function') {
+          window.bindLocalPlayerSlot(s.slot);
+        }
       } else if (!s.isAI && s.userId) {
         // 他のプレイヤー（リモート走者）としてセットアップ
         this._bindRemoteSlot(s.slot, s.name);
@@ -314,6 +363,7 @@ export const NetworkManager = {
     const targetChar = characters[slotIndex];
     if (!targetChar) return;
 
+    targetChar.isPlayer = false;
     targetChar.isAI = false;
     targetChar.isRemote = true; // リモートプレイヤーフラグ
     targetChar.aiState = 'REMOTE_IDLE';
@@ -339,6 +389,7 @@ export const NetworkManager = {
     const targetChar = characters[slotIndex];
     if (!targetChar) return;
 
+    targetChar.isPlayer = false;
     targetChar.isAI = true;
     targetChar.isRemote = false;
     targetChar.aiState = 'COLLECT';
@@ -424,7 +475,8 @@ export const NetworkManager = {
    * プレイヤー退出ハンドラ（退出したスロットを即座にAIへ復元！）
    */
   _handleUserExited(data) {
-    const userId = String(data.user_id);
+    if (!data) return;
+    const userId = String(data.user_id || '');
     const exitedSlotIdx = this.slots.findIndex(s => String(s.userId) === userId);
 
     if (exitedSlotIdx !== -1) {
