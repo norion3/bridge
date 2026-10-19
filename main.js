@@ -1,4 +1,7 @@
 // メインエントリポイント：Three.js初期化・ダイナミックロックオン並走カメラ（完全連続滑らかLERP追従・カクつきゼロ）・メインループ・ネームプレート連動・スコアMicro-Pop＆30秒タイマー色変化・左下リスタート＆GRAVITY動的余白骨組み対応
+// ★ UI・ロビー・GRAVITYレイアウト自動補正モジュール連携
+import './dom.js';
+
 import { SoundEngine } from './audio.js';
 import {
   TEAMS,
