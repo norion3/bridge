@@ -1,6 +1,7 @@
 // dom.js: 画面UI・HUD・ロビー・待機室の動的生成モジュール
 // 既存のゲームコードには一切干渉せず、指定されたコンテナ内にUI要素を安全に構築します。
-// ★ Phase 3.5: 取得した名前を即座に自キャラ足元ネームプレートへ反映する連携を追加
+// ★ Phase 3.5: 取得した名前を即座に自キャラ足元ネームプレートへ反映する連携
+// ★ Phase 4: network.js との安全結合（循環参照根絶 ＆ 既存ボタンへのフック保証）
 
 import { updatePlayerName } from './character.js';
 
@@ -195,7 +196,7 @@ export async function syncGravityUserName() {
         displayName = res.data.name;
         window.GRAVITY_USER_NAME = displayName;
         
-        // ★【Phase 3.5】名前が取得できた瞬間に、3D空間内の自キャラ足元ネームプレートを即座に「norion」へ書き換える！
+        // 名前が取得できた瞬間に、3D空間内の自キャラ足元ネームプレートを即座に書き換え
         try {
           updatePlayerName(displayName);
         } catch (e) {
@@ -222,6 +223,7 @@ export async function syncGravityUserName() {
 
 /**
  * 既存の静的要素（gravity_loader.html）が存在する場合のテキスト・レイアウト・順序自動補正
+ * ★ Phase 4: network.js が確実にフックできるよう ID を付与
  */
 export function patchExistingLobbyLabels() {
   const overlay = document.getElementById('test-lobby-overlay');
@@ -259,7 +261,6 @@ export function patchExistingLobbyLabels() {
     soloBtn.textContent = '▶ 1人で遊ぶ';
     soloBtn.className = 'btn-solo-hero';
     
-    // ★【二重セーフティ】「1人で遊ぶ」が押された瞬間にも自キャラ足元ネームプレートを最新名で再同期
     soloBtn.addEventListener('click', () => {
       if (window.GRAVITY_USER_NAME) {
         updatePlayerName(window.GRAVITY_USER_NAME);
@@ -267,10 +268,15 @@ export function patchExistingLobbyLabels() {
     });
   }
 
+  // ★ Phase 4: 静的ローダーの「公開ルーム作成」ボタンに ID を付与し、onclick の alert を除去
   if (createPublicBtn && createPublicBtn !== soloBtn) {
+    createPublicBtn.id = 'btn-create-public';
+    createPublicBtn.removeAttribute('onclick');
     createPublicBtn.className = 'gravity-btn-green';
   }
   if (createPrivateBtn && createPrivateBtn !== soloBtn) {
+    createPrivateBtn.id = 'btn-create-private';
+    createPrivateBtn.removeAttribute('onclick');
     createPrivateBtn.className = 'gravity-btn-green btn-private';
   }
 
@@ -279,7 +285,7 @@ export function patchExistingLobbyLabels() {
     greetingEl.after(soloBtn);
   }
 
-  // 公開ルーム一覧の外観調整
+  // 公開ルーム一覧の外観調整 ＆ 更新ボタンに ID を付与
   const roomSection = card.querySelector('div:last-child');
   if (roomSection) {
     roomSection.classList.add('room-list-box');
@@ -288,6 +294,25 @@ export function patchExistingLobbyLabels() {
       header.style.color = '#e0f2fe';
       header.style.fontSize = '16px';
       header.style.fontWeight = '800';
+
+      // 更新ボタンが存在しない場合は作成、既存の場合はID割り当て
+      let refreshBtn = header.querySelector('button');
+      if (!refreshBtn) {
+        refreshBtn = document.createElement('button');
+        refreshBtn.type = 'button';
+        refreshBtn.id = 'btn-refresh-rooms';
+        refreshBtn.textContent = '更新';
+        refreshBtn.style.cssText = 'background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.3); border-radius: 8px; color: #ffffff; font-size: 12px; font-weight: 700; padding: 4px 10px; cursor: pointer; float: right;';
+        header.appendChild(refreshBtn);
+      } else {
+        refreshBtn.id = 'btn-refresh-rooms';
+      }
+    }
+
+    // ルームリストコンテナに ID を付与
+    const listBody = roomSection.querySelector('div:last-child');
+    if (listBody) {
+      listBody.id = 'room-list-container';
     }
   }
 }
@@ -402,7 +427,10 @@ export function mountAllUI(container) {
 export const UIController = {
   // ロビー画面を表示
   showLobby() {
-    document.getElementById('screen-lobby')?.classList.remove('hidden');
+    const screenLobby = document.getElementById('screen-lobby');
+    const staticOverlay = document.getElementById('test-lobby-overlay');
+    if (screenLobby) screenLobby.classList.remove('hidden');
+    if (staticOverlay) staticOverlay.style.display = 'flex';
     document.getElementById('screen-waiting')?.classList.add('hidden');
     this._setHUDVisible(false);
   },
@@ -410,6 +438,8 @@ export const UIController = {
   // 待機部屋画面を表示
   showWaitingRoom(roomId) {
     document.getElementById('screen-lobby')?.classList.add('hidden');
+    const staticOverlay = document.getElementById('test-lobby-overlay');
+    if (staticOverlay) staticOverlay.style.display = 'none';
     document.getElementById('screen-waiting')?.classList.remove('hidden');
     const tag = document.getElementById('waiting-room-tag');
     if (tag) tag.innerText = `ROOM #${roomId}`;
@@ -419,6 +449,8 @@ export const UIController = {
   // ゲーム本編画面を表示（ロビーを隠してHUDを表示）
   showGame() {
     document.getElementById('screen-lobby')?.classList.add('hidden');
+    const staticOverlay = document.getElementById('test-lobby-overlay');
+    if (staticOverlay) staticOverlay.style.display = 'none';
     document.getElementById('screen-waiting')?.classList.add('hidden');
     this._setHUDVisible(true);
   },
@@ -433,6 +465,11 @@ export const UIController = {
     if (hudSound) hudSound.style.display = displayVal;
   }
 };
+
+// ★ Phase 4 循環参照根絶: network.js からも安全に呼べるよう window に登録
+if (typeof window !== 'undefined') {
+  window.UIController = UIController;
+}
 
 /**
  * 初期化実行ルーチン（自動フック）
@@ -449,3 +486,12 @@ if (document.readyState === 'loading') {
 } else {
   initDOMEnhancements();
 }
+
+// ★ Phase 4: network.js を安全に読み込んでイベントをバインド
+import('./network.js').then(module => {
+  if (module && typeof module.hookLobbyNetworkEvents === 'function') {
+    module.hookLobbyNetworkEvents();
+  }
+}).catch(err => {
+  console.warn('[dom.js] Dynamic import of network.js deferred:', err);
+});
