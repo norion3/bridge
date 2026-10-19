@@ -1,8 +1,9 @@
 // network.js: AgentSDKラッパー ＆ 動的スロット・相互可視化・10Hz位置同期エンジン
-// ★ マスターコード完全準拠版：幽霊部屋除外フィルタ・安全退出・階段架け(BUILD_PLANK)受信フック接続
+// ★ ステップ1：ホスト・ゲスト双方での同一シード完全整列＆古いブロック全消去（resetParticlePools）対応版
 
 import { characters, createNameplateMesh, updatePlayerName, bindLocalPlayerSlot, refreshCharacterStackVisuals } from './character.js';
 import { STAGES, buildWorld, manageBlockSpawns } from './world.js';
+import { resetParticlePools } from './particles.js';
 
 /**
  * 画面切り替えの例外安全ヘルパー（ロビー幕を確実に消し去る）
@@ -54,6 +55,7 @@ export const NetworkManager = {
   isMultiplayerActive: false,
   mySlot: 0, // 自端末の担当スロット（ホスト:0, ゲスト1:1, ゲスト2:2）
   currentSeed: 12345678, // ワールド共有用乱数シード
+  _seedApplied: false,
 
   _hasRegisteredListener: false,
   _lastRefreshTime: 0,
@@ -141,7 +143,7 @@ export const NetworkManager = {
   },
 
   /**
-   * 公開ルーム作成（ホスト: スロット0「青」担当 ＆ ワールド乱数シード生成）
+   * 公開ルーム作成（ホスト: スロット0「青」担当 ＆ ワールド乱数シード生成＆ホスト自身も同一シード再生成）
    */
   async createRoom(isPrivate = false) {
     await this.init();
@@ -163,11 +165,19 @@ export const NetworkManager = {
     this.isHost = true;
     this.mySlot = 0; // ホストは青(スロット0)
     this.isMultiplayerActive = true;
+    this._seedApplied = true;
 
     // ホスト自身で乱数シードを固定決定
     this.currentSeed = (typeof createdRoomId === 'string')
       ? Math.abs(createdRoomId.split('').reduce((acc, char) => (acc << 5) - acc + char.charCodeAt(0), 0))
       : Math.floor(Math.random() * 90000000) + 10000000;
+
+    // ★【ステップ1 改善】ホスト自身も決定したシードで床ブロックプールを全リセットし、同一シードで再整列！
+    if (typeof window !== 'undefined' && window.currentSceneRef) {
+      resetParticlePools();
+      buildWorld(window.currentSceneRef, this.currentSeed);
+      for (let i = 0; i < 60; i++) manageBlockSpawns(window.currentSceneRef, false);
+    }
 
     this.slots[0] = { slot: 0, userId: this.myUser.user_id, name: this.myUser.name, isAI: false };
     this.slots[1] = { slot: 1, userId: null, name: 'CPU 1', isAI: true };
@@ -208,9 +218,9 @@ export const NetworkManager = {
 
     this.currentRoomId = roomId;
     this.isHost = false;
-    // 最初のゲストは例外なくスロット1(赤)に固定
-    this.mySlot = 1;
+    this.mySlot = 1; // 最初のゲストは例外なくスロット1(赤)に固定
     this.isMultiplayerActive = true;
+    this._seedApplied = false;
 
     safeShowGameScreen();
 
@@ -355,12 +365,14 @@ export const NetworkManager = {
     if (!Array.isArray(syncedSlots)) return;
     this.slots = syncedSlots;
 
-    // マップシードの同期（床ブロック配置をホストと100%完全一致させる）
-    if (seed && this.currentSeed !== seed && !this.isHost) {
+    // ★【ステップ1 改善】ホストと同じ乱数シードでブロックプールを全消去リセットし、同一ブロックを同時整列！
+    if (seed && (!this._seedApplied || this.currentSeed !== seed) && !this.isHost) {
       this.currentSeed = seed;
+      this._seedApplied = true;
       if (typeof window !== 'undefined' && window.currentSceneRef) {
+        resetParticlePools();
         buildWorld(window.currentSceneRef, seed);
-        for (let i = 0; i < 40; i++) manageBlockSpawns(window.currentSceneRef, false);
+        for (let i = 0; i < 60; i++) manageBlockSpawns(window.currentSceneRef, false);
       }
     }
 
@@ -542,6 +554,7 @@ export const NetworkManager = {
     this.isHost = false;
     this.isMultiplayerActive = false;
     this.mySlot = 0;
+    this._seedApplied = false;
     if (typeof window !== 'undefined' && window.UIController && typeof window.UIController.showLobby === 'function') {
       window.UIController.showLobby();
     }

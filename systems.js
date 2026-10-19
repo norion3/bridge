@@ -1,5 +1,5 @@
 // 物理移動判定・スカイウォーク歩行開放・ハッチ進入同期・リュック収納アニメーション連動・シームレス風音連携・スカイダイブ＆スライダーボーナス回収・合流島安全着地完全整合・お邪魔キャラ衝突判定・下層島誤ワープ完全防止・ゲームバランス適正化（タックル上限クランプ＆サンダー鈍足速度マイルド化）版
-// ★ マスターコード完全準拠版：階段架け（BUILD_PLANK）のリアルタイム送受信フック組み込み
+// ★ マスターコード完全準拠版：階段架け（BUILD_PLANK）＆床ブロック取得（PICK_BLOCK）リアルタイム同期組み込み
 
 import {
   TEAMS,
@@ -107,9 +107,47 @@ export function applyRemotePlankBuilt(stageIdx, laneIdx, plankIdx, teamId) {
   }
 }
 
+/**
+ * ★【ステップ2 新設】リモートプレイヤーが床ブロックを拾った際の受信ハンドラ（該当ブロックの即時消去同期）
+ */
+export function applyRemoteBlockPicked(stageIdx, poolIdx, x, z) {
+  const stageBlocks = getFloorBlocksForStage(stageIdx);
+  let targetBlock = null;
+
+  // 1. 配列インデックス（poolIdx）による直接特定
+  if (poolIdx !== undefined && poolIdx >= 0 && poolIdx < floorBlockPool.length) {
+    const candidate = floorBlockPool[poolIdx];
+    if (candidate && candidate.active) {
+      targetBlock = candidate;
+    }
+  }
+
+  // 2. 座標近傍によるフォールバック特定
+  if (!targetBlock && x !== undefined && z !== undefined) {
+    for (let i = 0; i < stageBlocks.length; i++) {
+      const b = stageBlocks[i];
+      if (b.active && Math.hypot(b.pos.x - x, b.pos.z - z) < 1.2) {
+        targetBlock = b;
+        break;
+      }
+    }
+  }
+
+  if (targetBlock) {
+    targetBlock.active = false;
+    targetBlock.mesh.visible = false;
+    targetBlock.attracting = false;
+    const sIdx = stageBlocks.indexOf(targetBlock);
+    if (sIdx !== -1) {
+      stageBlocks.splice(sIdx, 1);
+    }
+  }
+}
+
 // グローバル公開（network.js から安全に呼べるように登録）
 if (typeof window !== 'undefined') {
   window.applyRemotePlankBuilt = applyRemotePlankBuilt;
+  window.applyRemoteBlockPicked = applyRemoteBlockPicked;
 }
 
 export function scatterBricks(scene, char, countToDrop) {
@@ -943,6 +981,10 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
           const dx = char.pos.x - blk.pos.x;
           const dz = char.pos.z - blk.pos.z;
           if (dx * dx + dz * dz < magnetRadiusSq && Math.abs(char.pos.y - blk.pos.y) < 3.2) {
+            const poolIdx = floorBlockPool.indexOf(blk);
+            const blockX = blk.pos.x;
+            const blockZ = blk.pos.z;
+
             blk.attracting = true;
             blk.active = false;
             stageBlocks.splice(i, 1);
@@ -957,6 +999,21 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
               progress: 0,
               duration: 0.55
             });
+
+            // ★【ステップ2 新設】自操作キャラのマグネット吸引時も他端末へ即時消去ブロードキャスト！
+            if (char.isPlayer && typeof window !== 'undefined' && window.AgentSDK) {
+              try {
+                window.AgentSDK.room.sendMessage({
+                  message: JSON.stringify({
+                    event: 'PICK_BLOCK',
+                    stageIdx: char.currentStage,
+                    poolIdx: poolIdx,
+                    x: Number(blockX.toFixed(2)),
+                    z: Number(blockZ.toFixed(2))
+                  })
+                });
+              } catch (err) {}
+            }
           }
         }
       }
@@ -1172,11 +1229,32 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
         const dx = char.pos.x - blk.pos.x;
         const dz = char.pos.z - blk.pos.z;
         if (dx * dx + dz * dz < 2.25) {
+          const poolIdx = floorBlockPool.indexOf(blk);
+          const blockX = blk.pos.x;
+          const blockZ = blk.pos.z;
+
           blk.active = false;
           blk.mesh.visible = false;
           blk.attracting = false;
           stageBlocks.splice(i, 1);
           addBrickToCharacter(char, char.team, 1, soundRef, updateHUDRef);
+
+          // ★【ステップ2 新設】自操作キャラが床ブロックを拾った際、他端末へ即時消去ブロードキャスト！
+          if (char.isPlayer && typeof window !== 'undefined' && window.AgentSDK) {
+            try {
+              window.AgentSDK.room.sendMessage({
+                message: JSON.stringify({
+                  event: 'PICK_BLOCK',
+                  stageIdx: char.currentStage,
+                  poolIdx: poolIdx,
+                  x: Number(blockX.toFixed(2)),
+                  z: Number(blockZ.toFixed(2))
+                })
+              });
+            } catch (err) {
+              console.warn('[systems.js] Failed to broadcast PICK_BLOCK:', err);
+            }
+          }
         }
       }
     }
