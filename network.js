@@ -1,5 +1,5 @@
 // network.js: AgentSDKラッパー ＆ 動的スロット・相互可視化・10Hz位置同期エンジン
-// 2人・3人・途中参加・途中退出が100%破綻しない完全同期モデル
+// GRAVITY公式回答準拠: sendMessage({ message }) ＆ receiveMessage(payload.data.msg_data)
 
 import { characters, createNameplateMesh, updatePlayerName, bindLocalPlayerSlot } from './character.js';
 import { STAGES } from './world.js';
@@ -164,7 +164,7 @@ export const NetworkManager = {
 
     safeShowGameScreen();
 
-    // ★ ホストの自操作キャラをスロット0（青）へバインド
+    // ホストの自操作キャラをスロット0（青）へバインド
     if (typeof bindLocalPlayerSlot === 'function') {
       bindLocalPlayerSlot(0);
     } else if (typeof window.bindLocalPlayerSlot === 'function') {
@@ -203,7 +203,7 @@ export const NetworkManager = {
 
     safeShowGameScreen();
 
-    // ★【ここが添付ファイルで抜けていました！】端末B自身の自操作キャラを「スロット1（赤）」へ即座にバインド！
+    // 端末B自身の自操作キャラを「スロット1（赤）」へ即座にバインド
     if (typeof bindLocalPlayerSlot === 'function') {
       bindLocalPlayerSlot(1);
     } else if (typeof window.bindLocalPlayerSlot === 'function') {
@@ -222,7 +222,7 @@ export const NetworkManager = {
   },
 
   /**
-   * ゲストが入室した時の処理（ホスト・他ゲスト共通）
+   * ゲストが入室した時の処理（ホスト側で即時スロット1へ割り当て）
    */
   _handleUserJoined(data) {
     if (!data) return;
@@ -250,7 +250,7 @@ export const NetworkManager = {
 
         this._bindRemoteSlot(targetSlot, guestName);
 
-        // ★ Welcomeハンドシェイク：新入室者および全員に最新スロット構成を配信
+        // Welcomeハンドシェイク：新入室者および全員に最新スロット構成を配信
         this._sendCustomMessage({
           event: 'ROOM_MEMBERS_SYNC',
           slots: this.slots
@@ -260,21 +260,19 @@ export const NetworkManager = {
   },
 
   /**
-   * カスタムメッセージ受信ハンドラ（データ構造の揺らぎを完全吸収）
+   * ★ カスタムメッセージ受信ハンドラ（GRAVITY公式回答準拠）
+   * payload.data.msg_data から取り出して JSON.parse
    */
   _handleCustomMessage(data) {
     if (!data) return;
     try {
-      // ★【ここが添付ファイルで抜けていました！】プロパティ階層やデータ型の差異をすべて安全に吸収
-      let rawData = data.msg_data || data.message || data.data || data;
-      let packet = null;
+      // 公式仕様: data.msg_data に文字列が格納されている
+      const rawStr = (typeof data.msg_data === 'string')
+        ? data.msg_data
+        : (typeof data === 'string' ? data : (data.message || ''));
 
-      if (typeof rawData === 'string') {
-        packet = JSON.parse(rawData);
-      } else if (typeof rawData === 'object') {
-        packet = rawData;
-      }
-
+      if (!rawStr) return;
+      const packet = JSON.parse(rawStr);
       if (!packet || !packet.event) return;
 
       switch (packet.event) {
@@ -286,7 +284,6 @@ export const NetworkManager = {
         // ② 新入室者からの同期リクエスト（ホストが最新状態を即時返信）
         case 'REQUEST_ROOM_SYNC':
           if (this.isHost) {
-            // リクエストしてきたユーザーがスロットにまだいなければ割り当て
             const reqUserId = String(packet.userId || '');
             if (reqUserId && reqUserId !== String(this.myUser.user_id)) {
               let targetSlot = -1;
@@ -340,7 +337,6 @@ export const NetworkManager = {
       if (String(s.userId) === String(this.myUser.user_id)) {
         this.mySlot = s.slot;
         window.MY_PLAYER_SLOT = s.slot;
-        // ★ 自操作キャラのスロット切り替えを確実に実行！
         if (typeof bindLocalPlayerSlot === 'function') {
           bindLocalPlayerSlot(s.slot);
         } else if (typeof window.bindLocalPlayerSlot === 'function') {
@@ -457,14 +453,14 @@ export const NetworkManager = {
   },
 
   /**
-   * カスタムメッセージ送信ヘルパー
+   * ★ カスタムメッセージ送信ヘルパー（GRAVITY公式回答準拠）
+   * 引数は room_id 不要、キー名は message のみ！
    */
   _sendCustomMessage(msgObj) {
-    if (!this.isSDKAvailable || !this.currentRoomId) return;
+    if (!this.isSDKAvailable) return;
     try {
       window.AgentSDK.room.sendMessage({
-        room_id: this.currentRoomId,
-        msg_data: JSON.stringify(msgObj)
+        message: JSON.stringify(msgObj)
       });
     } catch (e) {
       console.warn('[NetworkManager] sendMessage failed:', e);
