@@ -1,5 +1,5 @@
 // 3Dキャラクター外観構築・手足メッシュ・スタックプール・トロリー・ホバー展望リフト・スカイダイブ＆トラップドア姿勢管理・足元手前側（カメラ方向）フロスト投影ネームバッジ
-// ★ ステップ2: 動的スロットバインド（端末Bでは赤、端末Cでは黄を自操作キャラ・カメラ追従対象へ動的切り替え）対応
+// ★ ステップ1: 背中ブロック色（他走者blueの白化バグ解消）＆ スロット名前汚染防止対応
 import {
   TEAMS,
   MAX_VISUAL_STACK,
@@ -108,8 +108,8 @@ export function updatePlayerName(newName) {
 }
 
 /**
- * ★【ステップ2 新設】自端末の担当スロット（0:青, 1:赤, 2:黄）に応じて自操作キャラを動的バインド！
- * 端末B（ゲスト1）では「赤」が自分の操作キャラになり、カメラ追従やスワイプ入力が赤に切り替わります。
+ * ★【ステップ1 改善版】自端末の担当スロット（0:青, 1:赤, 2:黄）に応じて自操作キャラを動的バインド！
+ * 他のスロットに自端末の名前が混ざる多重波及バグを完全に遮断。
  */
 export function bindLocalPlayerSlot(slotIndex) {
   if (!characters || characters.length < 3) return;
@@ -140,16 +140,23 @@ export function bindLocalPlayerSlot(slotIndex) {
     } else {
       // 相手またはAI
       c.isPlayer = false;
-      // すでにリモートフラグが付いていない場合は初期AI状態を維持
       if (!c.isRemote) {
         c.isAI = true;
       }
+
+      // ★ 他スロットに自端末の名前が波及しないよう、名前を厳格に保持
+      let otherName = c.name;
+      if (!otherName || otherName === 'YOU' || otherName === window.GRAVITY_USER_NAME) {
+        otherName = (idx === 0) ? 'norion' : (idx === 1 ? 'CPU 1' : 'CPU 2');
+      }
+      c.name = otherName;
+
       // ネームプレートを「他走者用枠（シアン枠なし）」に更新
       if (c.nameplateSprite) {
         if (c.nameplateSprite.material && c.nameplateSprite.material.map) {
           c.nameplateSprite.material.map.dispose();
         }
-        const newMesh = createNameplateMesh(c.name || (idx === 0 ? 'norion' : (idx === 1 ? 'CPU 1' : 'CPU 2')), false);
+        const newMesh = createNameplateMesh(otherName, false);
         c.nameplateSprite.material = newMesh.material;
         c.nameplateSprite.visible = true;
       }
@@ -395,11 +402,17 @@ export function createCharacterMesh(team) {
   };
 }
 
+/**
+ * ★【ステップ1 改善版】背中ブロックのマテリアル取得
+ * 他走者（!char.isPlayer）でも char.team.id === 'blue' のときは鮮やかな青マテリアルを返す！
+ */
 export function getBrickMaterialForStackIndex(char, index) {
   const safeIdx = Math.min(index, MAX_VISUAL_STACK - 1);
   if (!char.isPlayer) {
     if (char.team.id === 'red') return botRedStackMaterials[safeIdx];
     if (char.team.id === 'yellow') return botYellowStackMaterials[safeIdx];
+    // ★ 端末Bから見た相手（norion: !isPlayer かつ team.id === 'blue'）に青マテリアルを適用！
+    if (char.team.id === 'blue') return playerStackMaterials[safeIdx];
     return sharedMats.blockNeutral;
   }
   return playerStackMaterials[safeIdx];
