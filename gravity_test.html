@@ -4,9 +4,16 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>階段を架けろ！ - GRAVITYテスト環境</title>
-  <!-- 外部ライブラリ（既存ゲームと同一構成） -->
+  <!-- 外部ライブラリ（既存ゲームと完全同一） -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <style>
+    * {
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
+      touch-action: none;
+      box-sizing: border-box;
+    }
     html, body {
       margin: 0;
       padding: 0;
@@ -14,72 +21,167 @@
       height: 100%;
       overflow: hidden;
       background-color: #090d16;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     }
     #app-container {
       width: 100%;
       height: 100%;
       position: relative;
     }
+    #canvas-container {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 1;
+    }
+    #touch-control-layer {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 10;
+      touch-action: none;
+    }
+
+    /* ロビー画面（最前面オーバーレイ） */
+    #test-lobby-overlay {
+      position: absolute;
+      inset: 0;
+      z-index: 100;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      background: radial-gradient(circle at top, #1e293b 0%, #090d16 100%);
+      color: #ffffff;
+      padding: 24px 20px;
+      overflow-y: auto;
+    }
+    .lobby-card {
+      width: 100%;
+      max-width: 380px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 14px;
+    }
+    .btn-green {
+      width: 100%;
+      padding: 16px;
+      background-color: #5bb35d;
+      color: #ffffff;
+      font-size: 16px;
+      font-weight: 800;
+      border: none;
+      border-radius: 12px;
+      cursor: pointer;
+      box-shadow: 0 4px 14px rgba(91, 179, 93, 0.35);
+    }
+    .btn-gray {
+      width: 100%;
+      padding: 16px;
+      background-color: #64748b;
+      color: #ffffff;
+      font-size: 15px;
+      font-weight: 800;
+      border: none;
+      border-radius: 12px;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    }
   </style>
 </head>
 <body>
-  <!-- 空の親コンテナ（GRAVITYと同じ構造） -->
-  <div id="app-container"></div>
+  <div id="app-container">
+    <!-- 1. ゲーム本体が必須とするDOM構造（既存のindex.htmlと完全一致） -->
+    <div id="canvas-container"></div>
+    <div id="touch-control-layer"></div>
 
-  <!-- テスト用ブートスクリプト -->
-  <script type="module">
-    import { mountAllUI, UIController } from './dom.js';
+    <!-- ゲーム内HUD -->
+    <div id="hud-top-container" style="position: fixed; top: 0; left: 0; right: 0; z-index: 20; display: flex; justify-content: space-between; align-items: flex-start; padding: 20px; pointer-events: none;">
+      <div style="text-shadow: 0 2px 8px rgba(0,0,0,0.85); display: flex; align-items: baseline; gap: 6px;">
+        <span style="font-size: 12px; font-weight: 900; color: #fde047;">SCORE</span>
+        <span id="hud-score" style="font-size: 20px; font-weight: 900; color: #fbbf24;">0</span>
+        <span style="font-size: 11px; font-weight: 700; color: #fef08a;">段</span>
+      </div>
+      <div style="text-shadow: 0 2px 8px rgba(0,0,0,0.85);">
+        <span id="hud-timer" style="font-size: 20px; font-weight: 900; color: #ffffff; letter-spacing: 0.1em;">05:00</span>
+      </div>
+      <div style="text-shadow: 0 2px 8px rgba(0,0,0,0.85); display: flex; align-items: baseline; gap: 4px;">
+        <span id="hud-stack-count" style="font-size: 20px; font-weight: 900; color: #38bdf8;">0</span>
+        <span style="font-size: 11px; font-weight: 700; color: #bae6fd;">個</span>
+      </div>
+    </div>
 
-    // 1. DOM要素の動的マウント
-    const container = document.getElementById('app-container');
-    mountAllUI(container);
+    <!-- クイックリスタートボタン -->
+    <div id="hud-restart-layer" style="position: fixed; bottom: 0; left: 0; z-index: 20; padding: 20px; pointer-events: none;">
+      <button id="btn-restart-quick" type="button" aria-label="Restart"
+        style="pointer-events: auto; width: 44px; height: 44px; border-radius: 50%; background: rgba(15,23,42,0.8); border: 1px solid rgba(255,255,255,0.15); display: flex; align-items: center; justify-content: center; cursor: pointer;">
+        <svg style="width: 20px; height: 20px; color: #fde047; fill: none; stroke: currentColor;" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+        </svg>
+      </button>
+    </div>
 
-    // 2. ロビー画面を表示
-    UIController.showLobby();
+    <!-- サウンドボタン -->
+    <div id="hud-sound-layer" style="position: fixed; bottom: 0; right: 0; z-index: 20; padding: 20px; pointer-events: none;">
+      <button id="btn-sound" type="button" aria-label="Sound"
+        style="pointer-events: auto; width: 44px; height: 44px; border-radius: 50%; background: rgba(15,23,42,0.8); border: 1px solid rgba(255,255,255,0.15); display: flex; align-items: center; justify-content: center; cursor: pointer;">
+        <svg id="icon-sound-off" style="width: 20px; height: 20px; color: #94a3b8; fill: none; stroke: currentColor;" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
+        </svg>
+        <svg id="icon-sound-on" style="width: 20px; height: 20px; color: #38bdf8; fill: none; stroke: currentColor; display: none;" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+        </svg>
+      </button>
+    </div>
 
-    // 3. 「ソロモードで開始」ボタン押下時の動作確認
+    <!-- 2. 最前面に被せるロビー画面 -->
+    <div id="test-lobby-overlay">
+      <div class="lobby-card">
+        <div style="font-size: 26px; font-weight: 900; margin-top: 10px;">マルチプレイロビー</div>
+        <div style="font-size: 14px; color: #94a3b8; margin-bottom: 12px;">ようこそ プレイヤー さん</div>
+
+        <button type="button" class="btn-green" onclick="alert('マルチ通信はPhase 4で接続します')">公開ルームを作成</button>
+        <button type="button" class="btn-green" style="background-color: #4da34f;" onclick="alert('マルチ通信はPhase 4で接続します')">プライベートルームを作成</button>
+        
+        <!-- ソロモード開始ボタン：ロビーを消してゲームに操作を渡す -->
+        <button id="btn-start-solo" type="button" class="btn-gray">ソロモードで開始 (フォールバック)</button>
+
+        <div style="width: 100%; margin-top: 20px;">
+          <div style="font-size: 18px; font-weight: 800; margin-bottom: 12px;">公開ルーム一覧</div>
+          <div style="font-size: 14px; color: #94a3b8; text-align: center; padding: 20px 0; background: rgba(30,41,59,0.5); border-radius: 12px;">
+            公開ルームはありません
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. ゲーム本体スクリプト（既存と全く同じ読み込み順） -->
+  <script type="module" src="./main.js"></script>
+
+  <!-- 4. ロビー開閉スクリプト -->
+  <script>
     const soloBtn = document.getElementById('btn-start-solo');
-    if (soloBtn) {
-      soloBtn.addEventListener('click', async () => {
-        // ロビーを閉じてHUDを表示
-        UIController.showGame();
+    const lobbyOverlay = document.getElementById('test-lobby-overlay');
 
-        console.log('[gravity_test] ソロモードを起動します...');
-        try {
-          const mainModule = await import('./main.js');
+    if (soloBtn && lobbyOverlay) {
+      soloBtn.addEventListener('click', () => {
+        // ロビーの幕を非表示にして、ゲーム画面に即座にタップを届かせる
+        lobbyOverlay.style.display = 'none';
 
-          // ゲーム開始トリガー（もしmain側にstart関数があれば呼び出し、または画面クリックをエミュレート）
-          if (mainModule && typeof mainModule.startGame === 'function') {
-            mainModule.startGame();
-          } else {
-            // 既存の入力レイヤーを一度タップしてスタートさせる
-            const touchLayer = document.getElementById('touch-control-layer');
-            if (touchLayer) {
-              touchLayer.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
-              touchLayer.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
-            }
-          }
-        } catch (err) {
-          console.error('[gravity_test] ゲームの読み込みに失敗しました:', err);
+        // 本来のタッチ層に対してゲームスタートのタップを通知
+        const touchLayer = document.getElementById('touch-control-layer');
+        if (touchLayer) {
+          const evt = new PointerEvent('pointerdown', { bubbles: true, cancelable: true });
+          touchLayer.dispatchEvent(evt);
         }
       });
     }
-
-    // 4. その他のボタン動作ログ確認
-    document.getElementById('btn-create-public')?.addEventListener('click', () => {
-      alert('【テスト動作確認】「公開ルームを作成」が押されました。\n※Phase 4でAgentSDKと接続します。');
-    });
-
-    document.getElementById('btn-create-private')?.addEventListener('click', () => {
-      alert('【テスト動作確認】「プライベートルームを作成」が押されました。\n※Phase 4でAgentSDKと接続します。');
-    });
-
-    document.getElementById('btn-refresh-rooms')?.addEventListener('click', () => {
-      const listContainer = document.getElementById('room-list-container');
-      if (listContainer) {
-        listContainer.innerHTML = '<div style="font-size: 13px; color: #38bdf8; padding: 16px 0; text-align: center;">ルーム一覧を更新しました（テスト用ダミー）</div>';
-      }
-    });
   </script>
 </body>
 </html>
