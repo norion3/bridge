@@ -1,7 +1,9 @@
 // 3Dキャラクター外観構築・手足メッシュ・スタックプール・トロリー・ホバー展望リフト・スカイダイブ＆トラップドア姿勢管理・足元手前側（カメラ方向）フロスト投影ネームバッジ
-// ★ 即死バグ解消済み
-// ★ ステップ1: 自操作キャラ(isPlayer)であってもチームカラー(赤・黄・青)のブロックマテリアルを厳格に適用
-// ★ 不具合修復: char1（赤）および char2（黄）に isAI: true を明記（1人で遊ぶ時のCPU自律走行完全復旧）
+// ★ Phase 2 実装版（自他ネームプレート境界保護 ＆ 二重安全化）：
+//   1. bindLocalPlayerSlot での自端末ネーム特定フォールバック強化（GRAVITY_USER_NAME / NetworkManager.myUser / 既存名前の確実な継承）
+//   2. 他スロットへの自端末名混入を完全遮断し、リモート走者の名前と自キャラのシアン枠ネームを二重保護
+//   3. updatePlayerName の安全化（player 参照と MY_PLAYER_SLOT の両面からネームプレートを即時更新）
+
 import {
   TEAMS,
   MAX_VISUAL_STACK,
@@ -93,29 +95,40 @@ export function createNameplateMesh(nameText, isLocalPlayer = false) {
 
 export const createNameplateSprite = createNameplateMesh;
 
-// ★【Phase 3.5 新設】GRAVITYで非同期取得された名前を後から自キャラ足元に即時反映する関数
+/**
+ * ★【Phase 2 強化】GRAVITYで取得された名前を自キャラ足元に遅延なく即時反映する安全関数
+ */
 export function updatePlayerName(newName) {
   if (!newName) return;
-  if (player) {
-    player.name = newName;
-    if (player.nameplateSprite) {
-      if (player.nameplateSprite.material && player.nameplateSprite.material.map) {
-        player.nameplateSprite.material.map.dispose();
+
+  const targetChar = player || (typeof window !== 'undefined' && window.MY_PLAYER_SLOT !== undefined ? characters[window.MY_PLAYER_SLOT] : null);
+  if (targetChar) {
+    targetChar.name = newName;
+    if (targetChar.nameplateSprite) {
+      if (targetChar.nameplateSprite.material && targetChar.nameplateSprite.material.map) {
+        targetChar.nameplateSprite.material.map.dispose();
       }
       const newMesh = createNameplateMesh(newName, true);
-      player.nameplateSprite.material = newMesh.material;
-      player.nameplateSprite.visible = true;
+      targetChar.nameplateSprite.material = newMesh.material;
+      targetChar.nameplateSprite.visible = true;
     }
   }
 }
 
 /**
- * ★【ステップ1 改善版】自端末の担当スロット（0:青, 1:赤, 2:黄）に応じて自操作キャラを動的バインド！
- * 他のスロットに自端末の名前が混ざる多重波及バグを完全に遮断し、付帯ギミックメッシュを確実にリセット。
+ * ★【Phase 2 強化】自他ネームプレート境界保護版 bindLocalPlayerSlot
  */
 export function bindLocalPlayerSlot(slotIndex) {
   if (!characters || characters.length < 3) return;
   const targetSlot = Math.max(0, Math.min(2, Number(slotIndex) || 0));
+
+  // 自端末の本名を多段フォールバックで厳密に確定
+  let myResolvedName = 'YOU';
+  if (typeof window !== 'undefined' && window.GRAVITY_USER_NAME) {
+    myResolvedName = String(window.GRAVITY_USER_NAME);
+  } else if (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.myUser && window.NetworkManager.myUser.name && window.NetworkManager.myUser.name !== 'YOU') {
+    myResolvedName = String(window.NetworkManager.myUser.name);
+  }
 
   characters.forEach((c, idx) => {
     // 付帯メッシュの初期非表示を強制徹底（ジップライン金具の残留を防止）
@@ -136,37 +149,33 @@ export function bindLocalPlayerSlot(slotIndex) {
       c.isPlayer = true;
       c.isAI = false;
       c.isRemote = false;
+      c.name = myResolvedName;
       player = c; // main.js の操作・カメラ対象を即座にスイッチ！
 
-      const myName = (typeof window !== 'undefined' && window.GRAVITY_USER_NAME)
-        ? String(window.GRAVITY_USER_NAME)
-        : 'YOU';
-      c.name = myName;
-
-      // ネームプレートを「自キャラ（シアン枠）」に更新
+      // ネームプレートを「自キャラ（シアン枠）」に確実に更新
       if (c.nameplateSprite) {
         if (c.nameplateSprite.material && c.nameplateSprite.material.map) {
           c.nameplateSprite.material.map.dispose();
         }
-        const newMesh = createNameplateMesh(myName, true);
+        const newMesh = createNameplateMesh(myResolvedName, true);
         c.nameplateSprite.material = newMesh.material;
         c.nameplateSprite.visible = true;
       }
     } else {
-      // 相手またはAI
+      // 他走者またはAI
       c.isPlayer = false;
       if (!c.isRemote) {
         c.isAI = true;
       }
 
-      // ★ 他スロットに自端末の名前が波及しないよう、名前を厳格に保持
+      // ★ 他スロットに自端末の名前が混ざるのを完全遮断
       let otherName = c.name;
-      if (!otherName || otherName === 'YOU' || otherName === window.GRAVITY_USER_NAME) {
+      if (!otherName || otherName === 'YOU' || otherName === myResolvedName) {
         otherName = (idx === 0) ? 'norion' : (idx === 1 ? 'CPU 1' : 'CPU 2');
       }
       c.name = otherName;
 
-      // ネームプレートを「他走者用枠（シアン枠なし）」に更新
+      // ネームプレートを「他走者用（シアン枠なし）」に確実に更新
       if (c.nameplateSprite) {
         if (c.nameplateSprite.material && c.nameplateSprite.material.map) {
           c.nameplateSprite.material.map.dispose();
@@ -190,7 +199,7 @@ export function bindLocalPlayerSlot(slotIndex) {
 export function updateNameplatePosition(char) {
   if (!char || !char.nameplateSprite) return;
 
-  // ★ リモートプレイヤー（char.isRemote）の場合はフラグ誤判定でネームプレートが消えないよう保護
+  // リモートプレイヤーの場合はフラグ誤判定でネームプレートが消えないよう保護
   if (!char.isRemote) {
     if (
       char.onSlide ||
@@ -425,16 +434,10 @@ export function createCharacterMesh(team) {
   };
 }
 
-/**
- * ★【ステップ1 改善版】背中ブロックのマテリアル取得
- * 自操作(char.isPlayer)であっても他走者であっても、char.team.id（赤・黄・青）に応じた
- * 正しいスタックマテリアル配列を厳格に返却する。
- */
 export function getBrickMaterialForStackIndex(char, index) {
   const safeIdx = Math.min(index, MAX_VISUAL_STACK - 1);
   if (!char || !char.team) return sharedMats.blockNeutral;
 
-  // チームカラー最優先判定
   if (char.team.id === 'red') {
     return botRedStackMaterials[safeIdx];
   } else if (char.team.id === 'yellow') {
@@ -447,7 +450,6 @@ export function getBrickMaterialForStackIndex(char, index) {
 }
 
 export function refreshCharacterStackVisuals(char) {
-  // 青チームの場合のみスタック蓄積量に応じたグラデーション色変化を更新
   if (char.team && char.team.id === 'blue') {
     updatePlayerStackMaterials(char.stackCount);
   }
@@ -644,7 +646,7 @@ export function setupCharacters(scene, STAGES) {
   pMesh.root.position.copy(char0.pos);
   updateNameplatePosition(char0);
   characters.push(char0);
-  player = char0; // デフォルト自操作はスロット0
+  player = char0;
 
   // 2. スロット1: 赤（ゲスト1担当枠 / 初期はCPU 1）
   const b1Mesh = createCharacterMesh(TEAMS.RED);
@@ -656,7 +658,7 @@ export function setupCharacters(scene, STAGES) {
 
   const char1 = {
     isPlayer: false,
-    isAI: true, // ★【修復】CPUの自律走行フラグを明記
+    isAI: true,
     name: 'CPU 1',
     nameplateSprite: b1Nameplate,
     team: TEAMS.RED,
@@ -734,7 +736,7 @@ export function setupCharacters(scene, STAGES) {
 
   const char2 = {
     isPlayer: false,
-    isAI: true, // ★【修復】CPUの自律走行フラグを明記
+    isAI: true,
     name: 'CPU 2',
     nameplateSprite: b2Nameplate,
     team: TEAMS.YELLOW,
@@ -802,7 +804,6 @@ export function setupCharacters(scene, STAGES) {
   updateNameplatePosition(char2);
   characters.push(char2);
 
-  // 初期化完了時、もし事前にスロット指定があれば即座にバインド
   if (typeof window !== 'undefined' && window.MY_PLAYER_SLOT !== undefined) {
     bindLocalPlayerSlot(window.MY_PLAYER_SLOT);
   }
@@ -894,13 +895,11 @@ export function resetCharacters(STAGES) {
     updateNameplatePosition(characters[2]);
   }
 
-  // 自操作キャラのネームプレートを再確認
   if (player && typeof window !== 'undefined' && window.GRAVITY_USER_NAME) {
     updatePlayerName(window.GRAVITY_USER_NAME);
   }
 }
 
-// 外部連携用グローバルフック
 if (typeof window !== 'undefined') {
   window.bindLocalPlayerSlot = bindLocalPlayerSlot;
 }

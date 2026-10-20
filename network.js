@@ -1,8 +1,8 @@
 // network.js: AgentSDKラッパー ＆ 動的スロット・相互可視化・10Hz位置同期エンジン
-// ★ Phase 1 実装版（招待後ゲーム画面直行・画面遷移根絶）：
-//   1. room.create() 戻り値判定の寛容化（errno/code/data.room_id の各種SDKフォーマット許容による誤爆脱落完全撤廃）
-//   2. 画面消去（safeShowGameScreen）の最優先実行（First Action化：重い処理より前に確実にロビー幕を剥離）
-//   3. 既存の同期ロジック・スナップショット・物理通信パケットの完全非改変維持
+// ★ Phase 1 実装版（ゲスト入室表示＆ネームプレート正常化）：
+//   1. 自操作スロット保護（_applyRoomMembersSync でのホスト初期データによる「CPU 1」上書きを完全ブロック）
+//   2. ゲスト合流時の Stage 0 初期化（先行して歩いていた赤キャラを Stage 0 スタート地点へ即座にリセット）
+//   3. リモート走者の受信座標追従・ステージ同期保証（Stage 0 の目の前でリアルタイム描画）
 
 import { characters, createNameplateMesh, updatePlayerName, bindLocalPlayerSlot, refreshCharacterStackVisuals } from './character.js';
 import { STAGES, buildWorld, manageBlockSpawns, bridges } from './world.js';
@@ -223,9 +223,6 @@ export const NetworkManager = {
 
   /**
    * 公開ルーム作成（ホスト）
-   * ★【Phase 1 強化】
-   *   1. room.create の戻り値判定を寛容化（判定誤爆による return null 脱落を完全根絶）
-   *   2. 画面消去（safeShowGameScreen）を何よりも最優先で実行（First Action）
    */
   async createRoom(isPrivate = false) {
     await this.init();
@@ -239,7 +236,6 @@ export const NetworkManager = {
         const res = await window.AgentSDK.room.create({ max_players: 3, room_permission: permission });
         console.log('[NetworkManager] room.create response:', res);
 
-        // ★ 戻り値判定の寛容化: errno === 0, code === 0, または room_id / data.room_id の存在を許容
         let isSuccess = false;
         if (res) {
           if (res.errno === 0 || res.errno === '0' || res.code === 0 || res.code === '0') {
@@ -251,7 +247,6 @@ export const NetworkManager = {
           }
         }
 
-        // 明確にエラーコードが立っている場合のみ中断
         if (!isSuccess && res && (res.errno !== undefined || res.code !== undefined)) {
           const errMsg = res.errmsg || res.msg || res.message || '部屋の作成に失敗しました';
           console.error(`[NetworkManager] Failed to create room: ${errMsg}`);
@@ -275,7 +270,6 @@ export const NetworkManager = {
     this.isMultiplayerActive = true;
     this._seedApplied = true;
 
-    // ★【First Action】重いワールド再構築等の前に、真っ先にロビー幕を物理的に完全消去！
     safeShowGameScreen();
 
     // 自操作キャラをスロット0（青）へ即時バインド
@@ -360,8 +354,10 @@ export const NetworkManager = {
       ? String(window.GRAVITY_USER_NAME)
       : this.myUser.name;
 
+    // スロット0（ホスト）をリモート固定
     this._bindRemoteSlot(0, 'Player');
 
+    // 自操作キャラをスロット1（赤）へバインド
     if (typeof bindLocalPlayerSlot === 'function') {
       bindLocalPlayerSlot(1);
     } else if (typeof window.bindLocalPlayerSlot === 'function') {
@@ -438,6 +434,7 @@ export const NetworkManager = {
                   name: reqName,
                   isAI: false
                 };
+                // ホスト側で赤キャラを即座にStage 0初期位置へ合流＆リモート化
                 this._bindRemoteSlot(targetSlot, reqName);
               }
             }
@@ -484,6 +481,9 @@ export const NetworkManager = {
     }
   },
 
+  /**
+   * ★【不具合 ① 解消】自操作スロット保護版 ROOM_MEMBERS_SYNC 適用ハンドラ
+   */
   _applyRoomMembersSync(syncedSlots, seed, snapshot = null) {
     if (!Array.isArray(syncedSlots)) return;
     this.slots = syncedSlots;
@@ -525,8 +525,10 @@ export const NetworkManager = {
 
     syncedSlots.forEach((s) => {
       const isMyClient = (s.clientId && s.clientId === this.clientId) || (!s.clientId && this.isHost && s.slot === 0);
+      const isMyCurrentSlot = (s.slot === this.mySlot);
 
-      if (isMyClient) {
+      // ★ 自端末の担当スロットは、ホストからの初期情報（CPU 1 等）で上書きされるのを完全にブロック！
+      if (isMyClient || isMyCurrentSlot) {
         this.mySlot = s.slot;
         window.MY_PLAYER_SLOT = s.slot;
         if (typeof bindLocalPlayerSlot === 'function') {
@@ -534,10 +536,15 @@ export const NetworkManager = {
         } else if (typeof window.bindLocalPlayerSlot === 'function') {
           window.bindLocalPlayerSlot(s.slot);
         }
-        if (window.GRAVITY_USER_NAME) {
-          updatePlayerName(window.GRAVITY_USER_NAME);
-        }
-      } else if (!s.isAI && (s.clientId || s.userId)) {
+        const myRealName = (typeof window !== 'undefined' && window.GRAVITY_USER_NAME)
+          ? String(window.GRAVITY_USER_NAME)
+          : this.myUser.name;
+        updatePlayerName(myRealName);
+        return;
+      }
+
+      // 他スロットの反映
+      if (!s.isAI && (s.clientId || s.userId)) {
         this._bindRemoteSlot(s.slot, s.name);
       } else if (s.isAI) {
         this._restoreSlotToAI(s.slot);
@@ -545,6 +552,9 @@ export const NetworkManager = {
     });
   },
 
+  /**
+   * ★【不具合 ② 解消】合流時の Stage 0 初期化 ＆ リモート化
+   */
   _bindRemoteSlot(slotIndex, playerName) {
     const targetChar = characters[slotIndex];
     if (!targetChar) return;
@@ -558,6 +568,25 @@ export const NetworkManager = {
     targetChar.targetBlock = null;
     targetChar.searchCooldown = 999999;
     targetChar.name = playerName;
+
+    // ★ 奥へ先行してしまっていた赤キャラを、即座に Stage 0 の初期合流地点へリセット！
+    const defaultX = (slotIndex === 1) ? -4.0 : (slotIndex === 2 ? 4.0 : 0.0);
+    const stage0Y = (STAGES[0] ? STAGES[0].y : 0);
+    const stage0Z = (STAGES[0] ? (STAGES[0].z + 4.0) : 4.0);
+
+    targetChar.currentStage = 0;
+    targetChar.pos.set(defaultX, stage0Y, stage0Z);
+    if (targetChar.meshObj && targetChar.meshObj.root) {
+      targetChar.meshObj.root.position.copy(targetChar.pos);
+      targetChar.meshObj.root.rotation.set(0, Math.PI, 0);
+    }
+    if (!targetChar.targetNetPos) {
+      targetChar.targetNetPos = new THREE.Vector3();
+    }
+    targetChar.targetNetPos.copy(targetChar.pos);
+    targetChar.onSlide = false;
+    targetChar.lastPlankIdx = -1;
+    targetChar.isJumping = false;
 
     targetChar.walkCycle = 0;
     if (targetChar.meshObj) {
@@ -625,6 +654,9 @@ export const NetworkManager = {
     }, 100);
   },
 
+  /**
+   * ★【不具合 ② 解消】リモート位置受信ハンドラ（ステージ飛び・合流ワープ対応）
+   */
   _handleRemotePosition(packet) {
     if (packet.slot === this.mySlot || packet.clientId === this.clientId) return;
 
@@ -633,6 +665,15 @@ export const NetworkManager = {
 
     targetChar.isRemote = true;
     targetChar.isAI = false;
+
+    // ステージが異なる（端末AがStage 1で、端末BがStage 0に合流したなど）場合は即座にステージと座標を追従
+    if (packet.stage !== undefined && targetChar.currentStage !== packet.stage) {
+      targetChar.currentStage = packet.stage;
+      targetChar.pos.set(packet.x, packet.y, packet.z);
+      if (targetChar.meshObj && targetChar.meshObj.root) {
+        targetChar.meshObj.root.position.copy(targetChar.pos);
+      }
+    }
 
     if (!targetChar.targetNetPos) {
       targetChar.targetNetPos = new THREE.Vector3();
