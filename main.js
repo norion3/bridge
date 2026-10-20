@@ -1,8 +1,8 @@
 // main.js: ゲーム全体の起動指揮・Three.js初期化・メインループ・入力・HUD制御
-// ★ Phase 2 実装版（CPU 2完全リンク＆ホスト権威AI・ゲスト側Lerp追従）：
-//   - マルチプレイ時、ホスト端末のみがAI思考（updateAICharacter）を実行
-//   - ゲスト端末ではローカルAI自律思考を止め、ホストから10Hzで届くPOSパケットにLerp追従（ホスト画面のCPU 2と100%同一に走る）
-//   - シングルプレイ時は通常通りローカルAIが元気に自律走行
+// ★ 決定論シード同期＆コース自動伸長安全化版：
+//   1. world.js 側の決定論シード同期導入により、ホスト・ゲスト双方がそれぞれの画面で安全に extendCourse(scene) を実行可能
+//   2. ゲスト画面で奥のステージが途切れて海へ落下する致命的バグを完全解消
+//   3. 他のゲームループ・入力・カメラ・演出更新ロジックは100%維持
 
 import './dom.js';
 
@@ -446,15 +446,12 @@ export function animate(currentTime) {
         window.NetworkManager.slots[cIdx] && !window.NetworkManager.slots[cIdx].isAI;
       const isRemotePlayer = c.isRemote || isHumanSlot;
 
-      // ★【Phase 2 核心】マルチプレイ時、ホスト端末のみがAI思考（updateAICharacter）を実行！
-      // ゲスト端末ではローカルAI自律思考を止め、ホストから届くPOSパケットにLerp追従させる（ホスト権威AI）
-      // シングルプレイ時は通常通りCPUが自律走行
+      // マルチプレイ時、ホスト端末のみがAI思考（updateAICharacter）を実行
       const shouldRunAI = (!isMulti || isHost) && !isRemotePlayer && c.isAI !== false;
 
       if (shouldRunAI) {
         updateAICharacter(scene, c, dt, spawnPuffCloud, spawnSpeedStepRing);
       } else if (c.targetNetPos) {
-        // ★ リモートプレイヤーおよびゲスト端末でのAIスロットは、ホストから届いた最新目標座標へ滑らかにLerp追従！
         const prevX = c.pos.x;
         const prevZ = c.pos.z;
         c.pos.lerp(c.targetNetPos, 0.25);
@@ -509,6 +506,7 @@ export function animate(currentTime) {
       cleanupTimer = 0;
     }
 
+    // ★【決定論シード同期】ステージ番号に基づいたシード同期により、両端末で全く同じコース形状が完全一致生成されるため安全にローカル伸長
     let maxStage = 0;
     for (let cIdx = 0; cIdx < characters.length; cIdx++) {
       if (characters[cIdx].currentStage > maxStage) {

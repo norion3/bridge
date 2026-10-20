@@ -1,7 +1,8 @@
 // systems.js: 物理移動判定・スカイウォーク歩行開放・ハッチ進入同期・リュック収納アニメーション連動・シームレス風音連携・スカイダイブ＆スライダーボーナス回収・合流島安全着地完全整合・お邪魔キャラ衝突判定・下層島誤ワープ完全防止・階段/床ブロック取得リアルタイム同期
-// ★ Phase 1 強化版:
-//   - ホスト端末のAI（CPU 2: 黄）が階段を架けた時も BUILD_PLANK をブロードキャスト（黄色階段の完全同期）
-//   - applyRemoteBlockPicked の座標最優先マッチングを完全維持
+// ★ Phase 4 実装版（リモート階段設置時のスタック即時反映）：
+//   1. applyRemotePlankBuilt 受信時に、設置者（他走者またはホストAI）の所持ブロック数（stackCount）を即座に -1 減算
+//   2. 最大100ms（次のPOS受信まで）存在した「階段は置かれたのに背中が減っていない微小遅延」を完全ゼロ化
+//   3. コア移動物理、ギミック進入判定、障害物衝突判定、座標最優先ブロック消去同期を100%維持
 
 import {
   TRAMPOLINE_TIERS,
@@ -74,7 +75,7 @@ export function setSystemCallbacks(sound, updateHUD, onPlankPlaced = null) {
 }
 
 /**
- * リモートプレイヤーが階段を設置した際の受信ハンドラ（段板カラー即時同期）
+ * リモートプレイヤーが階段を設置した際の受信ハンドラ（段板カラー即時同期 ＆ スタック即時減算）
  */
 export function applyRemotePlankBuilt(stageIdx, laneIdx, plankIdx, teamId) {
   const localBridges = bridgesByStage.get(stageIdx) || [];
@@ -112,6 +113,13 @@ export function applyRemotePlankBuilt(stageIdx, laneIdx, plankIdx, teamId) {
 
   if (onBridge.solidMesh.instanceColor) {
     onBridge.solidMesh.instanceColor.needsUpdate = true;
+  }
+
+  // ★【Phase 4 改善】設置者（他走者またはホストAI）の背中スタックを即座に -1 減算
+  // 次の POS パケット（最大100ms）を待たずに段板出現と同時に背中ブロックを即時同期消去
+  const builderChar = characters.find(c => !c.isPlayer && c.team && c.team.id === teamId);
+  if (builderChar && builderChar.stackCount > 0) {
+    removeBrickFromCharacter(builderChar);
   }
 }
 
@@ -587,7 +595,7 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
                   }
                 }
 
-                // ★【Phase 1 強化】自操作キャラ または ホスト端末のAI（CPU 2: 黄）が階段を架けた時、他端末へ即時ブロードキャスト！
+                // 自操作キャラ または ホスト端末のAI（CPU 2: 黄）が階段を架けた時、他端末へ即時ブロードキャスト！
                 const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
                 const shouldBroadcastPlank = char.isPlayer || (isHost && char.isAI);
 

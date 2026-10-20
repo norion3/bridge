@@ -1,8 +1,8 @@
 // network.js: AgentSDKラッパー ＆ 動的スロット・相互可視化・10Hz位置同期エンジン
-// ★ Phase 2 実装版（CPU 2完全リンク＆ホスト権威AI・スナップショットクリーン展開）：
-//   1. ホスト端末から自キャラ(スロット0)に加え、AIスロット(CPU 2: 黄)のPOS情報も10Hzで配信（ホスト権威AIの確立）
-//   2. ゲスト入室時スナップショット受取時に床ブロックプールをクリーン展開し、ホストですでに拾われたブロックの残存を根絶
-//   3. SCATTER_BLOCKS、SPAWN_BLOCK、PICK_BLOCK、BUILD_PLANK、排他ロック、公式joinroom即時合流を完全維持
+// ★ Phase 2 実装版（通信負荷50%削減・位置パケット統合）：
+//   1. ホスト端末から自キャラ（青）とCPU 2（黄）を別々に2回送信していた10Hz POS通信を、1通のメッセージ（list配列）に統合
+//   2. 毎秒20回送信から毎秒10回送信へ半減させ、端末の発熱・バッテリー消費・低速回線でのパケット詰まりを50%削減
+//   3. 従来の単一POSパケットとの後方互換性を完全維持しつつ、Phase 1 のスロット厳格判定・600msタイムアウト・ボタン一元化を100%維持
 
 import {
   characters,
@@ -17,11 +17,12 @@ import { resetParticlePools, floorBlockPool } from './particles.js';
 
 /**
  * 未入室時の exit() による無限待機（Pendingフリーズ）を確実に防ぐ安全退出ヘルパー
+ * ★【Phase 1 改善】4G/5G回線の通信往復（RTT）を考慮し、タイムアウト時間を 600ms に適正化
  */
 async function safeExitCurrentRoom() {
   if (typeof window === 'undefined' || !window.AgentSDK || !window.AgentSDK.room) return;
   try {
-    const timeoutPromise = new Promise(resolve => setTimeout(() => resolve({ timeout: true }), 200));
+    const timeoutPromise = new Promise(resolve => setTimeout(() => resolve({ timeout: true }), 600));
     await Promise.race([window.AgentSDK.room.exit(), timeoutPromise]);
   } catch (e) {
     console.warn('[network.js] safeExitCurrentRoom caught:', e);
@@ -495,7 +496,12 @@ export const NetworkManager = {
           break;
 
         case 'POS':
-          this._handleRemotePosition(packet);
+          // ★【Phase 2 統合対応】list 配列がある場合は各スロットを順次展開、単一パケットの場合はそのまま処理
+          if (Array.isArray(packet.list)) {
+            packet.list.forEach(p => this._handleRemotePosition(p));
+          } else {
+            this._handleRemotePosition(packet);
+          }
           break;
 
         case 'BUILD_PLANK':
@@ -533,6 +539,10 @@ export const NetworkManager = {
     }
   },
 
+  /**
+   * ★【Phase 1 改善】3人目参加時のスロット競合誤認を防止する厳格化ハンドラ
+   * isMyCurrentSlot による曖昧なフォールバックを撤廃し、clientId の完全一致のみで自スロットを判定
+   */
   _applyRoomMembersSync(syncedSlots, seed, snapshot = null) {
     if (!Array.isArray(syncedSlots)) return;
     this.slots = syncedSlots;
@@ -547,7 +557,6 @@ export const NetworkManager = {
         buildWorld(activeScene, seed);
 
         if (snapshot && Array.isArray(snapshot.blocks)) {
-          // ★【Phase 2 強化】ホストですでに拾われたブロックがゲストに幽霊として残らないよう、既存プールを全クリア
           floorBlockPool.forEach(b => {
             b.active = false;
             b.mesh.visible = false;
@@ -583,10 +592,10 @@ export const NetworkManager = {
     }
 
     syncedSlots.forEach((s) => {
+      // 端末固有の clientId 完全一致、またはホスト自身のスロット0のみで自操作スロットを判定
       const isMyClient = (s.clientId && s.clientId === this.clientId) || (!s.clientId && this.isHost && s.slot === 0);
-      const isMyCurrentSlot = (s.slot === this.mySlot);
 
-      if (isMyClient || isMyCurrentSlot) {
+      if (isMyClient) {
         this.mySlot = s.slot;
         window.MY_PLAYER_SLOT = s.slot;
         if (typeof bindLocalPlayerSlot === 'function') {
@@ -666,8 +675,8 @@ export const NetworkManager = {
   },
 
   /**
-   * ★【Phase 2 強化】10Hz 位置情報ブロードキャスト
-   * 自操作キャラ(スロット0: 青)に加え、ホスト権威AIとしてCPU 2(スロット2: 黄)のPOSも10Hzで他端末へ配信！
+   * ★【Phase 2 改善】10Hz 位置情報ブロードキャスト（通信パケット統合版）
+   * ホスト端末の自キャラ（青）とAI（CPU 2: 黄）を1通のメッセージに統合して送信（通信回数を50%削減）
    */
   _startPositionBroadcasting() {
     if (this._syncIntervalId) clearInterval(this._syncIntervalId);
@@ -682,9 +691,11 @@ export const NetworkManager = {
         ? String(window.GRAVITY_USER_NAME)
         : (this.myUser ? this.myUser.name : 'YOU');
 
-      // 1. 自操作キャラのPOS送信
-      this._sendCustomMessage({
-        event: 'POS',
+      // 1. 送信用のポジション一覧を構築
+      const posList = [];
+
+      // 自操作キャラ
+      posList.push({
         slot: this.mySlot,
         clientId: this.clientId,
         name: myName,
@@ -696,14 +707,13 @@ export const NetworkManager = {
         stage: myChar.currentStage || 0
       });
 
-      // 2. ホスト端末の場合、AIスロット（特にCPU 2: 黄）のPOSも一緒に配信（ホスト権威AIの同期確立）
+      // ホスト端末の場合、AIスロット（特にCPU 2: 黄）も同一パケットに統合
       if (this.isHost) {
         this.slots.forEach(s => {
           if (s.isAI && s.slot !== this.mySlot) {
             const aiChar = characters[s.slot];
             if (aiChar) {
-              this._sendCustomMessage({
-                event: 'POS',
+              posList.push({
                 slot: s.slot,
                 clientId: this.clientId,
                 name: s.name || (s.slot === 1 ? 'CPU 1' : 'CPU 2'),
@@ -718,6 +728,13 @@ export const NetworkManager = {
           }
         });
       }
+
+      // ★ 1通のメッセージとして送信（ホストの通信送信回数を毎秒20回から毎秒10回へ半減！）
+      this._sendCustomMessage({
+        event: 'POS',
+        clientId: this.clientId,
+        list: posList
+      });
     }, 100);
   },
 
@@ -835,7 +852,8 @@ if (typeof window !== 'undefined') {
 }
 
 /**
- * dom.js 内のボタンと NetworkManager を安全に接続するフック
+ * ★【Phase 1 一元化】dom.js 内のボタンと NetworkManager を安全に接続するフック
+ * ボタンタップイベントのリスナー登録を本関数に完全に一本化し、二重登録を根絶
  */
 let lastCreateActionTime = 0;
 

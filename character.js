@@ -104,10 +104,16 @@ export function updatePlayerName(newName) {
   if (targetChar) {
     targetChar.name = newName;
     if (targetChar.nameplateSprite) {
-      if (targetChar.nameplateSprite.material && targetChar.nameplateSprite.material.map) {
-        targetChar.nameplateSprite.material.map.dispose();
+      if (targetChar.nameplateSprite.material) {
+        if (targetChar.nameplateSprite.material.map) {
+          targetChar.nameplateSprite.material.map.dispose();
+        }
+        targetChar.nameplateSprite.material.dispose();
       }
       const newMesh = createNameplateMesh(newName, true);
+      if (newMesh.geometry) {
+        newMesh.geometry.dispose();
+      }
       targetChar.nameplateSprite.material = newMesh.material;
       targetChar.nameplateSprite.visible = true;
     }
@@ -208,10 +214,16 @@ export function resetCharacterToStageZero(char, nameText = null, isLocal = false
     char.name = nameText;
   }
   if (char.nameplateSprite) {
-    if (char.nameplateSprite.material && char.nameplateSprite.material.map) {
-      char.nameplateSprite.material.map.dispose();
+    if (char.nameplateSprite.material) {
+      if (char.nameplateSprite.material.map) {
+        char.nameplateSprite.material.map.dispose();
+      }
+      char.nameplateSprite.material.dispose();
     }
     const newMesh = createNameplateMesh(char.name, isLocal);
+    if (newMesh.geometry) {
+      newMesh.geometry.dispose();
+    }
     char.nameplateSprite.material = newMesh.material;
     char.nameplateSprite.visible = true;
   }
@@ -257,10 +269,16 @@ export function bindLocalPlayerSlot(slotIndex) {
 
       // ネームプレートを「自キャラ（シアン枠）」に確実に更新
       if (c.nameplateSprite) {
-        if (c.nameplateSprite.material && c.nameplateSprite.material.map) {
-          c.nameplateSprite.material.map.dispose();
+        if (c.nameplateSprite.material) {
+          if (c.nameplateSprite.material.map) {
+            c.nameplateSprite.material.map.dispose();
+          }
+          c.nameplateSprite.material.dispose();
         }
         const newMesh = createNameplateMesh(myResolvedName, true);
+        if (newMesh.geometry) {
+          newMesh.geometry.dispose();
+        }
         c.nameplateSprite.material = newMesh.material;
         c.nameplateSprite.visible = true;
       }
@@ -280,10 +298,16 @@ export function bindLocalPlayerSlot(slotIndex) {
 
       // ネームプレートを「他走者用（シアン枠なし）」に確実に更新
       if (c.nameplateSprite) {
-        if (c.nameplateSprite.material && c.nameplateSprite.material.map) {
-          c.nameplateSprite.material.map.dispose();
+        if (c.nameplateSprite.material) {
+          if (c.nameplateSprite.material.map) {
+            c.nameplateSprite.material.map.dispose();
+          }
+          c.nameplateSprite.material.dispose();
         }
         const newMesh = createNameplateMesh(otherName, false);
+        if (newMesh.geometry) {
+          newMesh.geometry.dispose();
+        }
         c.nameplateSprite.material = newMesh.material;
         c.nameplateSprite.visible = true;
       }

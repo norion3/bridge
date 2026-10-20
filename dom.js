@@ -1,8 +1,7 @@
 // dom.js: 画面UI・HUD・ロビー・待機室の動的生成モジュール
-// 既存のゲームコードには一切干渉せず、指定されたコンテナ内にUI要素を安全に構築します。
-// ★ Phase 3 実装版（イベントリスナー一本化・多重発火デバウンス仕上げ）：
-//   1. 「公開ルームを作成」ボタンのタップイベントに600msデバウンスガードを導入（touchend+clickの連動二重発火を完全防止）
-//   2. network.js のフックと重複しないようイベント登録を一元化・安全化
+// ★ Phase 1 実装版（ボタンイベント登録の一元化・先祖返り温床の根絶）：
+//   1. ロビー作成ボタンのイベントリスナー重複登録を撤廃（network.js の hookLobbyNetworkEvents に完全一元化）
+//   2. dom.js はボタンのDOM属性設定（ID付与・onclick除去・スタイル）に専念し、UIの二重発火や先祖返りを物理的に防止
 //   3. UIController.showGame() での全オーバーレイ非表示（display: none !important）徹底
 
 import { updatePlayerName } from './character.js';
@@ -222,10 +221,8 @@ export async function syncGravityUserName() {
 
 /**
  * 既存の静的要素（gravity_loader.html）が存在する場合のテキスト・レイアウト・順序自動補正
- * ★【Phase 3 仕上げ】イベント二重登録の整理 ＆ デバウンスガード付きトリガー
+ * ★【Phase 1 改善】イベントリスナー登録の重複を排除し、network.js に完全一元化
  */
-let lastDomCreateTime = 0;
-
 export function patchExistingLobbyLabels() {
   const overlay = document.getElementById('test-lobby-overlay');
   if (!overlay) return;
@@ -283,43 +280,7 @@ export function patchExistingLobbyLabels() {
       btn.removeAttribute('onclick');
       btn.onclick = null;
       btn.className = 'gravity-btn-green';
-
-      // ★【Phase 3】多重発火・二重実行を防止するデバウンス付きフック
-      if (!btn._hasDirectHook) {
-        btn._hasDirectHook = true;
-        const triggerCreate = async (e) => {
-          const now = Date.now();
-          if (now - lastDomCreateTime < 600) {
-            if (e) {
-              e.preventDefault();
-              e.stopPropagation();
-            }
-            return;
-          }
-          lastDomCreateTime = now;
-
-          if (e) {
-            e.preventDefault();
-            e.stopPropagation();
-          }
-
-          if (window.NetworkManager && typeof window.NetworkManager.createRoom === 'function') {
-            window.NetworkManager.createRoom(false);
-          } else {
-            try {
-              const netModule = await import('./network.js');
-              if (netModule && netModule.NetworkManager) {
-                netModule.NetworkManager.createRoom(false);
-              }
-            } catch (err) {
-              console.error('[dom.js] Failed to load network.js on button click:', err);
-            }
-          }
-        };
-
-        btn.addEventListener('touchend', triggerCreate, { passive: false });
-        btn.addEventListener('click', triggerCreate);
-      }
+      // ★ イベントリスナー登録は network.js (hookLobbyNetworkEvents) に完全一元化
     } else if (text.includes('プライベート')) {
       btn.id = 'btn-create-private';
       btn.removeAttribute('onclick');
@@ -460,7 +421,6 @@ export function mountAllUI(container) {
 
 /**
  * UIステート表示切り替え制御
- * 静的・動的・すべてのオーバーレイ幕を例外なく物理消去（display: none !important）
  */
 export const UIController = {
   showLobby() {
@@ -493,46 +453,36 @@ export const UIController = {
   },
 
   showGame() {
-    // 1. 静的・動的問わず全オーバーレイ幕を確実に完全剥離
     this._hideAllLobbyOverlays();
 
-    // 2. 待機部屋も確実に完全非表示化
     const waitScreen = document.getElementById('screen-waiting');
     if (waitScreen) {
       waitScreen.classList.add('hidden');
       waitScreen.style.setProperty('display', 'none', 'important');
     }
 
-    // 3. スタートモーダルも安全に非表示化
     const startModal = document.getElementById('modal-start');
     if (startModal) {
       startModal.classList.add('hidden');
       startModal.style.setProperty('display', 'none', 'important');
     }
 
-    // 4. ゲーム内HUD（スコア・タイマー・リスタート・サウンド）を表示
     this._setHUDVisible(true);
   },
 
-  /**
-   * DOM上に存在する全種類のロビー幕を物理的に完全に隠滅するヘルパー
-   */
   _hideAllLobbyOverlays() {
-    // ① 静的ローダーオーバーレイ
     const staticOverlay = document.getElementById('test-lobby-overlay');
     if (staticOverlay) {
       staticOverlay.classList.add('hidden');
       staticOverlay.style.setProperty('display', 'none', 'important');
     }
 
-    // ② 動的生成ロビーオーバーレイ
     const screenLobby = document.getElementById('screen-lobby');
     if (screenLobby) {
       screenLobby.classList.add('hidden');
       screenLobby.style.setProperty('display', 'none', 'important');
     }
 
-    // ③ クラス指定で存在する可能性のあるすべての全画面幕
     const allOverlays = document.querySelectorAll('.gravity-screen-overlay');
     allOverlays.forEach(overlay => {
       overlay.classList.add('hidden');

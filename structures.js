@@ -1,10 +1,16 @@
 // 静的構造物・アトラクション施設・浮島・装飾メッシュ・目鼻なし愛嬌お邪魔キャラ生成モジュール（完全分離レイヤー）
+// ★ Phase 5 実装版（外周リングのキャッシュ共有化・VRAM保護）：
+//   1. createIslandMesh で毎回 new されていた TorusGeometry を、半径 r ごとのキャッシュ（islandTorusGeoCache）で共有化
+//   2. 生成された外周リングジオメトリを sharedGeometriesSet に登録し、古いステージのお掃除やリスタート時にも VRAM にゴミが蓄積しないよう完全防止
+//   3. 他の施設構造物・アトラクション・お邪魔キャラ生成ロジックは100%維持
+
 import {
   SKYDIVE_CONFIG,
   TRAPDOOR_CONFIG
 } from './constants.js';
 import {
   sharedMats,
+  sharedGeometriesSet,
   islandGeo,
   gatePedestalGeo,
   elevatorPlatformFloorGeo,
@@ -462,7 +468,24 @@ export function createOceanIsletMesh(scale = 1.0, type = 'tropical') {
   return group;
 }
 
-// 9. ステージ浮島メッシュ生成（中心 X 座標サポート）
+// 半径 r ごとの浮島外周リング（TorusGeometry）キャッシュマップ（VRAMリーク完全防止）
+const islandTorusGeoCache = new Map();
+
+function getOrCreateIslandTorusGeo(r) {
+  const key = Number(r.toFixed(2));
+  let geo = islandTorusGeoCache.get(key);
+  if (!geo) {
+    geo = new THREE.TorusGeometry(key, 0.2, 8, 36);
+    geo.rotateX(Math.PI / 2);
+    if (sharedGeometriesSet) {
+      sharedGeometriesSet.add(geo);
+    }
+    islandTorusGeoCache.set(key, geo);
+  }
+  return geo;
+}
+
+// 9. ステージ浮島メッシュ生成（中心 X 座標サポート ＆ 外周リングキャッシュ共有）
 export function createIslandMesh(r, y, z, x = 0.0) {
   const group = new THREE.Group();
   const plat = new THREE.Mesh(islandGeo, sharedMats.island);
@@ -471,8 +494,8 @@ export function createIslandMesh(r, y, z, x = 0.0) {
   plat.receiveShadow = true;
   group.add(plat);
 
-  const torusGeo = new THREE.TorusGeometry(r, 0.2, 8, 36);
-  torusGeo.rotateX(Math.PI / 2);
+  // ★【Phase 5 改善】毎回 new するのを廃止し、半径 r ごとの共有キャッシュから取得
+  const torusGeo = getOrCreateIslandTorusGeo(r);
   const border = new THREE.Mesh(torusGeo, sharedMats.islandBorder);
   border.position.set(x, y, z);
   group.add(border);
@@ -480,16 +503,13 @@ export function createIslandMesh(r, y, z, x = 0.0) {
   return group;
 }
 
-// ★ 10. 目鼻なし（ノンフェイシャル）・愛嬌お邪魔キャラ「トゲトゲ・ポヨポヨ」メッシュ生成
-// 自キャラの世界観（目鼻口なしのピクトグラム調）に合わせ、目・鼻・バイザーを完全排除！
-// 床ブロック（青・赤・黄）と絶対に被らない鮮やかな「ネオンバイオレット（パープル）」＋「コーラル警告スタッド」＋「ピコピコ警告アンテナ」＋「足元デンジャーリング」
+// 10. 目鼻なし愛嬌お邪魔キャラ「トゲトゲ・ポヨポヨ」メッシュ生成
 export function createObstacleMobMesh(posX, posY, posZ) {
   const group = new THREE.Group();
 
-  // 1. ツルツルなめらかなネオンパープルの丸っこいボディ（自キャラと同じ滑らか単色質感）
   const bodyGeo = new THREE.SphereGeometry(0.62, 22, 22);
   const bodyMat = new THREE.MeshStandardMaterial({
-    color: 0xa855f7, // 鮮やかなネオンバイオレット（床の青・赤・黄と100%被らない！）
+    color: 0xa855f7,
     roughness: 0.22,
     metalness: 0.10
   });
@@ -498,10 +518,9 @@ export function createObstacleMobMesh(posX, posY, posZ) {
   body.castShadow = true;
   group.add(body);
 
-  // 2. 丸みのある痛そうな警告スタッド（ネオンコーラルレッドの小コーン）
   const spikeGeo = new THREE.ConeGeometry(0.12, 0.30, 8);
   const spikeMat = new THREE.MeshStandardMaterial({
-    color: 0xf43f5e, // 鮮烈なコーラルレッド
+    color: 0xf43f5e,
     emissive: 0xe11d48,
     emissiveIntensity: 0.35,
     roughness: 0.2
@@ -530,7 +549,6 @@ export function createObstacleMobMesh(posX, posY, posZ) {
     group.add(spike);
   });
 
-  // 3. 頭頂部のピコピコ警告アンテナ（目鼻の代わりに愛らしく点滅する自律トイの記号）
   const poleGeo = new THREE.CylinderGeometry(0.024, 0.024, 0.32, 8);
   const poleMat = new THREE.MeshStandardMaterial({ color: 0x475569, metalness: 0.6, roughness: 0.3 });
   const pole = new THREE.Mesh(poleGeo, poleMat);
@@ -543,7 +561,6 @@ export function createObstacleMobMesh(posX, posY, posZ) {
   bulb.position.set(0, 1.58, 0);
   group.add(bulb);
 
-  // 4. 足元のデンジャー警告リング（床面スレスレに薄く投影される赤い点線風サークル）
   const ringGeo = new THREE.RingGeometry(1.25, 1.38, 32);
   ringGeo.rotateX(-Math.PI / 2);
   const ringMat = new THREE.MeshBasicMaterial({
@@ -557,7 +574,6 @@ export function createObstacleMobMesh(posX, posY, posZ) {
   dangerRing.position.y = 0.04;
   group.add(dangerRing);
 
-  // 5. 足元の回転ホバー台座
   const hoverRingGeo = new THREE.CylinderGeometry(0.38, 0.46, 0.10, 16);
   const hoverRingMat = new THREE.MeshStandardMaterial({
     color: 0x334155,

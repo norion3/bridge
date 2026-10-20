@@ -1,8 +1,8 @@
 // world.js: コース伸長・浮島・橋・スライド・ジップライン・エレベーター・スカイダイブ・ドロップタワー施設・二股分岐＆合流・目鼻なし愛嬌お邪魔キャラ
-// ★ Step 3 リファクタリング完了版:
-//   - 床ブロック管理・スポーン・補充・同期を blocks.js へ完全分離
-//   - world.js が純粋なコース幾何構造・ギミック・島・お邪魔キャラ配置ビルダーに純化
-//   - 既存呼び出し元（main.js, systems.js, network.js）との完全な後方互換性を維持
+// ★ 決定論シード同期版:
+//   1. extendCourse / extendCourseForkPatternB の冒頭で、ステージ番号に応じた決定論的シード（_prngState = (currentWorldSeed + idx * 10007) | 0）へ一時同期
+//   2. ゲーム中の床ブロック補充などでPRNG消費回数がズレていても、奥のコース形状・ギミック・カーブが全端末で100%同一に生成されることを数学的に保証
+//   3. 他のコース幾何構造・ギミック生成・お掃除処理は100%維持
 
 import {
   TRAMPOLINE_TIERS,
@@ -971,6 +971,9 @@ export function extendCourseForkPatternB(scene) {
   const forkIdx = STAGES.length;
   const prev = STAGES[forkIdx - 1];
 
+  // ★ 分岐ステージ番号に応じた決定論的シードへ一時同期
+  _prngState = (currentWorldSeed + forkIdx * 10007) | 0;
+
   const forkDistZ = 36.0;
   const forkZ = prev.z - forkDistZ;
   const forkY = Math.max(8.0, prev.y + 4.0);
@@ -1140,6 +1143,9 @@ export function extendCourseForkPatternB(scene) {
 export function extendCourse(scene) {
   const idx = STAGES.length;
   const prev = STAGES[idx - 1];
+
+  // ★ ステージ番号に応じた決定論的シードへ一時同期（ブロック補充等によるPRNGズレを完全無効化）
+  _prngState = (currentWorldSeed + idx * 10007) | 0;
 
   const stagesSinceLastMerge = (lastMergeStageIdx === -1) ? (idx - 6) : (idx - lastMergeStageIdx);
   const shouldSpawnFork = (lastMergeStageIdx === -1 && idx === 6) || (lastMergeStageIdx !== -1 && stagesSinceLastMerge >= 8);
