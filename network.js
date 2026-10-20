@@ -1,8 +1,8 @@
 // network.js: AgentSDKラッパー ＆ ルーム入退室ライフサイクル・通信同期エンジン
-// ★ Step 10 実装版（アトラクション状態ビット付与 ＆ Step 9 KNOCKOUT受信対応）：
-//   1. 10Hz POS パケットに `state` (NORMAL, SKYDIVE, ELEVATOR, TRAPDOOR, ZIPLINE, SLIDE) と速度ベクトル (vx, vz) を追加
-//   2. Step 9 で新設された KNOCKOUT イベントの受信ハンドラを配線
-//   3. 既存のセッション管理、スロット確定、ブロック・階段同期は100%維持
+// ★ Phase 2 実装版（マルチゲーム起動確約 ＆ ロビーイベント接続の強固化）：
+//   1. safeShowGameScreen() 内で window.launchGameEngine() を直接実行し、マルチ参加・作成完了時にゲームループを確実に始動
+//   2. hookLobbyNetworkEvents を window オブジェクトへ明示的に公開し、dom.js からの再バインドを安全・確実に実行
+//   3. 既存の10Hz POS通信（state/速度ベクトル）、KNOCKOUT、スロット確定、ブロック・階段同期は100%維持
 
 import {
   characters,
@@ -30,7 +30,8 @@ async function safeExitCurrentRoom() {
 }
 
 /**
- * 画面切り替えの例外安全ヘルパー（UIControllerと連携しゲーム画面を表示）
+ * ★【Phase 2 改善】画面切り替え ＆ ゲームループ始動確約ヘルパー
+ * UIControllerと連携し、さらに launchGameEngine() を直接呼んでマルチプレイを即座に動かす
  */
 function safeShowGameScreen() {
   try {
@@ -53,6 +54,12 @@ function safeShowGameScreen() {
     startModal.classList.add('hidden');
   }
 
+  // 1. main.js の launchGameEngine() を直接実行（ゲームループを確実にオンにする）
+  if (typeof window !== 'undefined' && typeof window.launchGameEngine === 'function') {
+    window.launchGameEngine();
+  }
+
+  // 2. フォールバックとしてのスタートボタン擬似クリック
   const startBtn = document.getElementById('btn-start');
   if (startBtn) {
     startBtn.click();
@@ -682,7 +689,7 @@ export const NetworkManager = {
   },
 
   /**
-   * ★【Step 10 改善】アトラクション状態ビット（state）＆速度ベクトル付き POS ブロードキャスト
+   * 10Hz 位置情報ブロードキャスト
    */
   _startPositionBroadcasting() {
     if (this._syncIntervalId) clearInterval(this._syncIntervalId);
@@ -763,7 +770,7 @@ export const NetworkManager = {
   },
 
   /**
-   * ★【Step 10 改善】受信した状態ビット（state）と速度ベクトル（vx, vz）のターゲット格納
+   * 受信した状態ビット（state）と速度ベクトル（vx, vz）のターゲット格納
    */
   _handleRemotePosition(packet) {
     if (packet.slot === this.mySlot || packet.clientId === this.clientId) return;
@@ -808,7 +815,6 @@ export const NetworkManager = {
     targetChar.targetNetPos.set(packet.x, packet.y, packet.z);
     targetChar.targetNetRotY = packet.rotY;
 
-    // 速度ベクトルとアトラクション状態ビットの保持
     targetChar.netVelocity = {
       x: packet.vx || 0,
       z: packet.vz || 0
@@ -888,7 +894,7 @@ if (typeof window !== 'undefined') {
 }
 
 /**
- * dom.js 内のボタンと NetworkManager を安全に接続するフック
+ * ★【Phase 2 改善】dom.js 内のボタンと NetworkManager を安全に接続するフック
  */
 let lastCreateActionTime = 0;
 
@@ -1019,6 +1025,11 @@ export function hookLobbyNetworkEvents() {
     btnRefresh.addEventListener('touchend', onRefreshHandler, { passive: false });
     btnRefresh.addEventListener('click', onRefreshHandler);
   }
+}
+
+// dom.js など他モジュールから確実に再配線できるようグローバルにも公開
+if (typeof window !== 'undefined') {
+  window.hookLobbyNetworkEvents = hookLobbyNetworkEvents;
 }
 
 if (document.readyState === 'loading') {

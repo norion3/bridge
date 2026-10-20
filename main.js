@@ -3,6 +3,7 @@
 //   1. リモート走者の10Hz受信間隔を速度ベクトル（vx, vz）を加味した線形・Hermite平滑化補間でスムーズに繋ぎ、歩行のカクつき（シャッター現象）を根絶
 //   2. リモート走者の状態ビット（remoteActionState）に応じて applyRemoteGimmickVisuals を呼び出し、他走者のエレベーターカゴ・ダイビング姿勢を完全連動
 //   3. 既存の3D描画、物理演算、ステージ伸長、ソロプレイ操作は100%維持
+// ★ Phase 1 実装：launchGameEngine() を新設し、外部（network.js / dom.js）からゲームループを安全かつ確実に始動可能に
 
 import { mountAllUI } from './dom.js';
 
@@ -72,6 +73,22 @@ let gameStarted = false;
 let placedPlankCount = 0;
 let lastDisplayedSec = -1;
 
+/**
+ * 外部（network.js / dom.js）からゲームループを確実に始動させる安全関数
+ * 存在しないDOMボタンの擬似クリックに依存せず、マルチ・ソロ問わずゲームを即座に動かす
+ */
+export function launchGameEngine() {
+  gameStarted = true;
+  isGameOver = false;
+  if (sound) {
+    sound.init();
+  }
+}
+
+if (typeof window !== 'undefined') {
+  window.launchGameEngine = launchGameEngine;
+}
+
 // 階段スコア連続加算アンチシェイク用タイマー
 let scorePopTimer = null;
 let lastPlankPlacedTime = 0;
@@ -109,7 +126,7 @@ export function triggerScorePop() {
     scoreEl.classList.remove('score-pop');
     scoreEl.classList.add('score-clamped');
   } else {
-    scoreEl.classList.remove('score-clamped');
+    scoreEl.classList.remove('score-pop');
     scoreEl.classList.add('score-pop');
   }
 
@@ -338,7 +355,7 @@ export function setupControls() {
       modal.style.display = 'none';
       modal.classList.add('hidden');
     }
-    gameStarted = true;
+    launchGameEngine();
   }
   if (startBtn) {
     startBtn.addEventListener('click', onStartClick);
