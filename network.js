@@ -1,7 +1,8 @@
 // network.js: AgentSDKラッパー ＆ 動的スロット・相互可視化・10Hz位置同期エンジン
-// ★ Phase 2 実装版：
-//   1. SCATTER_BLOCKS（タックル・アイテム・ゲート被弾散乱ブロック）の受信ハンドラを完全開通
-//   2. window.NetworkManager のグローバル登録、createRoom 排他ロック、公式joinroom即時合流、Self-Healing POS同期を完全維持
+// ★ Phase 2 実装版（CPU 2完全リンク＆ホスト権威AI・スナップショットクリーン展開）：
+//   1. ホスト端末から自キャラ(スロット0)に加え、AIスロット(CPU 2: 黄)のPOS情報も10Hzで配信（ホスト権威AIの確立）
+//   2. ゲスト入室時スナップショット受取時に床ブロックプールをクリーン展開し、ホストですでに拾われたブロックの残存を根絶
+//   3. SCATTER_BLOCKS、SPAWN_BLOCK、PICK_BLOCK、BUILD_PLANK、排他ロック、公式joinroom即時合流を完全維持
 
 import {
   characters,
@@ -11,7 +12,7 @@ import {
   refreshCharacterStackVisuals,
   resetCharacterToStageZero
 } from './character.js';
-import { STAGES, buildWorld, manageBlockSpawns, bridges } from './world.js';
+import { STAGES, buildWorld, manageBlockSpawns, bridges, floorBlocksByStage } from './world.js';
 import { resetParticlePools, floorBlockPool } from './particles.js';
 
 /**
@@ -515,7 +516,6 @@ export const NetworkManager = {
           }
           break;
 
-        // ★【Phase 2 新設】散乱ブロック情報を受信した際の一括配置ハンドラ呼び出し
         case 'SCATTER_BLOCKS':
           if (typeof window.applyRemoteScatterBlocks === 'function') {
             window.applyRemoteScatterBlocks(packet.stageIdx, packet.blocks);
@@ -547,6 +547,16 @@ export const NetworkManager = {
         buildWorld(activeScene, seed);
 
         if (snapshot && Array.isArray(snapshot.blocks)) {
+          // ★【Phase 2 強化】ホストですでに拾われたブロックがゲストに幽霊として残らないよう、既存プールを全クリア
+          floorBlockPool.forEach(b => {
+            b.active = false;
+            b.mesh.visible = false;
+            b.attracting = false;
+          });
+          if (floorBlocksByStage && typeof floorBlocksByStage.forEach === 'function') {
+            floorBlocksByStage.forEach(bucket => { bucket.length = 0; });
+          }
+
           snapshot.blocks.forEach(b => {
             if (typeof window.applyRemoteBlockSpawned === 'function') {
               window.applyRemoteBlockSpawned(b.stageIdx, b.poolIdx, b.x, b.y, b.z, b.teamId);
@@ -655,6 +665,10 @@ export const NetworkManager = {
     }
   },
 
+  /**
+   * ★【Phase 2 強化】10Hz 位置情報ブロードキャスト
+   * 自操作キャラ(スロット0: 青)に加え、ホスト権威AIとしてCPU 2(スロット2: 黄)のPOSも10Hzで他端末へ配信！
+   */
   _startPositionBroadcasting() {
     if (this._syncIntervalId) clearInterval(this._syncIntervalId);
 
@@ -668,6 +682,7 @@ export const NetworkManager = {
         ? String(window.GRAVITY_USER_NAME)
         : (this.myUser ? this.myUser.name : 'YOU');
 
+      // 1. 自操作キャラのPOS送信
       this._sendCustomMessage({
         event: 'POS',
         slot: this.mySlot,
@@ -680,6 +695,29 @@ export const NetworkManager = {
         stack: myChar.stackCount || 0,
         stage: myChar.currentStage || 0
       });
+
+      // 2. ホスト端末の場合、AIスロット（特にCPU 2: 黄）のPOSも一緒に配信（ホスト権威AIの同期確立）
+      if (this.isHost) {
+        this.slots.forEach(s => {
+          if (s.isAI && s.slot !== this.mySlot) {
+            const aiChar = characters[s.slot];
+            if (aiChar) {
+              this._sendCustomMessage({
+                event: 'POS',
+                slot: s.slot,
+                clientId: this.clientId,
+                name: s.name || (s.slot === 1 ? 'CPU 1' : 'CPU 2'),
+                x: Number(aiChar.pos.x.toFixed(2)),
+                y: Number(aiChar.pos.y.toFixed(2)),
+                z: Number(aiChar.pos.z.toFixed(2)),
+                rotY: Number(aiChar.meshObj.root.rotation.y.toFixed(2)),
+                stack: aiChar.stackCount || 0,
+                stage: aiChar.currentStage || 0
+              });
+            }
+          }
+        });
+      }
     }, 100);
   },
 
@@ -689,22 +727,26 @@ export const NetworkManager = {
     const targetChar = characters[packet.slot];
     if (!targetChar) return;
 
-    if (targetChar.isAI || !targetChar.isRemote || (packet.name && targetChar.name !== packet.name && packet.name !== 'YOU')) {
-      targetChar.isRemote = true;
-      targetChar.isAI = false;
-      const resolvedName = packet.name || (packet.slot === 0 ? 'norion' : 'ゲスト');
-      targetChar.name = resolvedName;
-      if (this.slots && this.slots[packet.slot]) {
-        this.slots[packet.slot].isAI = false;
-        this.slots[packet.slot].name = resolvedName;
-      }
-      if (targetChar.nameplateSprite) {
-        if (targetChar.nameplateSprite.material && targetChar.nameplateSprite.material.map) {
-          targetChar.nameplateSprite.material.map.dispose();
+    const isSlotAI = this.slots && this.slots[packet.slot] && this.slots[packet.slot].isAI;
+
+    if (!isSlotAI) {
+      if (targetChar.isAI || !targetChar.isRemote || (packet.name && targetChar.name !== packet.name && packet.name !== 'YOU')) {
+        targetChar.isRemote = true;
+        targetChar.isAI = false;
+        const resolvedName = packet.name || (packet.slot === 0 ? 'norion' : 'ゲスト');
+        targetChar.name = resolvedName;
+        if (this.slots && this.slots[packet.slot]) {
+          this.slots[packet.slot].isAI = false;
+          this.slots[packet.slot].name = resolvedName;
         }
-        const newMesh = createNameplateMesh(resolvedName, false);
-        targetChar.nameplateSprite.material = newMesh.material;
-        targetChar.nameplateSprite.visible = true;
+        if (targetChar.nameplateSprite) {
+          if (targetChar.nameplateSprite.material && targetChar.nameplateSprite.material.map) {
+            targetChar.nameplateSprite.material.map.dispose();
+          }
+          const newMesh = createNameplateMesh(resolvedName, false);
+          targetChar.nameplateSprite.material = newMesh.material;
+          targetChar.nameplateSprite.visible = true;
+        }
       }
     }
 

@@ -1,7 +1,8 @@
 // blocks.js: 床ブロック管理・補充・スポーン・ホスト補充マルチ同期専用モジュール
 // world.js から床ブロック関連の責務を分離
 // ★ Phase 1 強化版:
-//   - applyRemoteBlockSpawned における二重生成防止＆安全配置
+//   - applyRemoteBlockSpawned におけるブロック向きのバラバラ化（ランダム回転設定）
+//   - 同一座標近接二重生成ガード ＆ 安全な空きスロット配置
 //   - window.NetworkManager 連携による SPAWN_BLOCK ブロードキャスト確約
 
 import {
@@ -44,7 +45,7 @@ export function getFloorBlocksForStage(stageIdx) {
 
 /**
  * ★【Phase 1 強化】ホストから新ブロック補充パケットを受信した際の反映ハンドラ
- * 同一座標の二重配置を防止し、安全な空きスロットへ正確に同期配置
+ * 向きをランダム（バラバラ）に設定し、ゲスト側の真横整列バグを解消
  */
 export function applyRemoteBlockSpawned(stageIdx, poolIdx, x, y, z, teamId) {
   const stageInfo = STAGES[stageIdx];
@@ -77,7 +78,8 @@ export function applyRemoteBlockSpawned(stageIdx, poolIdx, x, y, z, teamId) {
 
   poolItem.mesh.material = mat;
   poolItem.mesh.position.set(x, y !== undefined ? y : (stageInfo.y + 0.25), z);
-  poolItem.mesh.rotation.set(0, 0, 0);
+  // ★【真因 ① 解消】一定方向（真横 0, 0, 0）固定を撤廃し、バラバラな自然な角度で散らばるように設定！
+  poolItem.mesh.rotation.set(0, Math.random() * Math.PI, 0);
   poolItem.mesh.visible = true;
 
   poolItem.active = true;

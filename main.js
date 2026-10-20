@@ -1,8 +1,8 @@
 // main.js: ゲーム全体の起動指揮・Three.js初期化・メインループ・入力・HUD制御
-// ★ Step 1 リファクタリング完了版：
-//   - camera.js へダイナミック並走カメラロジックを分離
-//   - entities.js へ飛翔体・ドレイン・衝撃波・演出パーティクル更新ループを分離
-//   - main.js の行数が約720行から約270行へ劇的スリム化（処理負荷・機能・通信互換性は100%維持）
+// ★ Phase 2 実装版（CPU 2完全リンク＆ホスト権威AI・ゲスト側Lerp追従）：
+//   - マルチプレイ時、ホスト端末のみがAI思考（updateAICharacter）を実行
+//   - ゲスト端末ではローカルAI自律思考を止め、ホストから10Hzで届くPOSパケットにLerp追従（ホスト画面のCPU 2と100%同一に走る）
+//   - シングルプレイ時は通常通りローカルAIが元気に自律走行
 
 import './dom.js';
 
@@ -446,11 +446,15 @@ export function animate(currentTime) {
         window.NetworkManager.slots[cIdx] && !window.NetworkManager.slots[cIdx].isAI;
       const isRemotePlayer = c.isRemote || isHumanSlot;
 
-      const shouldRunAI = !isRemotePlayer && c.isAI !== false;
+      // ★【Phase 2 核心】マルチプレイ時、ホスト端末のみがAI思考（updateAICharacter）を実行！
+      // ゲスト端末ではローカルAI自律思考を止め、ホストから届くPOSパケットにLerp追従させる（ホスト権威AI）
+      // シングルプレイ時は通常通りCPUが自律走行
+      const shouldRunAI = (!isMulti || isHost) && !isRemotePlayer && c.isAI !== false;
 
       if (shouldRunAI) {
         updateAICharacter(scene, c, dt, spawnPuffCloud, spawnSpeedStepRing);
-      } else if (isRemotePlayer && c.targetNetPos) {
+      } else if (c.targetNetPos) {
+        // ★ リモートプレイヤーおよびゲスト端末でのAIスロットは、ホストから届いた最新目標座標へ滑らかにLerp追従！
         const prevX = c.pos.x;
         const prevZ = c.pos.z;
         c.pos.lerp(c.targetNetPos, 0.25);
@@ -474,7 +478,7 @@ export function animate(currentTime) {
           c.meshObj.leftArm.rotation.x = 0;
           c.meshObj.rightArm.rotation.x = 0;
         }
-      } else if (isRemotePlayer && !c.targetNetPos) {
+      } else if (!c.targetNetPos) {
         c.meshObj.leftLeg.rotation.x = 0;
         c.meshObj.rightLeg.rotation.x = 0;
         c.meshObj.leftArm.rotation.x = 0;

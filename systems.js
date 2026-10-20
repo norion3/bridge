@@ -1,7 +1,7 @@
 // systems.js: 物理移動判定・スカイウォーク歩行開放・ハッチ進入同期・リュック収納アニメーション連動・シームレス風音連携・スカイダイブ＆スライダーボーナス回収・合流島安全着地完全整合・お邪魔キャラ衝突判定・下層島誤ワープ完全防止・階段/床ブロック取得リアルタイム同期
-// ★ Step 2 リファクタリング完了版 ＆ Phase 1 座標最優先ブロック消去同期化版:
-//   - applyRemoteBlockPicked を壊れやすい poolIdx から「指定座標 (x, z) 最近傍最優先マッチング」へ安全化
-//   - 既存呼び出し元との完全な後方互換性を維持
+// ★ Phase 1 強化版:
+//   - ホスト端末のAI（CPU 2: 黄）が階段を架けた時も BUILD_PLANK をブロードキャスト（黄色階段の完全同期）
+//   - applyRemoteBlockPicked の座標最優先マッチングを完全維持
 
 import {
   TRAMPOLINE_TIERS,
@@ -116,8 +116,8 @@ export function applyRemotePlankBuilt(stageIdx, laneIdx, plankIdx, teamId) {
 }
 
 /**
- * ★【Phase 1 強化】リモートプレイヤーまたはホスト側AIが床ブロックを拾った際の受信ハンドラ
- * ズレやすい poolIdx の盲従を撤廃し、「指定座標 (x, z) から最も近いアクティブブロック」を最優先特定して消去（誤爆消滅を完全根絶）
+ * リモートプレイヤーまたはホスト側AIが床ブロックを拾った際の受信ハンドラ
+ * ズレやすい poolIdx の盲従を撤廃し、「指定座標 (x, z) 最近傍最優先マッチング」で消去
  */
 export function applyRemoteBlockPicked(stageIdx, poolIdx, x, z) {
   const stageBlocks = getFloorBlocksForStage(stageIdx);
@@ -587,8 +587,11 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
                   }
                 }
 
-                // 自操作キャラが階段を架けた時、他端末へ即時ブロードキャスト
-                if (char.isPlayer && typeof window !== 'undefined' && window.AgentSDK) {
+                // ★【Phase 1 強化】自操作キャラ または ホスト端末のAI（CPU 2: 黄）が階段を架けた時、他端末へ即時ブロードキャスト！
+                const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
+                const shouldBroadcastPlank = char.isPlayer || (isHost && char.isAI);
+
+                if (shouldBroadcastPlank && typeof window !== 'undefined' && window.AgentSDK) {
                   try {
                     window.AgentSDK.room.sendMessage({
                       message: JSON.stringify({
