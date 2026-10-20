@@ -1,5 +1,6 @@
 // コース伸長・浮島・橋・スライド・ジップライン・エレベーター・スカイダイブ・ドロップタワー施設・二股分岐＆合流・目鼻なし愛嬌お邪魔キャラ（分岐ゲート×2撤廃・DDA連動バランシング版）
 // ★ ステップ1：ホストによる新ブロック補充同期（SPAWN_BLOCK送信＆安全な空きスロット配置ハンドラ）組み込み版
+// ★ ステージ消失バグ解消版：buildWorld() 実行時の stageMeshes に対する無差別 disposeHierarchy を撤廃し、共有ジオメトリ・マテリアルを保護
 import {
   BLOCK_TYPES,
   TRAMPOLINE_TIERS,
@@ -1393,8 +1394,9 @@ export function buildWorld(scene, seed = null) {
   floorBlocksByStage.clear();
   bridgesByStage.clear();
 
+  // ★【ステージ消失バグ根絶】共有マテリアルやジオメトリを破壊する disposeHierarchy() を撤廃し、
+  // シーンからの切り離しのみを行うことで、2回目以降の島生成時でも100%正常に白い浮島を描画する！
   stageMeshes.forEach(m => {
-    disposeHierarchy(m.meshGroup);
     scene.remove(m.meshGroup);
   });
   bridges.forEach(b => {
@@ -1554,9 +1556,9 @@ export function cleanupOldData(scene) {
     }
   }
 
+  // ★【ステージ消失バグ根絶】古いステージメッシュも共有リソース破壊を避けて scene.remove のみ実行
   for (let i = stageMeshes.length - 1; i >= 0; i--) {
     if (stageMeshes[i].stageIdx < safeStage) {
-      disposeHierarchy(stageMeshes[i].meshGroup);
       scene.remove(stageMeshes[i].meshGroup);
       stageMeshes.splice(i, 1);
     }
