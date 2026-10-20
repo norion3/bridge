@@ -1,6 +1,7 @@
 // 3Dキャラクター外観構築・手足メッシュ・スタックプール・トロリー・ホバー展望リフト・スカイダイブ＆トラップドア姿勢管理・足元手前側（カメラ方向）フロスト投影ネームバッジ
 // ★ 即死バグ解消済み
 // ★ ステップ1: 自操作キャラ(isPlayer)であってもチームカラー(赤・黄・青)のブロックマテリアルを厳格に適用
+// ★ 不具合修復: char1（赤）および char2（黄）に isAI: true を明記（1人で遊ぶ時のCPU自律走行完全復旧）
 import {
   TEAMS,
   MAX_VISUAL_STACK,
@@ -584,6 +585,7 @@ export function setupCharacters(scene, STAGES) {
 
   const char0 = {
     isPlayer: true,
+    isAI: false,
     name: 'norion',
     nameplateSprite: pNameplate,
     team: TEAMS.BLUE,
@@ -654,6 +656,7 @@ export function setupCharacters(scene, STAGES) {
 
   const char1 = {
     isPlayer: false,
+    isAI: true, // ★【修復】CPUの自律走行フラグを明記
     name: 'CPU 1',
     nameplateSprite: b1Nameplate,
     team: TEAMS.RED,
@@ -731,6 +734,7 @@ export function setupCharacters(scene, STAGES) {
 
   const char2 = {
     isPlayer: false,
+    isAI: true, // ★【修復】CPUの自律走行フラグを明記
     name: 'CPU 2',
     nameplateSprite: b2Nameplate,
     team: TEAMS.YELLOW,

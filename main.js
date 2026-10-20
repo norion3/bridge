@@ -2,7 +2,7 @@
 // ★ UI・ロビー・GRAVITYレイアウト自動補正モジュール連携
 // ★ ステップ3: リモートプレイヤーの60fps Lerp並走補間・走りモーション・スタック同期結合
 // ★ ステップ2: window.currentSceneRef 公開によるワールド乱数シード完全同期パイプライン開通
-// ★ Phase 2 実装版：AI判定二重ガード（リモート/人間スロットのAI乗っ取り遮断 ＆ CPU走者の自律走行復帰）
+// ★ 不具合修復: 自キャラ毎フレームネームプレート更新（置き去り根絶）＆ shouldRunAI 安全化（CPU走行完全復旧）
 import './dom.js';
 
 import { SoundEngine } from './audio.js';
@@ -473,19 +473,21 @@ export function animate(currentTime) {
 
     if (player) {
       updateSingleCharacter(scene, player, moveDirX, moveDirZ, dt, spawnPuffCloud, spawnSpeedStepRing);
+      // ★【修復】自操作キャラのネームプレートを毎フレーム確実に追従更新（置き去り・カクつき完全根絶）！
+      updateNameplatePosition(player);
     }
     for (let cIdx = 0; cIdx < characters.length; cIdx++) {
       const c = characters[cIdx];
       // 自操作キャラは上の updateSingleCharacter で処理済みのため除外
       if (c === player || c.isPlayer) continue;
 
-      // ★【Phase 2 二重ガード】人間スロットまたはリモート属性のキャラを厳格に識別
+      // ★ 人間スロットまたはリモート属性のキャラを厳格に識別
       const isHumanSlot = isMulti && window.NetworkManager && Array.isArray(window.NetworkManager.slots) &&
         window.NetworkManager.slots[cIdx] && !window.NetworkManager.slots[cIdx].isAI;
       const isRemotePlayer = c.isRemote || isHumanSlot;
 
-      // 自律AIとして走れるのは「人間でもリモートでもなく、AI属性を持つ空きスロット（例: 黄色CPU2）」のみ
-      const shouldRunAI = !isRemotePlayer && c.isAI;
+      // ★【修復】CPU走者が「1人で遊ぶ」時でも確実に自律走行できるよう安全化（isAI !== false）
+      const shouldRunAI = !isRemotePlayer && c.isAI !== false;
 
       if (shouldRunAI) {
         updateAICharacter(scene, c, dt, spawnPuffCloud, spawnSpeedStepRing);
