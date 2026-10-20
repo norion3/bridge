@@ -1,8 +1,8 @@
-// network.js: AgentSDKラッパー ＆ 動的スロット・相互可視化・10Hz位置同期エンジン
-// ★ Phase 2 実装版（通信負荷50%削減・位置パケット統合）：
-//   1. ホスト端末から自キャラ（青）とCPU 2（黄）を別々に2回送信していた10Hz POS通信を、1通のメッセージ（list配列）に統合
-//   2. 毎秒20回送信から毎秒10回送信へ半減させ、端末の発熱・バッテリー消費・低速回線でのパケット詰まりを50%削減
-//   3. 従来の単一POSパケットとの後方互換性を完全維持しつつ、Phase 1 のスロット厳格判定・600msタイムアウト・ボタン一元化を100%維持
+// network.js: AgentSDKラッパー ＆ ルーム入退室ライフサイクル・通信同期エンジン
+// ★ Step 10 実装版（アトラクション状態ビット付与 ＆ Step 9 KNOCKOUT受信対応）：
+//   1. 10Hz POS パケットに `state` (NORMAL, SKYDIVE, ELEVATOR, TRAPDOOR, ZIPLINE, SLIDE) と速度ベクトル (vx, vz) を追加
+//   2. Step 9 で新設された KNOCKOUT イベントの受信ハンドラを配線
+//   3. 既存のセッション管理、スロット確定、ブロック・階段同期は100%維持
 
 import {
   characters,
@@ -17,20 +17,20 @@ import { resetParticlePools, floorBlockPool } from './particles.js';
 
 /**
  * 未入室時の exit() による無限待機（Pendingフリーズ）を確実に防ぐ安全退出ヘルパー
- * ★【Phase 1 改善】4G/5G回線の通信往復（RTT）を考慮し、タイムアウト時間を 600ms に適正化
  */
 async function safeExitCurrentRoom() {
   if (typeof window === 'undefined' || !window.AgentSDK || !window.AgentSDK.room) return;
   try {
+    const exitPromise = window.AgentSDK.room.exit();
     const timeoutPromise = new Promise(resolve => setTimeout(() => resolve({ timeout: true }), 600));
-    await Promise.race([window.AgentSDK.room.exit(), timeoutPromise]);
+    await Promise.race([exitPromise, timeoutPromise]);
   } catch (e) {
     console.warn('[network.js] safeExitCurrentRoom caught:', e);
   }
 }
 
 /**
- * 画面切り替えの例外安全ヘルパー（ロビー幕・オーバーレイを確実に消し去る）
+ * 画面切り替えの例外安全ヘルパー（UIControllerと連携しゲーム画面を表示）
  */
 function safeShowGameScreen() {
   try {
@@ -41,32 +41,11 @@ function safeShowGameScreen() {
     console.warn('[network.js] UIController.showGame deferred:', e);
   }
 
-  // 1. 静的ロビー（gravity_loader.html 直書き）
-  const staticLobby = document.getElementById('test-lobby-overlay');
-  if (staticLobby) {
-    staticLobby.style.setProperty('display', 'none', 'important');
-    staticLobby.classList.add('hidden');
-  }
-
-  // 2. 動的ロビー（dom.js 生成）
-  const dynamicLobby = document.getElementById('screen-lobby');
-  if (dynamicLobby) {
-    dynamicLobby.style.setProperty('display', 'none', 'important');
-    dynamicLobby.classList.add('hidden');
-  }
-
-  // 3. 全ての .gravity-screen-overlay 要素を強制非表示
-  const allOverlays = document.querySelectorAll('.gravity-screen-overlay');
+  const allOverlays = document.querySelectorAll('.gravity-screen-overlay, #test-lobby-overlay');
   allOverlays.forEach(overlay => {
     overlay.style.setProperty('display', 'none', 'important');
     overlay.classList.add('hidden');
   });
-
-  const waitingScreen = document.getElementById('screen-waiting');
-  if (waitingScreen) {
-    waitingScreen.style.setProperty('display', 'none', 'important');
-    waitingScreen.classList.add('hidden');
-  }
 
   const startModal = document.getElementById('modal-start');
   if (startModal) {
@@ -94,7 +73,8 @@ function captureWorldSnapshot() {
           x: Number(b.pos.x.toFixed(2)),
           y: Number(b.pos.y.toFixed(2)),
           z: Number(b.pos.z.toFixed(2)),
-          teamId: (b.team && b.team.id) ? b.team.id : 'neutral'
+          teamId: (b.team && b.team.id) ? b.team.id : 'neutral',
+          blockId: b.blockId || null
         });
       }
     });
@@ -122,7 +102,7 @@ function captureWorldSnapshot() {
 }
 
 /**
- * 端末固有のセッションIDを生成（同一アカウントテストでも互いを100%別人として識別）
+ * 端末固有のセッションIDを生成
  */
 function generateClientId() {
   if (typeof window !== 'undefined' && window.sessionStorage) {
@@ -134,6 +114,18 @@ function generateClientId() {
     return saved;
   }
   return 'client_' + Math.random().toString(36).substring(2, 9) + '_' + Date.now();
+}
+
+/**
+ * キャラクターの現在の搭乗状態を取得するヘルパー
+ */
+function getCharacterActionState(c) {
+  if (c.onSkydive) return 'SKYDIVE';
+  if (c.onElevator) return 'ELEVATOR';
+  if (c.onTrapdoor || c.onFreefall) return 'TRAPDOOR';
+  if (c.onZipline) return 'ZIPLINE';
+  if (c.onSlide || c.onCurvedSlide) return 'SLIDE';
+  return 'NORMAL';
 }
 
 export const NetworkManager = {
@@ -151,6 +143,7 @@ export const NetworkManager = {
   isHost: false,
   isMultiplayerActive: false,
   mySlot: 0,
+  isSlotConfirmed: false,
   currentSeed: 12345678,
   _seedApplied: false,
 
@@ -160,6 +153,7 @@ export const NetworkManager = {
   _retrySyncIntervalId: null,
 
   _isCreatingRoom: false,
+  _isJoiningRoom: false,
 
   async init() {
     if (!this.isSDKAvailable) {
@@ -241,8 +235,8 @@ export const NetworkManager = {
   },
 
   async createRoom(isPrivate = false) {
-    if (this._isCreatingRoom) {
-      console.warn('[NetworkManager] createRoom is already in progress. Ignoring duplicate trigger.');
+    if (this._isCreatingRoom || this._isJoiningRoom) {
+      console.warn('[NetworkManager] Room transaction is already in progress.');
       return null;
     }
     this._isCreatingRoom = true;
@@ -257,7 +251,6 @@ export const NetworkManager = {
         try {
           const permission = isPrivate ? 1 : 0;
           const res = await window.AgentSDK.room.create({ max_players: 3, room_permission: permission });
-          console.log('[NetworkManager] room.create response:', res);
 
           let isSuccess = false;
           if (res) {
@@ -289,7 +282,8 @@ export const NetworkManager = {
 
       this.currentRoomId = createdRoomId;
       this.isHost = true;
-      this.mySlot = 0; // ホストは青(スロット0)
+      this.mySlot = 0;
+      this.isSlotConfirmed = true;
       this.isMultiplayerActive = true;
       this._seedApplied = true;
 
@@ -329,82 +323,86 @@ export const NetworkManager = {
     } finally {
       setTimeout(() => {
         this._isCreatingRoom = false;
-      }, 600);
+      }, 500);
     }
   },
 
   async joinRoom(roomId) {
     if (!roomId) return false;
+    if (this._isCreatingRoom || this._isJoiningRoom) {
+      console.warn('[NetworkManager] Room transaction is already in progress.');
+      return false;
+    }
+    this._isJoiningRoom = true;
     const safeRoomId = String(roomId);
 
-    await this.init();
-    await safeExitCurrentRoom();
+    try {
+      await this.init();
+      await safeExitCurrentRoom();
 
-    if (this.isSDKAvailable) {
-      try {
-        const res = await window.AgentSDK.room.join({ room_id: safeRoomId });
-        console.log('[NetworkManager] join room response:', res);
+      if (this.isSDKAvailable) {
+        try {
+          const res = await window.AgentSDK.room.join({ room_id: safeRoomId });
 
-        let isSuccess = false;
-        if (res) {
-          if (res.errno === 0 || res.errno === '0' || res.code === 0 || res.code === '0') {
-            isSuccess = true;
-          } else if (res.data && (res.data.room_id || res.data.roomId)) {
-            isSuccess = true;
+          let isSuccess = false;
+          if (res) {
+            if (res.errno === 0 || res.errno === '0' || res.code === 0 || res.code === '0') {
+              isSuccess = true;
+            } else if (res.data && (res.data.room_id || res.data.roomId)) {
+              isSuccess = true;
+            }
           }
-        }
 
-        if (!isSuccess && res && (res.errno !== undefined || res.code !== undefined)) {
-          const errMsg = res.errmsg || res.msg || res.message || '入室できませんでした';
-          console.error(`[NetworkManager] Failed to join room: ${errMsg}`);
+          if (!isSuccess && res && (res.errno !== undefined || res.code !== undefined)) {
+            const errMsg = res.errmsg || res.msg || res.message || '入室できませんでした';
+            console.error(`[NetworkManager] Failed to join room: ${errMsg}`);
+            return false;
+          }
+        } catch (err) {
+          console.error('[NetworkManager] Join room exception:', err);
           return false;
         }
-      } catch (err) {
-        console.error('[NetworkManager] Join room exception:', err);
-        return false;
       }
+
+      this.currentRoomId = safeRoomId;
+      this.isHost = false;
+      this.mySlot = -1;
+      this.isSlotConfirmed = false;
+      this.isMultiplayerActive = true;
+      this._seedApplied = false;
+
+      const myRealName = (typeof window !== 'undefined' && window.GRAVITY_USER_NAME)
+        ? String(window.GRAVITY_USER_NAME)
+        : this.myUser.name;
+
+      this._bindRemoteSlot(0, 'Player');
+
+      safeShowGameScreen();
+
+      let retries = 0;
+      if (this._retrySyncIntervalId) clearInterval(this._retrySyncIntervalId);
+      this._retrySyncIntervalId = setInterval(() => {
+        if (this.isSlotConfirmed || retries >= 6) {
+          clearInterval(this._retrySyncIntervalId);
+          this._retrySyncIntervalId = null;
+          return;
+        }
+        this._sendCustomMessage({
+          event: 'REQUEST_ROOM_SYNC',
+          clientId: this.clientId,
+          userId: this.myUser.user_id,
+          name: myRealName
+        });
+        retries++;
+      }, 350);
+
+      this._startPositionBroadcasting();
+      return true;
+    } finally {
+      setTimeout(() => {
+        this._isJoiningRoom = false;
+      }, 500);
     }
-
-    this.currentRoomId = safeRoomId;
-    this.isHost = false;
-    this.mySlot = 1;
-    this.isMultiplayerActive = true;
-    this._seedApplied = false;
-
-    const myRealName = (typeof window !== 'undefined' && window.GRAVITY_USER_NAME)
-      ? String(window.GRAVITY_USER_NAME)
-      : this.myUser.name;
-
-    this._bindRemoteSlot(0, 'Player');
-
-    if (typeof bindLocalPlayerSlot === 'function') {
-      bindLocalPlayerSlot(1);
-    } else if (typeof window.bindLocalPlayerSlot === 'function') {
-      window.bindLocalPlayerSlot(1);
-    }
-    updatePlayerName(myRealName);
-
-    safeShowGameScreen();
-
-    let retries = 0;
-    if (this._retrySyncIntervalId) clearInterval(this._retrySyncIntervalId);
-    this._retrySyncIntervalId = setInterval(() => {
-      if (this._seedApplied || retries >= 4) {
-        clearInterval(this._retrySyncIntervalId);
-        this._retrySyncIntervalId = null;
-        return;
-      }
-      this._sendCustomMessage({
-        event: 'REQUEST_ROOM_SYNC',
-        clientId: this.clientId,
-        userId: this.myUser.user_id,
-        name: myRealName
-      });
-      retries++;
-    }, 450);
-
-    this._startPositionBroadcasting();
-    return true;
   },
 
   _handleUserJoined(data) {
@@ -466,6 +464,10 @@ export const NetworkManager = {
             if (reqClientId && reqClientId !== this.clientId) {
               let targetSlot = this.slots.findIndex(s => s.clientId === reqClientId);
 
+              if (targetSlot === -1 && reqUserId) {
+                targetSlot = this.slots.findIndex(s => String(s.userId) === reqUserId);
+              }
+
               if (targetSlot === -1) {
                 if (this.slots[1].isAI) {
                   targetSlot = 1;
@@ -496,7 +498,6 @@ export const NetworkManager = {
           break;
 
         case 'POS':
-          // ★【Phase 2 統合対応】list 配列がある場合は各スロットを順次展開、単一パケットの場合はそのまま処理
           if (Array.isArray(packet.list)) {
             packet.list.forEach(p => this._handleRemotePosition(p));
           } else {
@@ -512,19 +513,25 @@ export const NetworkManager = {
 
         case 'PICK_BLOCK':
           if (typeof window.applyRemoteBlockPicked === 'function') {
-            window.applyRemoteBlockPicked(packet.stageIdx, packet.poolIdx, packet.x, packet.z);
+            window.applyRemoteBlockPicked(packet.stageIdx, packet.poolIdx, packet.x, packet.z, packet.blockId);
           }
           break;
 
         case 'SPAWN_BLOCK':
           if (typeof window.applyRemoteBlockSpawned === 'function') {
-            window.applyRemoteBlockSpawned(packet.stageIdx, packet.poolIdx, packet.x, packet.y, packet.z, packet.teamId);
+            window.applyRemoteBlockSpawned(packet.stageIdx, packet.poolIdx, packet.x, packet.y, packet.z, packet.teamId, packet.blockId);
           }
           break;
 
         case 'SCATTER_BLOCKS':
           if (typeof window.applyRemoteScatterBlocks === 'function') {
             window.applyRemoteScatterBlocks(packet.stageIdx, packet.blocks);
+          }
+          break;
+
+        case 'KNOCKOUT':
+          if (typeof window.applyRemoteKnockout === 'function') {
+            window.applyRemoteKnockout(packet.loserSlot, packet.pushX, packet.pushZ);
           }
           break;
 
@@ -539,10 +546,6 @@ export const NetworkManager = {
     }
   },
 
-  /**
-   * ★【Phase 1 改善】3人目参加時のスロット競合誤認を防止する厳格化ハンドラ
-   * isMyCurrentSlot による曖昧なフォールバックを撤廃し、clientId の完全一致のみで自スロットを判定
-   */
   _applyRoomMembersSync(syncedSlots, seed, snapshot = null) {
     if (!Array.isArray(syncedSlots)) return;
     this.slots = syncedSlots;
@@ -568,7 +571,7 @@ export const NetworkManager = {
 
           snapshot.blocks.forEach(b => {
             if (typeof window.applyRemoteBlockSpawned === 'function') {
-              window.applyRemoteBlockSpawned(b.stageIdx, b.poolIdx, b.x, b.y, b.z, b.teamId);
+              window.applyRemoteBlockSpawned(b.stageIdx, b.poolIdx, b.x, b.y, b.z, b.teamId, b.blockId);
             }
           });
         } else {
@@ -592,21 +595,25 @@ export const NetworkManager = {
     }
 
     syncedSlots.forEach((s) => {
-      // 端末固有の clientId 完全一致、またはホスト自身のスロット0のみで自操作スロットを判定
       const isMyClient = (s.clientId && s.clientId === this.clientId) || (!s.clientId && this.isHost && s.slot === 0);
 
       if (isMyClient) {
-        this.mySlot = s.slot;
-        window.MY_PLAYER_SLOT = s.slot;
-        if (typeof bindLocalPlayerSlot === 'function') {
-          bindLocalPlayerSlot(s.slot);
-        } else if (typeof window.bindLocalPlayerSlot === 'function') {
-          window.bindLocalPlayerSlot(s.slot);
+        if (!this.isSlotConfirmed || this.mySlot !== s.slot) {
+          this.mySlot = s.slot;
+          this.isSlotConfirmed = true;
+          window.MY_PLAYER_SLOT = s.slot;
+
+          if (typeof bindLocalPlayerSlot === 'function') {
+            bindLocalPlayerSlot(s.slot);
+          } else if (typeof window.bindLocalPlayerSlot === 'function') {
+            window.bindLocalPlayerSlot(s.slot);
+          }
+
+          const myRealName = (typeof window !== 'undefined' && window.GRAVITY_USER_NAME)
+            ? String(window.GRAVITY_USER_NAME)
+            : this.myUser.name;
+          updatePlayerName(myRealName);
         }
-        const myRealName = (typeof window !== 'undefined' && window.GRAVITY_USER_NAME)
-          ? String(window.GRAVITY_USER_NAME)
-          : this.myUser.name;
-        updatePlayerName(myRealName);
         return;
       }
 
@@ -630,7 +637,7 @@ export const NetworkManager = {
     targetChar.aiDirZ = 0;
     targetChar.targetBlock = null;
     targetChar.searchCooldown = 999999;
-    targetChar.name = playerName || (slotIndex === 0 ? 'norion' : 'ゲスト');
+    targetChar.name = playerName || (slotIndex === 0 ? 'norion' : (slotIndex === 1 ? 'ゲスト1' : 'ゲスト2'));
 
     if (typeof resetCharacterToStageZero === 'function') {
       resetCharacterToStageZero(targetChar, targetChar.name, false);
@@ -675,26 +682,39 @@ export const NetworkManager = {
   },
 
   /**
-   * ★【Phase 2 改善】10Hz 位置情報ブロードキャスト（通信パケット統合版）
-   * ホスト端末の自キャラ（青）とAI（CPU 2: 黄）を1通のメッセージに統合して送信（通信回数を50%削減）
+   * ★【Step 10 改善】アトラクション状態ビット（state）＆速度ベクトル付き POS ブロードキャスト
    */
   _startPositionBroadcasting() {
     if (this._syncIntervalId) clearInterval(this._syncIntervalId);
 
+    let lastMyPos = null;
+    let lastTime = performance.now();
+
     this._syncIntervalId = setInterval(() => {
-      if (!this.isMultiplayerActive || !this.isSDKAvailable) return;
+      if (!this.isMultiplayerActive || !this.isSDKAvailable || !this.isSlotConfirmed) return;
 
       const myChar = characters[this.mySlot];
       if (!myChar) return;
+
+      const now = performance.now();
+      const dtSec = Math.max(0.001, (now - lastTime) / 1000);
+      lastTime = now;
+
+      let vx = 0, vz = 0;
+      if (lastMyPos) {
+        vx = Number(((myChar.pos.x - lastMyPos.x) / dtSec).toFixed(2));
+        vz = Number(((myChar.pos.z - lastMyPos.z) / dtSec).toFixed(2));
+      } else {
+        lastMyPos = new THREE.Vector3();
+      }
+      lastMyPos.copy(myChar.pos);
 
       const myName = (typeof window !== 'undefined' && window.GRAVITY_USER_NAME)
         ? String(window.GRAVITY_USER_NAME)
         : (this.myUser ? this.myUser.name : 'YOU');
 
-      // 1. 送信用のポジション一覧を構築
       const posList = [];
 
-      // 自操作キャラ
       posList.push({
         slot: this.mySlot,
         clientId: this.clientId,
@@ -702,12 +722,14 @@ export const NetworkManager = {
         x: Number(myChar.pos.x.toFixed(2)),
         y: Number(myChar.pos.y.toFixed(2)),
         z: Number(myChar.pos.z.toFixed(2)),
+        vx: vx,
+        vz: vz,
         rotY: Number(myChar.meshObj.root.rotation.y.toFixed(2)),
         stack: myChar.stackCount || 0,
-        stage: myChar.currentStage || 0
+        stage: myChar.currentStage || 0,
+        state: getCharacterActionState(myChar)
       });
 
-      // ホスト端末の場合、AIスロット（特にCPU 2: 黄）も同一パケットに統合
       if (this.isHost) {
         this.slots.forEach(s => {
           if (s.isAI && s.slot !== this.mySlot) {
@@ -720,16 +742,18 @@ export const NetworkManager = {
                 x: Number(aiChar.pos.x.toFixed(2)),
                 y: Number(aiChar.pos.y.toFixed(2)),
                 z: Number(aiChar.pos.z.toFixed(2)),
+                vx: 0,
+                vz: 0,
                 rotY: Number(aiChar.meshObj.root.rotation.y.toFixed(2)),
                 stack: aiChar.stackCount || 0,
-                stage: aiChar.currentStage || 0
+                stage: aiChar.currentStage || 0,
+                state: getCharacterActionState(aiChar)
               });
             }
           }
         });
       }
 
-      // ★ 1通のメッセージとして送信（ホストの通信送信回数を毎秒20回から毎秒10回へ半減！）
       this._sendCustomMessage({
         event: 'POS',
         clientId: this.clientId,
@@ -738,6 +762,9 @@ export const NetworkManager = {
     }, 100);
   },
 
+  /**
+   * ★【Step 10 改善】受信した状態ビット（state）と速度ベクトル（vx, vz）のターゲット格納
+   */
   _handleRemotePosition(packet) {
     if (packet.slot === this.mySlot || packet.clientId === this.clientId) return;
 
@@ -750,7 +777,7 @@ export const NetworkManager = {
       if (targetChar.isAI || !targetChar.isRemote || (packet.name && targetChar.name !== packet.name && packet.name !== 'YOU')) {
         targetChar.isRemote = true;
         targetChar.isAI = false;
-        const resolvedName = packet.name || (packet.slot === 0 ? 'norion' : 'ゲスト');
+        const resolvedName = packet.name || (packet.slot === 0 ? 'norion' : (packet.slot === 1 ? 'ゲスト1' : 'ゲスト2'));
         targetChar.name = resolvedName;
         if (this.slots && this.slots[packet.slot]) {
           this.slots[packet.slot].isAI = false;
@@ -780,6 +807,14 @@ export const NetworkManager = {
     }
     targetChar.targetNetPos.set(packet.x, packet.y, packet.z);
     targetChar.targetNetRotY = packet.rotY;
+
+    // 速度ベクトルとアトラクション状態ビットの保持
+    targetChar.netVelocity = {
+      x: packet.vx || 0,
+      z: packet.vz || 0
+    };
+    targetChar.remoteActionState = packet.state || 'NORMAL';
+    targetChar.lastPacketTime = performance.now();
 
     if (targetChar.stackCount !== packet.stack) {
       targetChar.stackCount = packet.stack;
@@ -839,21 +874,21 @@ export const NetworkManager = {
     this.isHost = false;
     this.isMultiplayerActive = false;
     this.mySlot = 0;
+    this.isSlotConfirmed = false;
     this._seedApplied = false;
+
     if (typeof window !== 'undefined' && window.UIController && typeof window.UIController.showLobby === 'function') {
       window.UIController.showLobby();
     }
   }
 };
 
-// window.NetworkManager をグローバル公開
 if (typeof window !== 'undefined') {
   window.NetworkManager = NetworkManager;
 }
 
 /**
- * ★【Phase 1 一元化】dom.js 内のボタンと NetworkManager を安全に接続するフック
- * ボタンタップイベントのリスナー登録を本関数に完全に一本化し、二重登録を根絶
+ * dom.js 内のボタンと NetworkManager を安全に接続するフック
  */
 let lastCreateActionTime = 0;
 
@@ -882,6 +917,32 @@ export function hookLobbyNetworkEvents() {
 
     btnCreatePublic.addEventListener('touchend', onCreateHandler, { passive: false });
     btnCreatePublic.addEventListener('click', onCreateHandler);
+  }
+
+  const btnCreatePrivate = document.getElementById('btn-create-private');
+  if (btnCreatePrivate && !btnCreatePrivate._hasNetHook) {
+    btnCreatePrivate._hasNetHook = true;
+
+    const onCreatePrivateHandler = (e) => {
+      const now = Date.now();
+      if (now - lastCreateActionTime < 600) {
+        if (e) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+        return;
+      }
+      lastCreateActionTime = now;
+
+      if (e) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+      NetworkManager.createRoom(true);
+    };
+
+    btnCreatePrivate.addEventListener('touchend', onCreatePrivateHandler, { passive: false });
+    btnCreatePrivate.addEventListener('click', onCreatePrivateHandler);
   }
 
   const btnRefresh = document.getElementById('btn-refresh-rooms');

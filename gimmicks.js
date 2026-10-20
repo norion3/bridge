@@ -1,4 +1,8 @@
-// 特殊アトラクション搭乗中の物理挙動・姿勢制御・ボーナス回収・着地処理モジュール（完全分離レイヤー）
+// gimmicks.js: 特殊アトラクション搭乗中の物理挙動・姿勢制御・ボーナス回収・着地処理モジュール（完全分離レイヤー）
+// ★ Step 10 実装版（リモートキャラクターの姿勢適用ヘルパーの公開 ＆ ボーナス回収の一意同期保護）：
+//   1. applyRemoteGimmickVisuals(char, state, timeSec) を新設し、POSパケットの状態ビット（SKYDIVE, ELEVATOR, TRAPDOOR, ZIPLINE）に応じたメッシュ表示・手足ポーズの連動を提供
+//   2. ローカル搭乗中の物理演算、ソロプレイ動作は100%維持
+
 import {
   LANES,
   ELEVATOR_CONFIG,
@@ -18,6 +22,68 @@ import {
   packCharacterLuggage
 } from './character.js';
 import { triggerLandingShockwave } from './particles.js';
+
+/**
+ * ★【Step 10 新設】リモート走者（他端末またはホストAI）のアトラクション状態ビットに応じた外観・メッシュ連動
+ */
+export function applyRemoteGimmickVisuals(char, state, timeSec) {
+  if (!char || !char.meshObj) return;
+
+  const mo = char.meshObj;
+
+  if (state === 'SKYDIVE') {
+    if (mo.trolleyGroup) mo.trolleyGroup.visible = false;
+    if (mo.elevatorGroup) mo.elevatorGroup.visible = false;
+    packCharacterLuggage(char, 1.0);
+    applySkydivePose(char, 0, 0);
+  } else if (state === 'TRAPDOOR') {
+    if (mo.trolleyGroup) mo.trolleyGroup.visible = false;
+    if (mo.elevatorGroup) mo.elevatorGroup.visible = false;
+    packCharacterLuggage(char, 1.0);
+    applyTrapdoorPose(char, 0, timeSec);
+  } else if (state === 'ELEVATOR') {
+    if (mo.elevatorGroup) mo.elevatorGroup.visible = true;
+    if (mo.trolleyGroup) mo.trolleyGroup.visible = false;
+    packCharacterLuggage(char, 0);
+    mo.leftArm.position.set(-0.42, 0.82, -0.35);
+    mo.rightArm.position.set(0.42, 0.82, -0.35);
+    mo.leftArm.rotation.set(0.7, 0, -0.15);
+    mo.rightArm.rotation.set(0.7, 0, 0.15);
+    mo.leftLeg.rotation.set(0, 0, 0);
+    mo.rightLeg.rotation.set(0, 0, 0);
+  } else if (state === 'ZIPLINE') {
+    if (mo.trolleyGroup) mo.trolleyGroup.visible = true;
+    if (mo.elevatorGroup) mo.elevatorGroup.visible = false;
+    mo.stackGroup.scale.set(0.65, 0.65, 0.65);
+    mo.stackGroup.rotation.x = -Math.PI * 0.28;
+    mo.stackGroup.position.set(0, 0.55, -0.45);
+    const legKick = Math.sin(timeSec * 16) * 0.65;
+    mo.leftLeg.rotation.x = legKick - 0.25;
+    mo.rightLeg.rotation.x = -legKick - 0.25;
+    mo.leftArm.position.set(-0.56, 1.275, 0.06);
+    mo.rightArm.position.set(0.56, 1.275, 0.06);
+    mo.leftArm.scale.set(0.85, 3.80, 0.85);
+    mo.rightArm.scale.set(0.85, 3.80, 0.85);
+    mo.leftArm.rotation.set(-0.15, 0, 0.314);
+    mo.rightArm.rotation.set(-0.15, 0, -0.314);
+  } else if (state === 'SLIDE') {
+    if (mo.trolleyGroup) mo.trolleyGroup.visible = false;
+    if (mo.elevatorGroup) mo.elevatorGroup.visible = false;
+    packCharacterLuggage(char, 0);
+    mo.leftLeg.rotation.x = -0.35;
+    mo.rightLeg.rotation.x = -0.35;
+    mo.leftArm.rotation.x = -0.65;
+    mo.rightArm.rotation.x = -0.65;
+    mo.body.position.y = 0.50;
+    mo.head.position.y = 1.15;
+    mo.root.rotation.x = 0.22;
+  } else {
+    // NORMAL
+    if (mo.trolleyGroup && mo.trolleyGroup.visible) mo.trolleyGroup.visible = false;
+    if (mo.elevatorGroup && mo.elevatorGroup.visible) mo.elevatorGroup.visible = false;
+    packCharacterLuggage(char, 0);
+  }
+}
 
 // 1. スカイダイブ（前進放物線滑空・エアコントロール・ロール・ボーナス回収・着地）
 export function updateSkydiveMovement(scene, char, dirX, dt, soundRef, updateHUDRef) {

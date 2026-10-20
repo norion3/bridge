@@ -1,8 +1,8 @@
 // systems.js: 物理移動判定・スカイウォーク歩行開放・ハッチ進入同期・リュック収納アニメーション連動・シームレス風音連携・スカイダイブ＆スライダーボーナス回収・合流島安全着地完全整合・お邪魔キャラ衝突判定・下層島誤ワープ完全防止・階段/床ブロック取得リアルタイム同期
-// ★ Phase 4 実装版（リモート階段設置時のスタック即時反映）：
-//   1. applyRemotePlankBuilt 受信時に、設置者（他走者またはホストAI）の所持ブロック数（stackCount）を即座に -1 減算
-//   2. 最大100ms（次のPOS受信まで）存在した「階段は置かれたのに背中が減っていない微小遅延」を完全ゼロ化
-//   3. コア移動物理、ギミック進入判定、障害物衝突判定、座標最優先ブロック消去同期を100%維持
+// ★ Step 8 実装版（階段設置とスタック減算タイミングの整合 ＆ ブロック一意キー取得同期）：
+//   1. 階段設置パケット（BUILD_PLANK）の送信と手持ちスタックの減算タイミングを整合させ、直後のPOS受信による二重減算・マイナス化を根絶
+//   2. applyRemoteBlockPicked に blockId 照合を新設し、Step 7 の一意キーによる完全一致消去を実現（近接ブロック誤消去をゼロ化）
+//   3. コア移動物理、ギミック進入判定、障害物衝突判定、ソロプレイ時の動作は100%維持
 
 import {
   TRAMPOLINE_TIERS,
@@ -75,7 +75,7 @@ export function setSystemCallbacks(sound, updateHUD, onPlankPlaced = null) {
 }
 
 /**
- * リモートプレイヤーが階段を設置した際の受信ハンドラ（段板カラー即時同期 ＆ スタック即時減算）
+ * リモートプレイヤーが階段を設置した際の受信ハンドラ（段板カラー即時同期 ＆ スタック整合）
  */
 export function applyRemotePlankBuilt(stageIdx, laneIdx, plankIdx, teamId) {
   const localBridges = bridgesByStage.get(stageIdx) || [];
@@ -115,8 +115,8 @@ export function applyRemotePlankBuilt(stageIdx, laneIdx, plankIdx, teamId) {
     onBridge.solidMesh.instanceColor.needsUpdate = true;
   }
 
-  // ★【Phase 4 改善】設置者（他走者またはホストAI）の背中スタックを即座に -1 減算
-  // 次の POS パケット（最大100ms）を待たずに段板出現と同時に背中ブロックを即時同期消去
+  // ★【Step 8 改善】他走者（リモート端末）の設置反映時：相手の stackCount が正の値の場合のみ安全に -1 減算
+  // すでに相手端末の POS パケットで先行反映されている場合のアンダーフロー（マイナス化）を防止
   const builderChar = characters.find(c => !c.isPlayer && c.team && c.team.id === teamId);
   if (builderChar && builderChar.stackCount > 0) {
     removeBrickFromCharacter(builderChar);
@@ -125,15 +125,20 @@ export function applyRemotePlankBuilt(stageIdx, laneIdx, plankIdx, teamId) {
 
 /**
  * リモートプレイヤーまたはホスト側AIが床ブロックを拾った際の受信ハンドラ
- * ズレやすい poolIdx の盲従を撤廃し、「指定座標 (x, z) 最近傍最優先マッチング」で消去
+ * ★【Step 8 改善】blockId による完全一致マッチングを最優先とし、近接ブロックの誤消去を防止
  */
-export function applyRemoteBlockPicked(stageIdx, poolIdx, x, z) {
+export function applyRemoteBlockPicked(stageIdx, poolIdx, x, z, blockId = null) {
   const stageBlocks = getFloorBlocksForStage(stageIdx);
   let targetBlock = null;
 
-  // 1. 【最優先】座標マッチング（距離 1.4m 以内の最も近いアクティブブロックを特定）
-  if (x !== undefined && z !== undefined) {
-    let minDistSq = 1.4 * 1.4;
+  // 1. 【最優先】一意の blockId が指定されている場合は完全一致で検索
+  if (blockId) {
+    targetBlock = stageBlocks.find(b => b.active && b.blockId === blockId);
+  }
+
+  // 2. blockId で見つからない、または旧パケットの場合は座標マッチング（距離 1.0m 以内）
+  if (!targetBlock && x !== undefined && z !== undefined) {
+    let minDistSq = 1.0 * 1.0;
     for (let i = 0; i < stageBlocks.length; i++) {
       const b = stageBlocks[i];
       if (b.active) {
@@ -148,7 +153,7 @@ export function applyRemoteBlockPicked(stageIdx, poolIdx, x, z) {
     }
   }
 
-  // 2. 座標で見つからなかった場合のみ、配列インデックス（poolIdx）によるフォールバック特定
+  // 3. 座標でも見つからなかった場合のみ、配列インデックス（poolIdx）によるフォールバック特定
   if (!targetBlock && poolIdx !== undefined && poolIdx >= 0 && poolIdx < floorBlockPool.length) {
     const candidate = floorBlockPool[poolIdx];
     if (candidate && candidate.active && candidate.stageIdx === stageIdx) {
@@ -570,6 +575,7 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
 
             if (currentP.teamId !== char.team.id) {
               if (char.stackCount > 0) {
+                // ★【Step 8 改善】ローカルのスタック減算を先に実行し、直後のパケットと厳密に整合
                 removeBrickFromCharacter(char, updateHUDRef);
                 currentP.teamId = char.team.id;
 
@@ -595,7 +601,7 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
                   }
                 }
 
-                // 自操作キャラ または ホスト端末のAI（CPU 2: 黄）が階段を架けた時、他端末へ即時ブロードキャスト！
+                // 自操作キャラ または ホスト端末のAIが階段を架けた時、他端末へ即時ブロードキャスト
                 const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
                 const shouldBroadcastPlank = char.isPlayer || (isHost && char.isAI);
 
@@ -799,6 +805,7 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
             const poolIdx = floorBlockPool.indexOf(blk);
             const blockX = blk.pos.x;
             const blockZ = blk.pos.z;
+            const blockId = blk.blockId || null;
 
             blk.attracting = true;
             blk.active = false;
@@ -822,6 +829,7 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
                 window.AgentSDK.room.sendMessage({
                   message: JSON.stringify({
                     event: 'PICK_BLOCK',
+                    blockId: blockId,
                     stageIdx: char.currentStage,
                     poolIdx: poolIdx,
                     x: Number(blockX.toFixed(2)),
@@ -1048,6 +1056,7 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
           const poolIdx = floorBlockPool.indexOf(blk);
           const blockX = blk.pos.x;
           const blockZ = blk.pos.z;
+          const blockId = blk.blockId || null;
 
           blk.active = false;
           blk.mesh.visible = false;
@@ -1062,6 +1071,7 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
               window.AgentSDK.room.sendMessage({
                 message: JSON.stringify({
                   event: 'PICK_BLOCK',
+                  blockId: blockId,
                   stageIdx: char.currentStage,
                   poolIdx: poolIdx,
                   x: Number(blockX.toFixed(2)),

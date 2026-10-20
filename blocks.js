@@ -1,9 +1,9 @@
-// blocks.js: 床ブロック管理・補充・スポーン・ホスト補充マルチ同期専用モジュール
-// world.js から床ブロック関連の責務を分離
-// ★ Phase 1 強化版:
-//   - applyRemoteBlockSpawned におけるブロック向きのバラバラ化（ランダム回転設定）
-//   - 同一座標近接二重生成ガード ＆ 安全な空きスロット配置
-//   - window.NetworkManager 連携による SPAWN_BLOCK ブロードキャスト確約
+// blocks.js: 床ブロック管理・補充・スポーン・一意キー（blockId）マルチ同期専用モジュール
+// ★ Step 7 実装版（ブロック一意キー化・座標丸め誤差による消失防止）：
+//   1. 端末間でズレる配列インデックス（poolIdx）依存を完全撤廃し、ステージ番号＋連番の一意キー（blockId: "stage_counter"）を導入
+//   2. applyRemoteBlockSpawned / applyRemoteBlockPicked で blockId による完全一致マッチングを行い、隣接ブロックの誤消去をゼロ化
+//   3. ホスト側のみが定期スポーン（SPAWN_BLOCK）の主導権を持ち、一意キー付きで生成パケットをブロードキャスト
+//   4. 既存のランダム回転、アイテム・ギミック除外半径、ソロプレイ動作は100%維持
 
 import {
   BLOCK_TYPES,
@@ -29,6 +29,9 @@ import {
 
 export const floorBlocksByStage = new Map();
 
+// 一意ブロックID生成用カウンター
+let globalBlockSpawnCounter = 0;
+
 /**
  * 指定ステージの床ブロック配列を取得（未存在時は初期化）
  * @param {number} stageIdx 
@@ -44,28 +47,50 @@ export function getFloorBlocksForStage(stageIdx) {
 }
 
 /**
- * ★【Phase 1 強化】ホストから新ブロック補充パケットを受信した際の反映ハンドラ
- * 向きをランダム（バラバラ）に設定し、ゲスト側の真横整列バグを解消
+ * ★【Step 7 核心】ホストから新ブロック補充パケット（blockId付き）を受信した際の反映ハンドラ
+ * 配列インデックスへの盲従を撤廃し、一意キーによる厳格管理と安全なプール割り当てを実施
  */
-export function applyRemoteBlockSpawned(stageIdx, poolIdx, x, y, z, teamId) {
+export function applyRemoteBlockSpawned(stageIdx, poolIdx, x, y, z, teamId, blockId = null) {
   const stageInfo = STAGES[stageIdx];
   if (!stageInfo) return;
 
   const stageBlocks = getFloorBlocksForStage(stageIdx);
+  const resolvedBlockId = blockId || `b_${stageIdx}_${x.toFixed(2)}_${z.toFixed(2)}`;
 
-  // 既に同一座標付近（0.6m以内）にアクティブブロックがある場合は二重配置しない
+  // 1. 同一 blockId が既にアクティブに存在している場合は二重生成を防止
   for (let i = 0; i < stageBlocks.length; i++) {
-    const b = stageBlocks[i];
-    if (b.active && Math.hypot(b.pos.x - x, b.pos.z - z) < 0.6) {
+    const existing = stageBlocks[i];
+    if (existing.active && existing.blockId === resolvedBlockId) {
       return;
     }
   }
 
-  let poolItem = null;
-  if (poolIdx >= 0 && poolIdx < floorBlockPool.length && !floorBlockPool[poolIdx].active) {
-    poolItem = floorBlockPool[poolIdx];
-  } else {
-    poolItem = floorBlockPool.find(b => !b.active);
+  // 2. 近接（0.45m以内）同一座標の重複ガード
+  for (let i = 0; i < stageBlocks.length; i++) {
+    const b = stageBlocks[i];
+    if (b.active && Math.hypot(b.pos.x - x, b.pos.z - z) < 0.45) {
+      return;
+    }
+  }
+
+  // 3. 安全なプールアイテムの確保（非アクティブな要素を最優先）
+  let poolItem = floorBlockPool.find(b => !b.active);
+  if (!poolItem) {
+    let bestRecycleIdx = -1;
+    let minStageIdx = 999999;
+    for (let k = 0; k < floorBlockPool.length; k++) {
+      const blk = floorBlockPool[k];
+      if (blk.active && !blk.attracting && blk.stageIdx < minStageIdx) {
+        minStageIdx = blk.stageIdx;
+        bestRecycleIdx = k;
+      }
+    }
+    if (bestRecycleIdx >= 0) {
+      poolItem = floorBlockPool[bestRecycleIdx];
+      const oldStageBlocks = getFloorBlocksForStage(poolItem.stageIdx);
+      const oldIdx = oldStageBlocks.indexOf(poolItem);
+      if (oldIdx !== -1) oldStageBlocks.splice(oldIdx, 1);
+    }
   }
   if (!poolItem) return;
 
@@ -78,7 +103,6 @@ export function applyRemoteBlockSpawned(stageIdx, poolIdx, x, y, z, teamId) {
 
   poolItem.mesh.material = mat;
   poolItem.mesh.position.set(x, y !== undefined ? y : (stageInfo.y + 0.25), z);
-  // ★【真因 ① 解消】一定方向（真横 0, 0, 0）固定を撤廃し、バラバラな自然な角度で散らばるように設定！
   poolItem.mesh.rotation.set(0, Math.random() * Math.PI, 0);
   poolItem.mesh.visible = true;
 
@@ -86,6 +110,7 @@ export function applyRemoteBlockSpawned(stageIdx, poolIdx, x, y, z, teamId) {
   poolItem.team = team;
   poolItem.pos = poolItem.mesh.position;
   poolItem.stageIdx = stageIdx;
+  poolItem.blockId = resolvedBlockId;
   poolItem.attracting = false;
 
   if (!stageBlocks.includes(poolItem)) {
@@ -99,7 +124,7 @@ if (typeof window !== 'undefined') {
 }
 
 /**
- * 単一床ブロックの出現判定および配置
+ * 単一床ブロックの出現判定および配置（ホスト端末またはソロプレイで実行）
  * @param {THREE.Scene} scene 
  * @param {number} stageIdx 
  * @param {Object|null} targetTeam 
@@ -171,6 +196,23 @@ export function spawnSingleBlock(scene, stageIdx, targetTeam = null) {
   if (!validPos) return;
 
   let poolItem = floorBlockPool.find(b => !b.active);
+  if (!poolItem) {
+    let bestRecycleIdx = -1;
+    let minStageIdx = 999999;
+    for (let k = 0; k < floorBlockPool.length; k++) {
+      const blk = floorBlockPool[k];
+      if (blk.active && !blk.attracting && blk.stageIdx < minStageIdx) {
+        minStageIdx = blk.stageIdx;
+        bestRecycleIdx = k;
+      }
+    }
+    if (bestRecycleIdx >= 0) {
+      poolItem = floorBlockPool[bestRecycleIdx];
+      const oldStageBlocks = getFloorBlocksForStage(poolItem.stageIdx);
+      const oldIdx = oldStageBlocks.indexOf(poolItem);
+      if (oldIdx !== -1) oldStageBlocks.splice(oldIdx, 1);
+    }
+  }
   if (!poolItem) return;
 
   const team = targetTeam || BLOCK_TYPES[Math.floor(seededRandom() * BLOCK_TYPES.length)];
@@ -179,6 +221,9 @@ export function spawnSingleBlock(scene, stageIdx, targetTeam = null) {
   else if (team.id === 'red') mat = sharedMats.blockRed;
   else if (team.id === 'yellow') mat = sharedMats.blockYellow;
   else mat = sharedMats.blockNeutral;
+
+  globalBlockSpawnCounter++;
+  const uniqueBlockId = `b_${stageIdx}_${globalBlockSpawnCounter}_${Date.now().toString(36)}`;
 
   poolItem.mesh.material = mat;
   poolItem.mesh.position.set(validPos.x, stageInfo.y + 0.25, validPos.z);
@@ -189,11 +234,12 @@ export function spawnSingleBlock(scene, stageIdx, targetTeam = null) {
   poolItem.team = team;
   poolItem.pos = poolItem.mesh.position;
   poolItem.stageIdx = stageIdx;
+  poolItem.blockId = uniqueBlockId;
   poolItem.attracting = false;
 
   stageBlocks.push(poolItem);
 
-  // マルチプレイ時、ホストが補充したブロック情報を他端末へ即時ブロードキャスト
+  // マルチプレイ時、ホストが補充したブロック情報を一意ID付きで他端末へブロードキャスト
   const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
   const isMulti = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive);
   if (isMulti && isHost && typeof window !== 'undefined' && window.AgentSDK) {
@@ -202,6 +248,7 @@ export function spawnSingleBlock(scene, stageIdx, targetTeam = null) {
       window.AgentSDK.room.sendMessage({
         message: JSON.stringify({
           event: 'SPAWN_BLOCK',
+          blockId: uniqueBlockId,
           poolIdx: poolIdx,
           stageIdx: stageIdx,
           x: Number(validPos.x.toFixed(2)),

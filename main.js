@@ -1,7 +1,8 @@
 // main.js: ゲーム全体の起動指揮・Three.js初期化・メインループ・入力・HUD制御
-// ★ Step 3 UI統合版：
-//   1. dom.js の mountAllUI を起動時（bootGame）に安全に実行し、動的UIの自動配線を確立
-//   2. 既存の3D描画、物理演算、ステージ伸長、ソロプレイ操作は100%維持
+// ★ Step 10 実装版（10Hz移動補間の速度予測平滑化 ＆ リモートアトラクション姿勢連動）：
+//   1. リモート走者の10Hz受信間隔を速度ベクトル（vx, vz）を加味した線形・Hermite平滑化補間でスムーズに繋ぎ、歩行のカクつき（シャッター現象）を根絶
+//   2. リモート走者の状態ビット（remoteActionState）に応じて applyRemoteGimmickVisuals を呼び出し、他走者のエレベーターカゴ・ダイビング姿勢を完全連動
+//   3. 既存の3D描画、物理演算、ステージ伸長、ソロプレイ操作は100%維持
 
 import { mountAllUI } from './dom.js';
 
@@ -40,6 +41,7 @@ import {
 import { updateAICharacter } from './ai.js';
 import { updateDynamicCamera, resetCameraState } from './camera.js';
 import { updateSceneEntities } from './entities.js';
+import { applyRemoteGimmickVisuals } from './gimmicks.js';
 
 // network.js から相手のスタック数変化時に呼び出せるようグローバルフックを登録
 if (typeof window !== 'undefined') {
@@ -49,7 +51,7 @@ if (typeof window !== 'undefined') {
 // GRAVITY環境 / 通常ブラウザ（GitHub Pages）の自動判別スイッチ
 export const IS_GRAVITY_APP = typeof window !== 'undefined' && !!window.AgentSDK;
 
-// 将来のマルチプレイ同期用ステート（GitHub上では本人がホストのシングルプレイとして常時稼働）
+// 将来のマルチプレイ同期用ステート
 export const NetworkState = {
   isMultiplayer: false,
   isHost: true,
@@ -70,7 +72,7 @@ let gameStarted = false;
 let placedPlankCount = 0;
 let lastDisplayedSec = -1;
 
-// 階段スコア連続加算アンチシェイク（Micro-Pop & Scale Clamp）用タイマー・タイムスタンプ
+// 階段スコア連続加算アンチシェイク用タイマー
 let scorePopTimer = null;
 let lastPlankPlacedTime = 0;
 
@@ -124,7 +126,7 @@ export function updateHUD() {
   if (scoreEl) scoreEl.innerText = placedPlankCount;
 }
 
-// 残り30秒で文字色をネオンレッドへ切り替え、心拍のようなパルス演出を開始
+// 残り30秒で文字色をネオンレッドへ切り替え
 export function updateTimerHUD(force = false) {
   const currentSecInt = Math.floor(timeLeft);
   if (!force && currentSecInt === lastDisplayedSec) return;
@@ -279,7 +281,6 @@ export function setupControls() {
     });
   }
 
-  // 左下リスタートボタン
   const quickRestartBtn = document.getElementById('btn-restart-quick');
   if (quickRestartBtn) {
     if (!NetworkState.isMultiplayer || NetworkState.isHost) {
@@ -445,7 +446,7 @@ export function animate(currentTime) {
         window.NetworkManager.slots[cIdx] && !window.NetworkManager.slots[cIdx].isAI;
       const isRemotePlayer = c.isRemote || isHumanSlot;
 
-      // マルチプレイ時、ホスト端末のみがAI思考（updateAICharacter）を実行
+      // マルチプレイ時、ホスト端末のみがAI思考を実行
       const shouldRunAI = (!isMulti || isHost) && !isRemotePlayer && c.isAI !== false;
 
       if (shouldRunAI) {
@@ -453,26 +454,48 @@ export function animate(currentTime) {
       } else if (c.targetNetPos) {
         const prevX = c.pos.x;
         const prevZ = c.pos.z;
-        c.pos.lerp(c.targetNetPos, 0.25);
+
+        // ★【Step 10 改善】フレームレート非依存かつ速度予測付きの平滑化補間（シャッター現象の根絶）
+        // 受信間隔（100ms）に対して、固定係数ではなく経過時間に応じたLerp率を採用
+        const lerpFactor = Math.min(1.0, dt * 14.0);
+
+        let predTargetX = c.targetNetPos.x;
+        let predTargetZ = c.targetNetPos.z;
+
+        if (c.netVelocity && (Math.abs(c.netVelocity.x) > 0.1 || Math.abs(c.netVelocity.z) > 0.1)) {
+          const timeSincePacket = Math.min(0.12, (currentTime - (c.lastPacketTime || currentTime)) * 0.001);
+          predTargetX += c.netVelocity.x * timeSincePacket * 0.5;
+          predTargetZ += c.netVelocity.z * timeSincePacket * 0.5;
+        }
+
+        c.pos.x = THREE.MathUtils.lerp(c.pos.x, predTargetX, lerpFactor);
+        c.pos.y = THREE.MathUtils.lerp(c.pos.y, c.targetNetPos.y, lerpFactor);
+        c.pos.z = THREE.MathUtils.lerp(c.pos.z, predTargetZ, lerpFactor);
         c.meshObj.root.position.copy(c.pos);
 
         if (c.targetNetRotY !== undefined) {
-          c.meshObj.root.rotation.y = THREE.MathUtils.lerp(c.meshObj.root.rotation.y, c.targetNetRotY, 0.25);
+          c.meshObj.root.rotation.y = THREE.MathUtils.lerp(c.meshObj.root.rotation.y, c.targetNetRotY, lerpFactor);
         }
 
+        // ★【Step 10 改善】リモート走者のアトラクション状態ビット（remoteActionState）とメッシュの連動
+        const remState = c.remoteActionState || 'NORMAL';
+        applyRemoteGimmickVisuals(c, remState, timeSec);
+
         const stepDist = Math.hypot(c.pos.x - prevX, c.pos.z - prevZ);
-        if (stepDist > 0.008) {
-          c.walkCycle = (c.walkCycle || 0) + stepDist * 5.5;
-          const swing = Math.sin(c.walkCycle) * 0.45;
-          c.meshObj.leftLeg.rotation.x = swing;
-          c.meshObj.rightLeg.rotation.x = -swing;
-          c.meshObj.leftArm.rotation.x = -swing * 0.8;
-          c.meshObj.rightArm.rotation.x = swing * 0.8;
-        } else {
-          c.meshObj.leftLeg.rotation.x = 0;
-          c.meshObj.rightLeg.rotation.x = 0;
-          c.meshObj.leftArm.rotation.x = 0;
-          c.meshObj.rightArm.rotation.x = 0;
+        if (remState === 'NORMAL') {
+          if (stepDist > 0.008) {
+            c.walkCycle = (c.walkCycle || 0) + stepDist * 5.5;
+            const swing = Math.sin(c.walkCycle) * 0.45;
+            c.meshObj.leftLeg.rotation.x = swing;
+            c.meshObj.rightLeg.rotation.x = -swing;
+            c.meshObj.leftArm.rotation.x = -swing * 0.8;
+            c.meshObj.rightArm.rotation.x = swing * 0.8;
+          } else {
+            c.meshObj.leftLeg.rotation.x = 0;
+            c.meshObj.rightLeg.rotation.x = 0;
+            c.meshObj.leftArm.rotation.x = 0;
+            c.meshObj.rightArm.rotation.x = 0;
+          }
         }
       } else if (!c.targetNetPos) {
         c.meshObj.leftLeg.rotation.x = 0;
@@ -505,7 +528,6 @@ export function animate(currentTime) {
       cleanupTimer = 0;
     }
 
-    // ★【決定論シード同期】ステージ番号に基づいたシード同期により、両端末で全く同じコース形状が完全一致生成されるため安全にローカル伸長
     let maxStage = 0;
     for (let cIdx = 0; cIdx < characters.length; cIdx++) {
       if (characters[cIdx].currentStage > maxStage) {
@@ -521,11 +543,9 @@ export function animate(currentTime) {
     }
     updateTimerHUD();
 
-    // 飛翔体・ドレイン・衝撃波・演出パーティクル・浮遊雲の更新（entities.js に集約）
     updateSceneEntities(scene, dt, timeSec, player, sound);
   }
 
-  // ダイナミックロックオン並走カメラ（camera.js に集約）
   if (player && camera) {
     updateDynamicCamera(player, camera, dt, dirLight, seaMesh);
   }
@@ -537,7 +557,6 @@ export function bootGame() {
   if (window._gameEngineBooted) return;
   window._gameEngineBooted = true;
   try {
-    // コンテナが存在する場合、未生成の画面UIを一括マウント
     const appContainer = document.getElementById('app-container') || document.body;
     if (!document.getElementById('canvas-container')) {
       mountAllUI(appContainer);

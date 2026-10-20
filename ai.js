@@ -1,4 +1,9 @@
-// Bot AI自律思考ロジック・レーン評価・左右分岐選択（テーマ認識型＆状況適応自律ルート選択）・スカイダイブ＆ドロップタワー進入・空中姿勢同期・AIワープ追いつき復活・スタック回避（Phase 3: 中継島単独レーン認識＆分岐考慮型ワープ完全整合版）
+// ai.js: Bot AI自律思考ロジック・レーン評価・左右分岐選択・アトラクション進入・AIワープ追いつき復活
+// ★ Step 6 実装版（Host-Authoritative AI・権限分離の徹底）：
+//   1. マルチプレイ時、ホスト端末のみがAI思考ルーチンを実行するHost-Authoritativeガードを強化
+//   2. ゲスト端末ではローカルのAI自律計算・追いつきワープ・ルート探索を完全停止し、リモート受信補間のみに委ねてジッターやスプリットブレインを根絶
+//   3. 単体プレイ（ソロ）時は従来通りの完全自律思考を100%維持
+
 import {
   LANES,
   ELEVATOR_CONFIG,
@@ -106,22 +111,33 @@ export function avoidGateObstacles(bot, dirX, dirZ) {
 }
 
 export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStepRing) {
+  // ★【Step 6 核心】Host-Authoritative ガード
+  // マルチプレイ中かつ非ホスト端末（ゲスト端末）の場合、AIの自律思考・移動計算を完全に停止
+  if (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive) {
+    if (!window.NetworkManager.isHost) {
+      return;
+    }
+  }
+
+  // リモートプレイヤーとして扱われているスロットはAI思考をスキップ
+  if (bot.isRemote || bot.isPlayer) {
+    return;
+  }
+
   const currentStageInfo = STAGES[bot.currentStage];
   const playerStageInfo = player ? STAGES[player.currentStage] : null;
 
-  // ★ 分岐考慮型ワープ判定：並列中継島（fork_left と fork_right）のステージ番号差による誤ワープを防止
+  // 分岐考慮型ワープ判定：並列中継島（fork_left と fork_right）のステージ番号差による誤ワープを防止
   let shouldWarp = false;
   if (player && playerStageInfo && currentStageInfo) {
     const isPlayerInFork = (playerStageInfo.isFork || playerStageInfo.type === 'fork_left' || playerStageInfo.type === 'fork_right' || playerStageInfo.isMerge);
     const isBotInFork = (currentStageInfo.isFork || currentStageInfo.type === 'fork_left' || currentStageInfo.type === 'fork_right' || currentStageInfo.isMerge);
 
     if (isPlayerInFork && isBotInFork) {
-      // 双方とも同一分岐区間内にいる場合、実距離（Z座標差）が55m以上離れた時のみ追いつきワープ
       if (bot.pos.z - player.pos.z > 55.0) {
         shouldWarp = true;
       }
     } else {
-      // 通常区間、または分岐区間を完全に抜けて2ステージ以上差がついた場合
       if (bot.currentStage < player.currentStage - 1) {
         shouldWarp = true;
       }
@@ -237,7 +253,7 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
     Math.abs(bot.pos.x - (currentCenterX + LANES[b.laneIdx])) < 2.5
   );
 
-  // ■ テーマ認識型 分岐自律選択ロジック
+  // テーマ認識型 分岐自律選択ロジック
   if (stage.isFork && bot.forkBranchChoice === undefined) {
     let leftRole = 'shortcut';
     let rightRole = 'rich';
@@ -292,7 +308,6 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
   if (activeConn) {
     if (activeConn.type === 'slide') {
       bot.aiState = 'BUILD';
-      // ★ 中継島からの単独スライダー（singleLaneOnly）時は必ず laneIdx: 1 を選択し痙攣停止を根絶！
       if (isBranchRelayIsland) {
         bot.targetLane = 1;
       } else if (bot.targetLane === undefined) {
@@ -458,7 +473,6 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
         return nextStg && Math.abs((nextStg.x || 0.0) - targetBranchX) < 1.0;
       }) || stageBridges[0];
     } else if (isBranchRelayIsland) {
-      // 中継島から合流島への橋は単独1本（laneIdx: 1）
       b = stageBridges[0];
     } else {
       b = stageBridges.find(

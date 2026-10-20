@@ -1,8 +1,10 @@
 // combat.js: タックル衝突・ノックアウト・攻撃スキル・ブロック散乱専用モジュール
-// systems.js から戦闘・妨害・被弾処理を分離
-// ★ Phase 2 実装版：
-//   - scatterBricks で床に散乱したブロック情報のブロードキャスト（SCATTER_BLOCKS）
-//   - リモート散乱ブロックの同一座標・中立色反映ハンドラ applyRemoteScatterBlocks の新設
+// ★ Step 9 実装版（タックル判定の一方向化・無限増殖防止）：
+//   1. handleTackles の接触判定確定権限を一元化：
+//      - マルチプレイ時は「勝者側端末」または「ホスト端末（AI勝者時）」のみがノックアウトと散乱を確定・発信
+//      - 敗者側端末での重複判定を遮断し、双方判定による「ブロック倍増・無限増殖」「二重散乱パケット合戦」を根絶
+//   2. KNOCKOUT イベントを新設し、被弾側端末でのスタン・吹き飛ばしリアクションを安全にトリガー
+//   3. 単体プレイ（ソロ）時の当たり判定・アイテムスキル動作は100%維持
 
 import { TEAMS } from './constants.js';
 import {
@@ -37,8 +39,7 @@ export function setCombatCallbacks(sound, updateHUD) {
 }
 
 /**
- * ★【Phase 2 新設】相手端末で発生したブロック散乱（タックル・ゲート・被弾）の受取反映ハンドラ
- * 送信元の座標に全く同じ中立（ニュートラル）ブロックを一括配置
+ * 相手端末で発生したブロック散乱（タックル・ゲート・被弾）の受取反映ハンドラ
  */
 export function applyRemoteScatterBlocks(stageIdx, blocks) {
   if (!Array.isArray(blocks) || blocks.length === 0) return;
@@ -46,10 +47,10 @@ export function applyRemoteScatterBlocks(stageIdx, blocks) {
   const stageBlocks = getFloorBlocksForStage(stageIdx);
 
   blocks.forEach(b => {
-    // 既存ブロックとの近接（0.6m以内）二重生成チェック
+    // 既存ブロックとの近接（0.55m以内）二重生成チェック
     for (let i = 0; i < stageBlocks.length; i++) {
       const existing = stageBlocks[i];
-      if (existing.active && Math.hypot(existing.pos.x - b.x, existing.pos.z - b.z) < 0.6) {
+      if (existing.active && Math.hypot(existing.pos.x - b.x, existing.pos.z - b.z) < 0.55) {
         return;
       }
     }
@@ -83,20 +84,52 @@ export function applyRemoteScatterBlocks(stageIdx, blocks) {
     poolItem.team = TEAMS.NEUTRAL;
     poolItem.pos = poolItem.mesh.position;
     poolItem.stageIdx = stageIdx;
+    poolItem.blockId = b.blockId || `scatter_${stageIdx}_${b.x.toFixed(2)}_${b.z.toFixed(2)}`;
     poolItem.attracting = false;
 
     stageBlocks.push(poolItem);
   });
 }
 
+/**
+ * リモートからノックアウト被弾通知を受信した際のリアクションハンドラ
+ */
+export function applyRemoteKnockout(loserSlot, pushX, pushZ) {
+  const loserChar = characters[loserSlot];
+  if (!loserChar) return;
+
+  loserChar.stunTimer = 1.4;
+  if (loserChar.isPlayer && soundRef) soundRef.playTackle();
+
+  const stage = STAGES[loserChar.currentStage];
+  if (stage) {
+    const centerX = stage.x || 0.0;
+    const nextX = loserChar.pos.x + pushX;
+    const nextZ = loserChar.pos.z + pushZ;
+    const distToCenter = Math.hypot(nextX - centerX, nextZ - stage.z);
+    if (distToCenter > stage.r) {
+      const normX = (nextX - centerX) / distToCenter;
+      const normZ = (nextZ - stage.z) / distToCenter;
+      loserChar.pos.x = centerX + normX * (stage.r - 0.5);
+      loserChar.pos.z = stage.z + normZ * (stage.r - 0.5);
+    } else {
+      loserChar.pos.x = nextX;
+      loserChar.pos.z = nextZ;
+    }
+  } else {
+    loserChar.pos.x += pushX;
+    loserChar.pos.z += pushZ;
+  }
+}
+
 // グローバル公開（network.js から安全に呼べるように登録）
 if (typeof window !== 'undefined') {
   window.applyRemoteScatterBlocks = applyRemoteScatterBlocks;
+  window.applyRemoteKnockout = applyRemoteKnockout;
 }
 
 /**
  * タックル被弾・ゲート通過時の所持ブロック床面散乱
- * ★【Phase 2 強化】マルチプレイ時に散乱したブロック一覧を一括ブロードキャスト
  * @param {THREE.Scene} scene 
  * @param {Object} char 
  * @param {number} countToDrop 
@@ -146,6 +179,8 @@ export function scatterBricks(scene, char, countToDrop) {
     }
     if (!poolItem) break;
 
+    const uniqueScatterId = `s_${char.currentStage}_${Date.now().toString(36)}_${i}`;
+
     poolItem.mesh.material = sharedMats.blockNeutral;
     poolItem.mesh.position.set(dropX, floorY, dropZ);
     poolItem.mesh.rotation.set(0, Math.random() * Math.PI, 0);
@@ -155,11 +190,13 @@ export function scatterBricks(scene, char, countToDrop) {
     poolItem.team = TEAMS.NEUTRAL;
     poolItem.pos = poolItem.mesh.position;
     poolItem.stageIdx = char.currentStage;
+    poolItem.blockId = uniqueScatterId;
     poolItem.attracting = false;
 
     stageBlocks.push(poolItem);
 
     droppedBlocks.push({
+      blockId: uniqueScatterId,
       x: Number(dropX.toFixed(2)),
       y: Number(floorY.toFixed(2)),
       z: Number(dropZ.toFixed(2)),
@@ -167,7 +204,7 @@ export function scatterBricks(scene, char, countToDrop) {
     });
   }
 
-  // ★【Phase 2】マルチプレイ時、自キャラ被弾またはホスト端末のAI被弾による散乱情報を他端末へブロードキャスト
+  // マルチプレイ時、判定権限を持つ端末のみが散乱情報をブロードキャスト
   const isMulti = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive);
   const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
   const shouldBroadcast = isMulti && (char.isPlayer || (isHost && char.isAI));
@@ -349,9 +386,13 @@ export function fireThunderStrike(scene, userChar) {
 
 /**
  * キャラクター同士のタックル衝突判定
+ * ★【Step 9 核心】判定確定権限の一元化（勝者側端末 または ホスト端末のみが確定実行）
  * @param {THREE.Scene} scene 
  */
 export function handleTackles(scene) {
+  const isMulti = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive);
+  const isHost = (isMulti && window.NetworkManager.isHost);
+
   for (let i = 0; i < characters.length; i++) {
     for (let j = i + 1; j < characters.length; j++) {
       const c1 = characters[i], c2 = characters[j];
@@ -369,8 +410,24 @@ export function handleTackles(scene) {
       const tdx = c1.pos.x - c2.pos.x;
       const tdz = c1.pos.z - c2.pos.z;
       if ((tdx * tdx + tdz * tdz < 1.69) && Math.abs(c1.pos.y - c2.pos.y) < 1.0) {
-        if (c1.stackCount > c2.stackCount) tackleKnockout(scene, c1, c2);
-        else if (c2.stackCount > c1.stackCount) tackleKnockout(scene, c2, c1);
+        let winner = null;
+        let loser = null;
+
+        if (c1.stackCount > c2.stackCount) {
+          winner = c1;
+          loser = c2;
+        } else if (c2.stackCount > c1.stackCount) {
+          winner = c2;
+          loser = c1;
+        }
+
+        if (winner && loser) {
+          // マルチプレイ時は「勝者が自操作キャラ」または「ホスト端末でAIが勝者」の場合のみ判定確定権限を持つ
+          const hasAuthority = !isMulti || winner.isPlayer || (isHost && winner.isAI);
+          if (hasAuthority) {
+            tackleKnockout(scene, winner, loser);
+          }
+        }
       }
     }
   }
@@ -378,6 +435,7 @@ export function handleTackles(scene) {
 
 /**
  * タックル敗者のノックアウト・所持ブロック放出
+ * ★【Step 9 改善】被弾側へ KNOCKOUT イベントを通知し、散乱ブロックの二重生成を完全防止
  * @param {THREE.Scene} scene 
  * @param {Object} winner 
  * @param {Object} loser 
@@ -385,7 +443,7 @@ export function handleTackles(scene) {
 export function tackleKnockout(scene, winner, loser) {
   if (loser.stunTimer > 0 || loser.invulnerableTimer > 0) return;
   loser.stunTimer = 1.4;
-  if (soundRef) soundRef.playTackle();
+  if (loser.isPlayer && soundRef) soundRef.playTackle();
 
   const drops = Math.min(6, Math.max(2, Math.floor(loser.stackCount * 0.35)));
   scatterBricks(scene, loser, drops);
@@ -394,6 +452,7 @@ export function tackleKnockout(scene, winner, loser) {
   const mag = Math.hypot(kx, kz) || 1;
   const pushX = (kx / mag) * 2.0;
   const pushZ = (kz / mag) * 2.0;
+
   const stage = STAGES[loser.currentStage];
   if (stage) {
     const centerX = stage.x || 0.0;
@@ -412,5 +471,25 @@ export function tackleKnockout(scene, winner, loser) {
   } else {
     loser.pos.x += pushX;
     loser.pos.z += pushZ;
+  }
+
+  // マルチプレイ時、被弾側端末へノックアウト（スタン＆吹き飛び）を通知
+  const isMulti = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive);
+  if (isMulti && typeof window !== 'undefined' && window.AgentSDK) {
+    const loserSlot = characters.indexOf(loser);
+    if (loserSlot !== -1) {
+      try {
+        window.AgentSDK.room.sendMessage({
+          message: JSON.stringify({
+            event: 'KNOCKOUT',
+            loserSlot: loserSlot,
+            pushX: Number(pushX.toFixed(2)),
+            pushZ: Number(pushZ.toFixed(2))
+          })
+        });
+      } catch (err) {
+        console.warn('[combat.js] Failed to broadcast KNOCKOUT:', err);
+      }
+    }
   }
 }
