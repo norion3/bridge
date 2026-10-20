@@ -1,8 +1,8 @@
 // dom.js: 画面UI・HUD・ロビー・待機室の動的生成モジュール
-// ★ Phase 1 実装版（ボタンイベント登録の一元化・先祖返り温床の根絶）：
-//   1. ロビー作成ボタンのイベントリスナー重複登録を撤廃（network.js の hookLobbyNetworkEvents に完全一元化）
-//   2. dom.js はボタンのDOM属性設定（ID付与・onclick除去・スタイル）に専念し、UIの二重発火や先祖返りを物理的に防止
-//   3. UIController.showGame() での全オーバーレイ非表示（display: none !important）徹底
+// ★ Step 2 クリーン化版：
+//   1. 古い静的DOM（#test-lobby-overlay等）のラベル・ボタン改変処理（patchExistingLobbyLabels）を完全撤廃
+//   2. 自身が動的生成するDOM要素（#screen-lobby, #screen-waiting, HUD等）のみを清潔に制御
+//   3. UIController での不要な静的オーバーレイ操作コードを整理し、二重管理・先祖返りを根絶
 
 import { updatePlayerName } from './character.js';
 
@@ -44,8 +44,7 @@ export function injectStyles() {
     }
 
     /* ロビー画面 ＆ 待機画面：ポップで爽やかな青空・マリンフロストデザイン */
-    .gravity-screen-overlay,
-    #test-lobby-overlay {
+    .gravity-screen-overlay {
       position: absolute;
       inset: 0;
       z-index: 100;
@@ -63,8 +62,7 @@ export function injectStyles() {
     .gravity-screen-overlay.hidden {
       display: none !important;
     }
-    .gravity-card,
-    .lobby-card {
+    .gravity-card {
       width: 100%;
       max-width: 380px;
       display: flex;
@@ -98,8 +96,7 @@ export function injectStyles() {
     }
 
     /* サブボタン：公開ルーム作成 */
-    .gravity-btn-green,
-    .btn-green {
+    .gravity-btn-green {
       width: 100%;
       padding: 15px 20px;
       background: linear-gradient(135deg, #10b981 0%, #059669 100%) !important;
@@ -112,8 +109,7 @@ export function injectStyles() {
       box-shadow: 0 5px 16px rgba(16, 185, 129, 0.35) !important;
       transition: transform 0.1s ease;
     }
-    .gravity-btn-green:active,
-    .btn-green:active {
+    .gravity-btn-green:active {
       transform: scale(0.97);
     }
 
@@ -206,116 +202,10 @@ export async function syncGravityUserName() {
     }
   }
 
-  // 1. 動的テンプレート内の要素を更新
+  // 動的マウントされたロビー要素の挨拶文を更新
   const dynamicGreeting = document.getElementById('lobby-user-greeting');
   if (dynamicGreeting) {
     dynamicGreeting.innerHTML = `ようこそ <span style="color: #fde047; font-weight: 800;">${displayName}</span> さん`;
-  }
-
-  // 2. gravity_loader.html にすでにある既存ロビー要素も更新
-  const staticGreeting = document.querySelector('#test-lobby-overlay .lobby-card > div:nth-child(2)');
-  if (staticGreeting) {
-    staticGreeting.innerHTML = `ようこそ <span style="color: #fde047; font-weight: 800;">${displayName}</span> さん`;
-  }
-}
-
-/**
- * 既存の静的要素（gravity_loader.html）が存在する場合のテキスト・レイアウト・順序自動補正
- * ★【Phase 1 改善】イベントリスナー登録の重複を排除し、network.js に完全一元化
- */
-export function patchExistingLobbyLabels() {
-  const overlay = document.getElementById('test-lobby-overlay');
-  if (!overlay) return;
-
-  const card = overlay.querySelector('.lobby-card');
-  if (!card) return;
-
-  // タイトル：「階段を架けろ！」
-  const titleEl = card.querySelector('div:nth-child(1)');
-  if (titleEl) {
-    titleEl.textContent = '階段を架けろ！';
-    titleEl.style.fontSize = '30px';
-    titleEl.style.fontWeight = '900';
-    titleEl.style.letterSpacing = '0.05em';
-    titleEl.style.color = '#ffffff';
-    titleEl.style.textShadow = '0 3px 12px rgba(2, 132, 199, 0.8), 0 2px 4px rgba(0, 0, 0, 0.4)';
-    titleEl.style.margin = '4px 0 2px 0';
-  }
-
-  // 挨拶テキスト
-  const greetingEl = card.querySelector('div:nth-child(2)');
-  if (greetingEl) {
-    greetingEl.style.color = '#bae6fd';
-    greetingEl.style.fontSize = '14px';
-    greetingEl.style.marginBottom = '6px';
-  }
-
-  // ボタンの順序入れ替え：【1人で遊ぶ】を一番上に配置
-  const soloBtn = document.getElementById('btn-start-solo');
-  if (soloBtn) {
-    soloBtn.textContent = '▶ 1人で遊ぶ';
-    soloBtn.className = 'btn-solo-hero';
-    
-    if (!soloBtn._hasCustomListener) {
-      soloBtn._hasCustomListener = true;
-      soloBtn.addEventListener('click', () => {
-        if (window.GRAVITY_USER_NAME) {
-          updatePlayerName(window.GRAVITY_USER_NAME);
-        }
-      });
-    }
-  }
-
-  // DOMツリー上で soloBtn を挨拶文の直後へ移動
-  if (soloBtn && greetingEl && soloBtn.previousElementSibling !== greetingEl) {
-    greetingEl.after(soloBtn);
-  }
-
-  // ボタンテキストで確実に「公開ルームを作成」「プライベートルームを作成」を特定
-  const allButtons = card.querySelectorAll('button');
-  allButtons.forEach(btn => {
-    const text = btn.textContent || '';
-    if (text.includes('公開ルーム')) {
-      btn.id = 'btn-create-public';
-      btn.removeAttribute('onclick');
-      btn.onclick = null;
-      btn.className = 'gravity-btn-green';
-      // ★ イベントリスナー登録は network.js (hookLobbyNetworkEvents) に完全一元化
-    } else if (text.includes('プライベート')) {
-      btn.id = 'btn-create-private';
-      btn.removeAttribute('onclick');
-      btn.onclick = null;
-      btn.className = 'gravity-btn-green btn-private';
-    }
-  });
-
-  // 公開ルーム一覧の外観調整 ＆ 更新ボタンに ID を付与
-  const roomSection = card.querySelector('div:last-child');
-  if (roomSection) {
-    roomSection.classList.add('room-list-box');
-    const header = roomSection.querySelector('div:first-child');
-    if (header) {
-      header.style.color = '#e0f2fe';
-      header.style.fontSize = '16px';
-      header.style.fontWeight = '800';
-
-      let refreshBtn = header.querySelector('button');
-      if (!refreshBtn) {
-        refreshBtn = document.createElement('button');
-        refreshBtn.type = 'button';
-        refreshBtn.id = 'btn-refresh-rooms';
-        refreshBtn.textContent = '更新';
-        refreshBtn.style.cssText = 'background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.3); border-radius: 8px; color: #ffffff; font-size: 12px; font-weight: 700; padding: 4px 10px; cursor: pointer; float: right;';
-        header.appendChild(refreshBtn);
-      } else {
-        refreshBtn.id = 'btn-refresh-rooms';
-      }
-    }
-
-    const listBody = roomSection.querySelector('div:last-child');
-    if (listBody) {
-      listBody.id = 'room-list-container';
-    }
   }
 }
 
@@ -416,7 +306,37 @@ export function mountAllUI(container) {
     </div>
   `;
 
+  // 「1人で遊ぶ」ボタン押下時の安全ハンドリング
+  const soloBtn = document.getElementById('btn-start-solo');
+  if (soloBtn && !soloBtn._hasCustomListener) {
+    soloBtn._hasCustomListener = true;
+    soloBtn.addEventListener('click', () => {
+      UIController.showGame();
+      if (window.GRAVITY_USER_NAME) {
+        updatePlayerName(window.GRAVITY_USER_NAME);
+      }
+    });
+  }
+
+  // 「ロビーへ戻る」ボタン押下時のハンドリング
+  const leaveBtn = document.getElementById('btn-leave-room');
+  if (leaveBtn && !leaveBtn._hasCustomListener) {
+    leaveBtn._hasCustomListener = true;
+    leaveBtn.addEventListener('click', () => {
+      if (window.NetworkManager && typeof window.NetworkManager.exitRoom === 'function') {
+        window.NetworkManager.exitRoom();
+      } else {
+        UIController.showLobby();
+      }
+    });
+  }
+
   syncGravityUserName();
+
+  // network.js のイベントバインドを再度フック
+  if (typeof window !== 'undefined' && window.NetworkManager && typeof window.hookLobbyNetworkEvents === 'function') {
+    window.hookLobbyNetworkEvents();
+  }
 }
 
 /**
@@ -425,15 +345,9 @@ export function mountAllUI(container) {
 export const UIController = {
   showLobby() {
     const screenLobby = document.getElementById('screen-lobby');
-    const staticOverlay = document.getElementById('test-lobby-overlay');
     if (screenLobby) {
       screenLobby.classList.remove('hidden');
       screenLobby.style.removeProperty('display');
-    }
-    if (staticOverlay) {
-      staticOverlay.classList.remove('hidden');
-      staticOverlay.style.removeProperty('display');
-      staticOverlay.style.display = 'flex';
     }
     document.getElementById('screen-waiting')?.classList.add('hidden');
     this._setHUDVisible(false);
@@ -471,12 +385,6 @@ export const UIController = {
   },
 
   _hideAllLobbyOverlays() {
-    const staticOverlay = document.getElementById('test-lobby-overlay');
-    if (staticOverlay) {
-      staticOverlay.classList.add('hidden');
-      staticOverlay.style.setProperty('display', 'none', 'important');
-    }
-
     const screenLobby = document.getElementById('screen-lobby');
     if (screenLobby) {
       screenLobby.classList.add('hidden');
@@ -506,11 +414,10 @@ if (typeof window !== 'undefined') {
 }
 
 /**
- * 初期化実行ルーチン（自動フック）
+ * 初期化実行ルーチン
  */
 export function initDOMEnhancements() {
   injectStyles();
-  patchExistingLobbyLabels();
   syncGravityUserName();
 }
 
@@ -523,6 +430,7 @@ if (document.readyState === 'loading') {
 // network.js を安全に読み込んでイベントをバインド
 import('./network.js').then(module => {
   if (module && typeof module.hookLobbyNetworkEvents === 'function') {
+    window.hookLobbyNetworkEvents = module.hookLobbyNetworkEvents;
     module.hookLobbyNetworkEvents();
   }
 }).catch(err => {

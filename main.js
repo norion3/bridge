@@ -1,10 +1,9 @@
 // main.js: ゲーム全体の起動指揮・Three.js初期化・メインループ・入力・HUD制御
-// ★ 決定論シード同期＆コース自動伸長安全化版：
-//   1. world.js 側の決定論シード同期導入により、ホスト・ゲスト双方がそれぞれの画面で安全に extendCourse(scene) を実行可能
-//   2. ゲスト画面で奥のステージが途切れて海へ落下する致命的バグを完全解消
-//   3. 他のゲームループ・入力・カメラ・演出更新ロジックは100%維持
+// ★ Step 3 UI統合版：
+//   1. dom.js の mountAllUI を起動時（bootGame）に安全に実行し、動的UIの自動配線を確立
+//   2. 既存の3D描画、物理演算、ステージ伸長、ソロプレイ操作は100%維持
 
-import './dom.js';
+import { mountAllUI } from './dom.js';
 
 import { SoundEngine } from './audio.js';
 import {
@@ -538,6 +537,12 @@ export function bootGame() {
   if (window._gameEngineBooted) return;
   window._gameEngineBooted = true;
   try {
+    // コンテナが存在する場合、未生成の画面UIを一括マウント
+    const appContainer = document.getElementById('app-container') || document.body;
+    if (!document.getElementById('canvas-container')) {
+      mountAllUI(appContainer);
+    }
+
     initThree();
     animate(performance.now());
   } catch (err) {
