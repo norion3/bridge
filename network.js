@@ -1,10 +1,26 @@
 // network.js: AgentSDKラッパー ＆ 動的スロット・相互可視化・10Hz位置同期エンジン
-// ★ Phase 1 実装版：勝手な移動根絶（自律AI乗っ取り遮断）＆ キャラあべこべ根絶（clientId動的任命）＆ 入室不能根絶（事前クリーンアップ）
-// ★ ワールドスナップショット・階段架け(BUILD_PLANK)＆床ブロック取得(PICK_BLOCK)＆新ブロック補充(SPAWN_BLOCK)完全準拠
+// ★ GRAVITY公式仕様完全準拠版：
+//   1. 未入室時 exit() の 200ms タイムアウトガード（フリーズ完全根絶）
+//   2. res.errno === 0 厳格成否判定（エラー時は errmsg 表示）
+//   3. room_id の文字列型（String）徹底（17桁の丸め破損防止）
+//   4. スマホWebViewのタップ保証（click ＋ touchend 両対応）
 
 import { characters, createNameplateMesh, updatePlayerName, bindLocalPlayerSlot, refreshCharacterStackVisuals } from './character.js';
 import { STAGES, buildWorld, manageBlockSpawns, bridges } from './world.js';
 import { resetParticlePools, floorBlockPool } from './particles.js';
+
+/**
+ * 未入室時の exit() による無限待機（Pendingフリーズ）を確実に防ぐ安全退出ヘルパー
+ */
+async function safeExitCurrentRoom() {
+  if (typeof window === 'undefined' || !window.AgentSDK || !window.AgentSDK.room) return;
+  try {
+    const timeoutPromise = new Promise(resolve => setTimeout(() => resolve({ timeout: true }), 200));
+    await Promise.race([window.AgentSDK.room.exit(), timeoutPromise]);
+  } catch (e) {
+    console.warn('[network.js] safeExitCurrentRoom caught:', e);
+  }
+}
 
 /**
  * 画面切り替えの例外安全ヘルパー（ロビー幕を確実に消し去る）
@@ -98,11 +114,9 @@ function generateClientId() {
 export const NetworkManager = {
   isSDKAvailable: typeof window !== 'undefined' && !!window.AgentSDK,
   currentRoomId: null,
-  clientId: generateClientId(), // ★ 端末固有セッショントークン
+  clientId: generateClientId(),
   myUser: { name: 'YOU', user_id: 'local_user', portrait: '' },
   
-  // スロット配列（0:青, 1:赤, 2:黄）
-  // 厳格ルール: ホストが権威サーバーとして空きスロットへ動的任命
   slots: [
     { slot: 0, clientId: null, userId: null, name: 'norion', isAI: false },
     { slot: 1, clientId: null, userId: null, name: 'CPU 1', isAI: true },
@@ -111,17 +125,14 @@ export const NetworkManager = {
   
   isHost: false,
   isMultiplayerActive: false,
-  mySlot: 0, // 自端末の担当スロット（ホスト:0, ゲスト1:1, ゲスト2:2）
-  currentSeed: 12345678, // ワールド共有用乱数シード
+  mySlot: 0,
+  currentSeed: 12345678,
   _seedApplied: false,
 
   _hasRegisteredListener: false,
   _lastRefreshTime: 0,
   _syncIntervalId: null,
 
-  /**
-   * 初期化：ユーザー情報取得およびメッセージリスナー登録
-   */
   async init() {
     if (!this.isSDKAvailable) {
       console.warn('[NetworkManager] AgentSDK is not available. Standalone mode.');
@@ -145,9 +156,6 @@ export const NetworkManager = {
     return this.myUser;
   },
 
-  /**
-   * メッセージリスナーの一重登録（シングルトン保証）
-   */
   ensureMessageListener() {
     if (!this.isSDKAvailable || this._hasRegisteredListener) return;
     this._hasRegisteredListener = true;
@@ -173,21 +181,17 @@ export const NetworkManager = {
     }
   },
 
-  /**
-   * 公開ルーム一覧の取得（連打防止の3秒クールダウン付き ＆ 幽霊部屋フィルタリング）
-   */
   async getPublicRooms() {
     if (!this.isSDKAvailable) return [];
     const now = Date.now();
-    if (now - this._lastRefreshTime < 3000) {
+    if (now - this._lastRefreshTime < 2000) {
       return null;
     }
     this._lastRefreshTime = now;
 
     try {
       const res = await window.AgentSDK.room.getPublicRoomList();
-      if (res && res.data && Array.isArray(res.data.list)) {
-        // gamer_num === 0（誰もいない幽霊部屋）および満員部屋を除外
+      if (res && res.errno === 0 && res.data && Array.isArray(res.data.list)) {
         return res.data.list.filter(r => {
           const count = Number(r.gamer_num) || 0;
           const max = Number(r.max_players) || 3;
@@ -201,17 +205,14 @@ export const NetworkManager = {
   },
 
   /**
-   * 公開ルーム作成（ホスト: スロット0「青」担当 ＆ 直前exitでゴースト解放）
+   * 公開ルーム作成（ホスト）
+   * ★【修復】未入室時exitのタイムアウト保証 ＆ errno === 0 厳格判定
    */
   async createRoom(isPrivate = false) {
     await this.init();
 
-    // ★【入室不能根絶】直前の残留切断セッションを解放してから新規作成
-    if (this.isSDKAvailable) {
-      try {
-        await window.AgentSDK.room.exit();
-      } catch (e) {}
-    }
+    // 未入室状態でも絶対にフリーズしない安全退室
+    await safeExitCurrentRoom();
 
     let createdRoomId = 'local_room_' + Math.floor(Math.random() * 1000);
 
@@ -219,11 +220,22 @@ export const NetworkManager = {
       try {
         const permission = isPrivate ? 1 : 0;
         const res = await window.AgentSDK.room.create({ max_players: 3, room_permission: permission });
-        if (res && res.data && res.data.room_id) {
-          createdRoomId = res.data.room_id;
+        console.log('[NetworkManager] room.create response:', res);
+
+        // ★ 公式仕様準拠：errno !== 0 の場合はエラーを表示して中断
+        if (!res || res.errno !== 0) {
+          const errMsg = (res && res.errmsg) ? res.errmsg : '不明なエラー';
+          alert(`部屋の作成に失敗しました: ${errMsg}`);
+          return null;
+        }
+
+        if (res.data && res.data.room_id) {
+          createdRoomId = String(res.data.room_id);
         }
       } catch (err) {
-        console.error('[NetworkManager] Create room failed:', err);
+        console.error('[NetworkManager] Create room exception:', err);
+        alert('部屋作成APIの呼び出し中にエラーが発生しました');
+        return null;
       }
     }
 
@@ -233,26 +245,27 @@ export const NetworkManager = {
     this.isMultiplayerActive = true;
     this._seedApplied = true;
 
-    // ホスト自身で乱数シードを固定決定
+    // ホスト自身で乱数シードを決定
     this.currentSeed = (typeof createdRoomId === 'string')
       ? Math.abs(createdRoomId.split('').reduce((acc, char) => (acc << 5) - acc + char.charCodeAt(0), 0))
       : Math.floor(Math.random() * 90000000) + 10000000;
 
-    // ホスト自身も決定したシードで床ブロックプールを全リセットし、同一シードで再整列！
+    // ワールド構築
     if (typeof window !== 'undefined' && window.currentSceneRef) {
       resetParticlePools();
       buildWorld(window.currentSceneRef, this.currentSeed);
       for (let i = 0; i < 60; i++) manageBlockSpawns(window.currentSceneRef, false);
     }
 
-    // ホストのスロット0を自身の clientId で厳格固定
+    // ホストのスロット0を固定
     this.slots[0] = { slot: 0, clientId: this.clientId, userId: this.myUser.user_id, name: this.myUser.name, isAI: false };
     this.slots[1] = { slot: 1, clientId: null, userId: null, name: 'CPU 1', isAI: true };
     this.slots[2] = { slot: 2, clientId: null, userId: null, name: 'CPU 2', isAI: true };
 
+    // ゲーム本編へ遷移
     safeShowGameScreen();
 
-    // ホストの自操作キャラをスロット0（青）へバインド
+    // 自操作キャラをスロット0（青）へバインド
     if (typeof bindLocalPlayerSlot === 'function') {
       bindLocalPlayerSlot(0);
     } else if (typeof window.bindLocalPlayerSlot === 'function') {
@@ -268,40 +281,47 @@ export const NetworkManager = {
   },
 
   /**
-   * ルーム参加（ゲスト: 直前exitでゴースト解放 ＆ 一意なclientIdで申請）
+   * ルーム参加（ゲスト）
+   * ★【修復】room_id の文字列型徹底 ＆ errno === 0 厳格判定
    */
   async joinRoom(roomId) {
     if (!roomId) return false;
+    const safeRoomId = String(roomId); // 17桁以上の丸め誤差を防止
+
     await this.init();
 
-    // ★【入室不能根絶】直前の残留切断セッションを解放してから参加
-    if (this.isSDKAvailable) {
-      try {
-        await window.AgentSDK.room.exit();
-      } catch (e) {}
-    }
+    // 未入室状態でも絶対にフリーズしない安全退室
+    await safeExitCurrentRoom();
 
     if (this.isSDKAvailable) {
       try {
-        const res = await window.AgentSDK.room.join({ room_id: roomId });
+        const res = await window.AgentSDK.room.join({ room_id: safeRoomId });
         console.log('[NetworkManager] join room response:', res);
+
+        // ★ 公式仕様準拠：errno !== 0 の場合はエラーを表示して中断
+        if (!res || res.errno !== 0) {
+          const errMsg = (res && res.errmsg) ? res.errmsg : '入室できませんでした';
+          alert(`入室に失敗しました: ${errMsg}`);
+          return false;
+        }
       } catch (err) {
-        console.error('[NetworkManager] Join room API call error:', err);
+        console.error('[NetworkManager] Join room exception:', err);
+        alert('入室APIの呼び出し中にエラーが発生しました');
+        return false;
       }
     }
 
-    this.currentRoomId = roomId;
+    this.currentRoomId = safeRoomId;
     this.isHost = false;
     this.mySlot = 1; // 初期フォールバックはスロット1(赤)
     this.isMultiplayerActive = true;
     this._seedApplied = false;
 
-    // ★【勝手な移動根絶】参加した瞬間、スロット0（ホスト）を即座にリモート固定し自端末AIによる乗っ取りを物理遮断
+    // ホストスロットをリモート固定
     this._bindRemoteSlot(0, 'ホスト');
 
     safeShowGameScreen();
 
-    // ホストに対して一意な clientId を含めた同期リクエストを送信
     this._sendCustomMessage({
       event: 'REQUEST_ROOM_SYNC',
       clientId: this.clientId,
@@ -313,17 +333,12 @@ export const NetworkManager = {
     return true;
   },
 
-  /**
-   * ゲストが入室した時の処理（ホスト側）
-   */
   _handleUserJoined(data) {
     if (!data) return;
     const userId = String(data.user_id || '');
     if (!userId || userId === String(this.myUser.user_id)) return;
 
     if (this.isHost) {
-      // ゲストからの REQUEST_ROOM_SYNC (clientId付き) を待って正確に割り当てるため、
-      // ここでは既存の最新構成をウェルカム配信
       this._sendCustomMessage({
         event: 'ROOM_MEMBERS_SYNC',
         slots: this.slots,
@@ -333,9 +348,6 @@ export const NetworkManager = {
     }
   },
 
-  /**
-   * カスタムメッセージ受信ハンドラ
-   */
   _handleCustomMessage(data) {
     if (!data) return;
     try {
@@ -348,25 +360,20 @@ export const NetworkManager = {
       if (!packet || !packet.event) return;
 
       switch (packet.event) {
-        // ① ホストから届いたスロット構成＆マップシード＆世界状態スナップショットの完全同期
         case 'ROOM_MEMBERS_SYNC':
           this._applyRoomMembersSync(packet.slots, packet.seed, packet.snapshot);
           break;
 
-        // ② ★【キャラあべこべ根絶】新入室者からのリクエスト（ホストがclientIdに基づき空きスロットを動的任命）
         case 'REQUEST_ROOM_SYNC':
           if (this.isHost) {
             const reqClientId = packet.clientId;
             const reqUserId = String(packet.userId || '');
             const reqName = packet.name || 'ゲスト';
 
-            // 自身の端末からのエコーは除外
             if (reqClientId && reqClientId !== this.clientId) {
-              // 既に割り当て済みか確認
               let targetSlot = this.slots.findIndex(s => s.clientId === reqClientId);
 
               if (targetSlot === -1) {
-                // 空いているスロット（isAI === true）を順番に任命（1:赤 ➔ 2:黄）
                 if (this.slots[1].isAI) {
                   targetSlot = 1;
                 } else if (this.slots[2].isAI) {
@@ -382,13 +389,10 @@ export const NetworkManager = {
                   name: reqName,
                   isAI: false
                 };
-
-                // ホスト側画面でも即座に該当キャラを完全リモート化（AI乗っ取りを物理遮断）
                 this._bindRemoteSlot(targetSlot, reqName);
               }
             }
 
-            // 任命結果と最新世界状態を全員へ配信
             this._sendCustomMessage({
               event: 'ROOM_MEMBERS_SYNC',
               slots: this.slots,
@@ -398,33 +402,28 @@ export const NetworkManager = {
           }
           break;
 
-        // ③ 10Hzリアルタイム位置パケットの受信
         case 'POS':
           this._handleRemotePosition(packet);
           break;
 
-        // ④ 階段設置パケットのリアルタイム受信
         case 'BUILD_PLANK':
           if (typeof window.applyRemotePlankBuilt === 'function') {
             window.applyRemotePlankBuilt(packet.stageIdx, packet.laneIdx, packet.plankIdx, packet.teamId);
           }
           break;
 
-        // ⑤ 相手が床ブロックを拾った際のリアルタイム受信
         case 'PICK_BLOCK':
           if (typeof window.applyRemoteBlockPicked === 'function') {
             window.applyRemoteBlockPicked(packet.stageIdx, packet.poolIdx, packet.x, packet.z);
           }
           break;
 
-        // ⑥ ホストが新ブロックを補充した際のリアルタイム受信
         case 'SPAWN_BLOCK':
           if (typeof window.applyRemoteBlockSpawned === 'function') {
             window.applyRemoteBlockSpawned(packet.stageIdx, packet.poolIdx, packet.x, packet.y, packet.z, packet.teamId);
           }
           break;
 
-        // ⑦ 全員同時リスタート
         case 'RESTART_GAME':
           if (typeof window.onRemoteRestartReceived === 'function') {
             window.onRemoteRestartReceived(packet);
@@ -436,14 +435,10 @@ export const NetworkManager = {
     }
   },
 
-  /**
-   * ★【キャラあべこべ＆勝手な移動根絶】同期パケット適用ハンドラ
-   */
   _applyRoomMembersSync(syncedSlots, seed, snapshot = null) {
     if (!Array.isArray(syncedSlots)) return;
     this.slots = syncedSlots;
 
-    // 初回シード同期時：ワールド構築 ＆ ホストのスナップショットで現在の床ブロックと階段を一括完全再現
     if (seed && (!this._seedApplied || this.currentSeed !== seed) && !this.isHost) {
       this.currentSeed = seed;
       this._seedApplied = true;
@@ -477,12 +472,10 @@ export const NetworkManager = {
       });
     }
 
-    // ★【最重要】clientId による自端末スロットの確定（同一アカウント norion 同士でも絶対に被らない）
     syncedSlots.forEach((s) => {
       const isMyClient = (s.clientId && s.clientId === this.clientId) || (!s.clientId && this.isHost && s.slot === 0);
 
       if (isMyClient) {
-        // 自操作キャラ確定
         this.mySlot = s.slot;
         window.MY_PLAYER_SLOT = s.slot;
         if (typeof bindLocalPlayerSlot === 'function') {
@@ -491,23 +484,17 @@ export const NetworkManager = {
           window.bindLocalPlayerSlot(s.slot);
         }
       } else if (!s.isAI && (s.clientId || s.userId)) {
-        // ★【勝手な移動根絶】他人間プレイヤーのスロットは、直ちに自端末AI思考を完全停止しリモート固定！
         this._bindRemoteSlot(s.slot, s.name);
       } else if (s.isAI) {
-        // 人間がいないスロットのみCPUとして自律走行
         this._restoreSlotToAI(s.slot);
       }
     });
   },
 
-  /**
-   * ★【勝手な移動根絶】指定スロットを自律AI思考から完全に切り離し、完全静止（リモート受信待ち）に固定
-   */
   _bindRemoteSlot(slotIndex, playerName) {
     const targetChar = characters[slotIndex];
     if (!targetChar) return;
 
-    // 自端末の ai.js による自動操作を物理遮断
     targetChar.isPlayer = false;
     targetChar.isAI = false;
     targetChar.isRemote = true;
@@ -518,7 +505,6 @@ export const NetworkManager = {
     targetChar.searchCooldown = 999999;
     targetChar.name = playerName;
 
-    // 相手が操作していない時に勝手に歩かないよう、直ちに静止ポーズへ整列
     targetChar.walkCycle = 0;
     if (targetChar.meshObj) {
       if (targetChar.meshObj.leftLeg) targetChar.meshObj.leftLeg.rotation.x = 0;
@@ -527,10 +513,8 @@ export const NetworkManager = {
       if (targetChar.meshObj.rightArm) targetChar.meshObj.rightArm.rotation.x = 0;
     }
 
-    // リモートプレイヤーの背中スタック色を更新
     refreshCharacterStackVisuals(targetChar);
 
-    // ネームプレートの更新
     if (targetChar.nameplateSprite) {
       if (targetChar.nameplateSprite.material && targetChar.nameplateSprite.material.map) {
         targetChar.nameplateSprite.material.map.dispose();
@@ -541,9 +525,6 @@ export const NetworkManager = {
     }
   },
 
-  /**
-   * 指定スロットを自律AI（CPU）へ安全に復帰
-   */
   _restoreSlotToAI(slotIndex) {
     const targetChar = characters[slotIndex];
     if (!targetChar) return;
@@ -567,9 +548,6 @@ export const NetworkManager = {
     }
   },
 
-  /**
-   * 10Hz（100ms周期）での自キャラ位置ブロードキャスト
-   */
   _startPositionBroadcasting() {
     if (this._syncIntervalId) clearInterval(this._syncIntervalId);
 
@@ -593,16 +571,12 @@ export const NetworkManager = {
     }, 100);
   },
 
-  /**
-   * 受信したリモートキャラの最新座標を格納（main.js のLerp補間用）
-   */
   _handleRemotePosition(packet) {
     if (packet.slot === this.mySlot || packet.clientId === this.clientId) return;
 
     const targetChar = characters[packet.slot];
     if (!targetChar) return;
 
-    // パケットを受信したスロットは確実にリモート属性を維持
     targetChar.isRemote = true;
     targetChar.isAI = false;
 
@@ -618,9 +592,6 @@ export const NetworkManager = {
     }
   },
 
-  /**
-   * カスタムメッセージ送信ヘルパー
-   */
   _sendCustomMessage(msgObj) {
     if (!this.isSDKAvailable) return;
     try {
@@ -632,16 +603,12 @@ export const NetworkManager = {
     }
   },
 
-  /**
-   * プレイヤー退出ハンドラ
-   */
   _handleUserExited(data) {
     if (!data) return;
     const userId = String(data.user_id || '');
     const exitedSlotIdx = this.slots.findIndex(s => String(s.userId) === userId);
 
     if (exitedSlotIdx !== -1 && exitedSlotIdx !== 0) {
-      console.log(`[NetworkManager] User exited from slot ${exitedSlotIdx}, restoring AI.`);
       this.slots[exitedSlotIdx] = {
         slot: exitedSlotIdx,
         clientId: null,
@@ -663,19 +630,12 @@ export const NetworkManager = {
     }
   },
 
-  /**
-   * ルーム退出
-   */
   async exitRoom() {
     if (this._syncIntervalId) {
       clearInterval(this._syncIntervalId);
       this._syncIntervalId = null;
     }
-    if (this.isSDKAvailable) {
-      try {
-        await window.AgentSDK.room.exit();
-      } catch (e) {}
-    }
+    await safeExitCurrentRoom();
     this.currentRoomId = null;
     this.isHost = false;
     this.isMultiplayerActive = false;
@@ -688,36 +648,32 @@ export const NetworkManager = {
 };
 
 /**
- * ページ離脱・リロード・画面バック時に確実に room.exit() を投げて幽霊部屋の残留を激減させる
- */
-if (typeof window !== 'undefined') {
-  const onSafeLeave = () => {
-    if (NetworkManager.isMultiplayerActive && NetworkManager.isSDKAvailable) {
-      try {
-        window.AgentSDK.room.exit().catch(() => {}).finally(() => {});
-      } catch (e) {}
-    }
-  };
-  window.addEventListener('pagehide', onSafeLeave);
-  window.addEventListener('beforeunload', onSafeLeave);
-}
-
-/**
  * dom.js 内のボタンと NetworkManager を自動接続するフック
+ * ★【修復】click と touchend の両方を登録し、スマホでの無反応を完全根絶
  */
 export function hookLobbyNetworkEvents() {
   const btnCreatePublic = document.getElementById('btn-create-public');
   if (btnCreatePublic && !btnCreatePublic._hasNetHook) {
     btnCreatePublic._hasNetHook = true;
-    btnCreatePublic.addEventListener('click', () => {
+    const onCreateHandler = (e) => {
+      if (e) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
       NetworkManager.createRoom(false);
-    });
+    };
+    btnCreatePublic.addEventListener('click', onCreateHandler);
+    btnCreatePublic.addEventListener('touchend', onCreateHandler);
   }
 
   const btnRefresh = document.getElementById('btn-refresh-rooms');
   if (btnRefresh && !btnRefresh._hasNetHook) {
     btnRefresh._hasNetHook = true;
-    btnRefresh.addEventListener('click', async () => {
+    const onRefreshHandler = async (e) => {
+      if (e) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
       btnRefresh.textContent = '更新中...';
       const rooms = await NetworkManager.getPublicRooms();
       btnRefresh.textContent = '更新';
@@ -734,24 +690,32 @@ export function hookLobbyNetworkEvents() {
       rooms.forEach((r) => {
         const item = document.createElement('div');
         item.className = 'gravity-room-item';
+        const strRoomId = String(r.room_id);
         item.innerHTML = `
           <div style="display: flex; flex-direction: column; gap: 2px;">
-            <span style="font-weight: 800; color: #ffffff; font-size: 14px;">ROOM #${r.room_id}</span>
+            <span style="font-weight: 800; color: #ffffff; font-size: 14px;">ROOM #${strRoomId}</span>
             <span style="font-size: 12px; color: #bae6fd;">走者: ${r.gamer_num || 1} / 3名</span>
           </div>
           <button type="button" class="gravity-btn-green" style="width: auto; padding: 6px 14px; font-size: 13px; border-radius: 8px;">参加</button>
         `;
         const joinBtn = item.querySelector('button');
-        joinBtn.addEventListener('click', () => {
-          NetworkManager.joinRoom(r.room_id);
-        });
+        const onJoinHandler = (ev) => {
+          if (ev) {
+            ev.preventDefault();
+            ev.stopPropagation();
+          }
+          NetworkManager.joinRoom(strRoomId);
+        };
+        joinBtn.addEventListener('click', onJoinHandler);
+        joinBtn.addEventListener('touchend', onJoinHandler);
         container.appendChild(item);
       });
-    });
+    };
+    btnRefresh.addEventListener('click', onRefreshHandler);
+    btnRefresh.addEventListener('touchend', onRefreshHandler);
   }
 }
 
-// ロード完了時に自動フック
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', hookLobbyNetworkEvents);
 } else {

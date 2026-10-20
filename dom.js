@@ -1,7 +1,7 @@
 // dom.js: 画面UI・HUD・ロビー・待機室の動的生成モジュール
 // 既存のゲームコードには一切干渉せず、指定されたコンテナ内にUI要素を安全に構築します。
 // ★ Phase 3.5: 取得した名前を即座に自キャラ足元ネームプレートへ反映する連携
-// ★ Phase 4: network.js との安全結合（循環参照根絶 ＆ 既存ボタンへのフック保証）
+// ★ 不具合修復: ボタンテキスト検索による確実なID付与 ＆ onclick完全除去（セレクタずれ解消）
 
 import { updatePlayerName } from './character.js';
 
@@ -223,7 +223,7 @@ export async function syncGravityUserName() {
 
 /**
  * 既存の静的要素（gravity_loader.html）が存在する場合のテキスト・レイアウト・順序自動補正
- * ★ Phase 4: network.js が確実にフックできるよう ID を付与
+ * ★【修復】脆い nth-of-type を完全廃止し、テキスト検索で確実にIDを付与＆古いonclickを除去
  */
 export function patchExistingLobbyLabels() {
   const overlay = document.getElementById('test-lobby-overlay');
@@ -254,36 +254,42 @@ export function patchExistingLobbyLabels() {
 
   // ボタンの順序入れ替え：【1人で遊ぶ】を一番上に配置！
   const soloBtn = document.getElementById('btn-start-solo');
-  const createPublicBtn = card.querySelector('button:nth-of-type(1)');
-  const createPrivateBtn = card.querySelector('button:nth-of-type(2)');
-
   if (soloBtn) {
     soloBtn.textContent = '▶ 1人で遊ぶ';
     soloBtn.className = 'btn-solo-hero';
     
-    soloBtn.addEventListener('click', () => {
-      if (window.GRAVITY_USER_NAME) {
-        updatePlayerName(window.GRAVITY_USER_NAME);
-      }
-    });
-  }
-
-  // ★ Phase 4: 静的ローダーの「公開ルーム作成」ボタンに ID を付与し、onclick の alert を除去
-  if (createPublicBtn && createPublicBtn !== soloBtn) {
-    createPublicBtn.id = 'btn-create-public';
-    createPublicBtn.removeAttribute('onclick');
-    createPublicBtn.className = 'gravity-btn-green';
-  }
-  if (createPrivateBtn && createPrivateBtn !== soloBtn) {
-    createPrivateBtn.id = 'btn-create-private';
-    createPrivateBtn.removeAttribute('onclick');
-    createPrivateBtn.className = 'gravity-btn-green btn-private';
+    // イベント二重登録防止
+    if (!soloBtn._hasCustomListener) {
+      soloBtn._hasCustomListener = true;
+      soloBtn.addEventListener('click', () => {
+        if (window.GRAVITY_USER_NAME) {
+          updatePlayerName(window.GRAVITY_USER_NAME);
+        }
+      });
+    }
   }
 
   // DOMツリー上で soloBtn を挨拶文（2番目の要素）の直後へ移動
   if (soloBtn && greetingEl && soloBtn.previousElementSibling !== greetingEl) {
     greetingEl.after(soloBtn);
   }
+
+  // ★【修復】ボタンテキストで確実に「公開ルームを作成」「プライベートルームを作成」を特定
+  const allButtons = card.querySelectorAll('button');
+  allButtons.forEach(btn => {
+    const text = btn.textContent || '';
+    if (text.includes('公開ルーム')) {
+      btn.id = 'btn-create-public';
+      btn.removeAttribute('onclick');
+      btn.onclick = null;
+      btn.className = 'gravity-btn-green';
+    } else if (text.includes('プライベート')) {
+      btn.id = 'btn-create-private';
+      btn.removeAttribute('onclick');
+      btn.onclick = null;
+      btn.className = 'gravity-btn-green btn-private';
+    }
+  });
 
   // 公開ルーム一覧の外観調整 ＆ 更新ボタンに ID を付与
   const roomSection = card.querySelector('div:last-child');
@@ -425,7 +431,6 @@ export function mountAllUI(container) {
  * UIステート表示切り替え制御
  */
 export const UIController = {
-  // ロビー画面を表示
   showLobby() {
     const screenLobby = document.getElementById('screen-lobby');
     const staticOverlay = document.getElementById('test-lobby-overlay');
@@ -435,7 +440,6 @@ export const UIController = {
     this._setHUDVisible(false);
   },
 
-  // 待機部屋画面を表示
   showWaitingRoom(roomId) {
     document.getElementById('screen-lobby')?.classList.add('hidden');
     const staticOverlay = document.getElementById('test-lobby-overlay');
@@ -446,7 +450,6 @@ export const UIController = {
     this._setHUDVisible(false);
   },
 
-  // ゲーム本編画面を表示（ロビーを隠してHUDを表示）
   showGame() {
     document.getElementById('screen-lobby')?.classList.add('hidden');
     const staticOverlay = document.getElementById('test-lobby-overlay');
@@ -466,7 +469,6 @@ export const UIController = {
   }
 };
 
-// ★ Phase 4 循環参照根絶: network.js からも安全に呼べるよう window に登録
 if (typeof window !== 'undefined') {
   window.UIController = UIController;
 }
@@ -487,7 +489,7 @@ if (document.readyState === 'loading') {
   initDOMEnhancements();
 }
 
-// ★ Phase 4: network.js を安全に読み込んでイベントをバインド
+// ★ network.js を安全に読み込んでイベントをバインド
 import('./network.js').then(module => {
   if (module && typeof module.hookLobbyNetworkEvents === 'function') {
     module.hookLobbyNetworkEvents();
