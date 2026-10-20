@@ -1,9 +1,10 @@
 // network.js: AgentSDKラッパー ＆ ルーム入退室ライフサイクル・通信同期エンジン
-// ★ 修正版（clientId & userId 二重照合による完全スロット確定 ＆ 複数ゲスト排他割り当て対応）：
-//   1. _applyRoomMembersSync で clientId と userId（AgentSDK一意ID）の二重照合を行い、ゲストが確実に自スロット（1人目:赤 / 2人目:黄）へ切り替わるよう修正
-//   2. ホスト側の _handleUserJoined および REQUEST_ROOM_SYNC において、clientId / userId を保持・更新し、スロットデータ欠落を防止
-//   3. ゲスト2人入室時（計3人プレイ）もスロット1・2が順次排他割り当てされ、自他判定が全端末で100%決定論的に一致
-//   4. 提案内容以外の通信プロトコル（POS、KNOCKOUT、ブロック・階段同期等）は100%維持
+// ★ 修正版（完全双方向ルームIDバインド ＆ スロット名常時自己宣言・上り通信貫通）：
+//   1. _sendCustomMessage に room_id / roomId / msg_data を二重付与し、ゲスト端末からの上りブロードキャスト（POS・同期要求）がSDK側で破棄されるのを防止
+//   2. REQUEST_ROOM_SYNC を入室直後に最低5回確実に送信し、ホストへ名前（のりおん）と一意IDを確実にハンドシェイク
+//   3. POSパケット受信時、packet.slot のキャラクターを無条件でリモートプレイヤー（isRemote=true, isAI=false）へ昇格させ、ネームプレートを即座に「のりおん」へ上書き更新
+//   4. receiveMessage の受信データ抽出層を多層フォールバック化し、ペイロード構造差異によるメッセージ取りこぼしを根絶
+//   5. 提案内容以外の通信プロトコル（POS補間、KNOCKOUT、ブロック・階段同期等）は100%維持
 
 import {
   characters,
@@ -54,12 +55,10 @@ function safeShowGameScreen() {
     startModal.classList.add('hidden');
   }
 
-  // main.js の launchGameEngine() を直接実行（ゲームループを確実にオンにする）
   if (typeof window !== 'undefined' && typeof window.launchGameEngine === 'function') {
     window.launchGameEngine();
   }
 
-  // フォールバックとしてのスタートボタン擬似クリック
   const startBtn = document.getElementById('btn-start');
   if (startBtn) {
     startBtn.click();
@@ -192,7 +191,9 @@ export const NetworkManager = {
     try {
       window.AgentSDK.room.receiveMessage((payload) => {
         if (!payload) return;
-        const { type, data } = payload;
+        const type = payload.type || (payload.data && payload.data.type);
+        const data = payload.data !== undefined ? payload.data : payload;
+
         switch (type) {
           case 'aitools_game_joinroom':
             this._handleUserJoined(data);
@@ -202,6 +203,12 @@ export const NetworkManager = {
             break;
           case 'aitools_game_sendmsg':
             this._handleCustomMessage(data);
+            break;
+          default:
+            // 直下にカスタムメッセージが入っている場合への対応
+            if (payload.msg_data || payload.message || payload.event) {
+              this._handleCustomMessage(payload);
+            }
             break;
         }
       });
@@ -386,21 +393,28 @@ export const NetworkManager = {
 
       safeShowGameScreen();
 
+      // ★【改善】isSlotConfirmed で即時破棄せず、入室直後に最低5回確実にホストへハンドシェイクを届ける
       let retries = 0;
       if (this._retrySyncIntervalId) clearInterval(this._retrySyncIntervalId);
-      this._retrySyncIntervalId = setInterval(() => {
-        if (this.isSlotConfirmed || retries >= 8) {
-          clearInterval(this._retrySyncIntervalId);
-          this._retrySyncIntervalId = null;
-          return;
-        }
+
+      const sendSyncReq = () => {
         this._sendCustomMessage({
           event: 'REQUEST_ROOM_SYNC',
           clientId: this.clientId,
           userId: this.myUser.user_id,
           name: myRealName
         });
+      };
+
+      sendSyncReq();
+
+      this._retrySyncIntervalId = setInterval(() => {
         retries++;
+        sendSyncReq();
+        if (retries >= 6) {
+          clearInterval(this._retrySyncIntervalId);
+          this._retrySyncIntervalId = null;
+        }
       }, 300);
 
       this._startPositionBroadcasting();
@@ -449,12 +463,32 @@ export const NetworkManager = {
   _handleCustomMessage(data) {
     if (!data) return;
     try {
-      const rawStr = (typeof data.msg_data === 'string')
-        ? data.msg_data
-        : (typeof data === 'string' ? data : (data.message || ''));
+      let rawStr = '';
+      if (typeof data === 'string') {
+        rawStr = data;
+      } else if (typeof data.msg_data === 'string') {
+        rawStr = data.msg_data;
+      } else if (typeof data.message === 'string') {
+        rawStr = data.message;
+      } else if (data.data) {
+        rawStr = (typeof data.data === 'string')
+          ? data.data
+          : (data.data.msg_data || data.data.message || '');
+      }
 
-      if (!rawStr) return;
-      const packet = JSON.parse(rawStr);
+      let packet = null;
+      if (rawStr) {
+        try {
+          packet = JSON.parse(rawStr);
+        } catch (pe) {
+          packet = null;
+        }
+      }
+
+      if (!packet && typeof data === 'object' && data.event) {
+        packet = data;
+      }
+
       if (!packet || !packet.event) return;
 
       switch (packet.event) {
@@ -469,15 +503,12 @@ export const NetworkManager = {
             const reqName = packet.name || 'ゲスト';
 
             if (reqClientId && reqClientId !== this.clientId) {
-              // 1. clientId による既存スロット特定
               let targetSlot = this.slots.findIndex(s => s.clientId === reqClientId);
 
-              // 2. userId による既存スロット特定
               if (targetSlot === -1 && reqUserId && reqUserId !== 'local_user') {
                 targetSlot = this.slots.findIndex(s => s.userId && String(s.userId) === reqUserId);
               }
 
-              // 3. 空きAIスロットへの順次割り当て（ゲスト1=スロット1, ゲスト2=スロット2）
               if (targetSlot === -1) {
                 if (this.slots[1].isAI) {
                   targetSlot = 1;
@@ -557,7 +588,7 @@ export const NetworkManager = {
   },
 
   /**
-   * ★【核心】clientId & userId 二重照合による厳格スロット確定処理
+   * clientId & userId 二重照合による厳格スロット確定処理
    */
   _applyRoomMembersSync(syncedSlots, seed, snapshot = null) {
     if (!Array.isArray(syncedSlots)) return;
@@ -608,10 +639,8 @@ export const NetworkManager = {
     }
 
     syncedSlots.forEach((s) => {
-      // 1. clientId 完全一致
       const isClientIdMatch = !!(s.clientId && s.clientId === this.clientId);
 
-      // 2. AgentSDK の userId 完全一致
       const isUserIdMatch = !!(
         s.userId &&
         this.myUser &&
@@ -620,7 +649,6 @@ export const NetworkManager = {
         String(s.userId) === String(this.myUser.user_id)
       );
 
-      // 3. ホスト自身のスロット0確定
       const isHostDefaultSlot0 = (!s.clientId && this.isHost && s.slot === 0);
 
       const isMyClient = isClientIdMatch || isUserIdMatch || isHostDefaultSlot0;
@@ -631,7 +659,6 @@ export const NetworkManager = {
           this.isSlotConfirmed = true;
           window.MY_PLAYER_SLOT = s.slot;
 
-          // 自操作キャラ（スロット番号：0青、1赤、2黄）へ切り替え
           if (typeof bindLocalPlayerSlot === 'function') {
             bindLocalPlayerSlot(s.slot);
           } else if (typeof window.bindLocalPlayerSlot === 'function') {
@@ -646,7 +673,6 @@ export const NetworkManager = {
         return;
       }
 
-      // 自分以外のスロットの処理
       if (!s.isAI && (s.clientId || s.userId)) {
         this._bindRemoteSlot(s.slot, s.name);
       } else if (s.isAI) {
@@ -793,7 +819,7 @@ export const NetworkManager = {
   },
 
   /**
-   * 受信した状態ビット（state）と速度ベクトル（vx, vz）のターゲット格納
+   * ★【核心修正】受信したPOSパケットのスロットを無条件でリモートプレイヤーとして確定・更新
    */
   _handleRemotePosition(packet) {
     if (packet.slot === this.mySlot || packet.clientId === this.clientId) return;
@@ -801,26 +827,30 @@ export const NetworkManager = {
     const targetChar = characters[packet.slot];
     if (!targetChar) return;
 
-    const isSlotAI = this.slots && this.slots[packet.slot] && this.slots[packet.slot].isAI;
+    // ★ リモートからパケットが届いたスロットは確実に人間（リモートプレイヤー）として昇格
+    if (this.slots && this.slots[packet.slot]) {
+      this.slots[packet.slot].isAI = false;
+      if (packet.clientId) this.slots[packet.slot].clientId = packet.clientId;
+    }
 
-    if (!isSlotAI) {
-      if (targetChar.isAI || !targetChar.isRemote || (packet.name && targetChar.name !== packet.name && packet.name !== 'YOU')) {
-        targetChar.isRemote = true;
-        targetChar.isAI = false;
-        const resolvedName = packet.name || (packet.slot === 0 ? 'norion' : (packet.slot === 1 ? 'ゲスト1' : 'ゲスト2'));
-        targetChar.name = resolvedName;
-        if (this.slots && this.slots[packet.slot]) {
-          this.slots[packet.slot].isAI = false;
-          this.slots[packet.slot].name = resolvedName;
+    const resolvedName = packet.name || (packet.slot === 0 ? 'norion' : (packet.slot === 1 ? 'ゲスト1' : 'ゲスト2'));
+
+    if (targetChar.isAI || !targetChar.isRemote || (targetChar.name !== resolvedName && resolvedName !== 'YOU')) {
+      targetChar.isRemote = true;
+      targetChar.isAI = false;
+      targetChar.name = resolvedName;
+
+      if (this.slots && this.slots[packet.slot]) {
+        this.slots[packet.slot].name = resolvedName;
+      }
+
+      if (targetChar.nameplateSprite) {
+        if (targetChar.nameplateSprite.material && targetChar.nameplateSprite.material.map) {
+          targetChar.nameplateSprite.material.map.dispose();
         }
-        if (targetChar.nameplateSprite) {
-          if (targetChar.nameplateSprite.material && targetChar.nameplateSprite.material.map) {
-            targetChar.nameplateSprite.material.map.dispose();
-          }
-          const newMesh = createNameplateMesh(resolvedName, false);
-          targetChar.nameplateSprite.material = newMesh.material;
-          targetChar.nameplateSprite.visible = true;
-        }
+        const newMesh = createNameplateMesh(resolvedName, false);
+        targetChar.nameplateSprite.material = newMesh.material;
+        targetChar.nameplateSprite.visible = true;
       }
     }
 
@@ -851,12 +881,22 @@ export const NetworkManager = {
     }
   },
 
+  /**
+   * ★【核心修正】双方向ルームIDバインド ＆ 多重プロパティ付与
+   */
   _sendCustomMessage(msgObj) {
     if (!this.isSDKAvailable) return;
     try {
-      window.AgentSDK.room.sendMessage({
-        message: JSON.stringify(msgObj)
-      });
+      const msgStr = JSON.stringify(msgObj);
+      const payload = {
+        message: msgStr,
+        msg_data: msgStr
+      };
+      if (this.currentRoomId) {
+        payload.room_id = String(this.currentRoomId);
+        payload.roomId = String(this.currentRoomId);
+      }
+      window.AgentSDK.room.sendMessage(payload);
     } catch (e) {
       console.warn('[NetworkManager] sendMessage failed:', e);
     }
