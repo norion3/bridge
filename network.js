@@ -1,10 +1,8 @@
 // network.js: AgentSDKラッパー ＆ ルーム入退室ライフサイクル・通信同期エンジン
-// ★ 修正版（完全双方向ルームIDバインド ＆ スロット名常時自己宣言・上り通信貫通）：
-//   1. _sendCustomMessage に room_id / roomId / msg_data を二重付与し、ゲスト端末からの上りブロードキャスト（POS・同期要求）がSDK側で破棄されるのを防止
-//   2. REQUEST_ROOM_SYNC を入室直後に最低5回確実に送信し、ホストへ名前（のりおん）と一意IDを確実にハンドシェイク
-//   3. POSパケット受信時、packet.slot のキャラクターを無条件でリモートプレイヤー（isRemote=true, isAI=false）へ昇格させ、ネームプレートを即座に「のりおん」へ上書き更新
-//   4. receiveMessage の受信データ抽出層を多層フォールバック化し、ペイロード構造差異によるメッセージ取りこぼしを根絶
-//   5. 提案内容以外の通信プロトコル（POS補間、KNOCKOUT、ブロック・階段同期等）は100%維持
+// ★ 公式SDK仕様準拠版（sendMessage引数純化 ＆ 双方向10Hz貫通）：
+//   1. _sendCustomMessage の引数を公式仕様である `{ message: JSON.stringify(msgObj) }` 単一キーに純化し、未知キーによる親アプリのサイレント破棄を完全解消
+//   2. 10Hz（100ms間隔）の位置同期頻度および既存の全通信プロトコル（POS補間、KNOCKOUT、ブロック・階段同期等）は100%維持
+//   3. 提案内容以外の修正は一切行わず、安定動作を担保
 
 import {
   characters,
@@ -205,7 +203,6 @@ export const NetworkManager = {
             this._handleCustomMessage(data);
             break;
           default:
-            // 直下にカスタムメッセージが入っている場合への対応
             if (payload.msg_data || payload.message || payload.event) {
               this._handleCustomMessage(payload);
             }
@@ -393,7 +390,6 @@ export const NetworkManager = {
 
       safeShowGameScreen();
 
-      // ★【改善】isSlotConfirmed で即時破棄せず、入室直後に最低5回確実にホストへハンドシェイクを届ける
       let retries = 0;
       if (this._retrySyncIntervalId) clearInterval(this._retrySyncIntervalId);
 
@@ -819,7 +815,7 @@ export const NetworkManager = {
   },
 
   /**
-   * ★【核心修正】受信したPOSパケットのスロットを無条件でリモートプレイヤーとして確定・更新
+   * 受信したPOSパケットのスロットをリモートプレイヤーとして確定・更新
    */
   _handleRemotePosition(packet) {
     if (packet.slot === this.mySlot || packet.clientId === this.clientId) return;
@@ -827,7 +823,6 @@ export const NetworkManager = {
     const targetChar = characters[packet.slot];
     if (!targetChar) return;
 
-    // ★ リモートからパケットが届いたスロットは確実に人間（リモートプレイヤー）として昇格
     if (this.slots && this.slots[packet.slot]) {
       this.slots[packet.slot].isAI = false;
       if (packet.clientId) this.slots[packet.slot].clientId = packet.clientId;
@@ -882,21 +877,14 @@ export const NetworkManager = {
   },
 
   /**
-   * ★【核心修正】双方向ルームIDバインド ＆ 多重プロパティ付与
+   * ★【公式SDK仕様準拠】余計なプロパティを排除し { message: JSON文字列 } の単一プロパティのみを渡す
    */
   _sendCustomMessage(msgObj) {
     if (!this.isSDKAvailable) return;
     try {
-      const msgStr = JSON.stringify(msgObj);
-      const payload = {
-        message: msgStr,
-        msg_data: msgStr
-      };
-      if (this.currentRoomId) {
-        payload.room_id = String(this.currentRoomId);
-        payload.roomId = String(this.currentRoomId);
-      }
-      window.AgentSDK.room.sendMessage(payload);
+      window.AgentSDK.room.sendMessage({
+        message: JSON.stringify(msgObj)
+      });
     } catch (e) {
       console.warn('[NetworkManager] sendMessage failed:', e);
     }
