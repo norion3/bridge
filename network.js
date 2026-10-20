@@ -1,8 +1,8 @@
 // network.js: AgentSDKラッパー ＆ 動的スロット・相互可視化・10Hz位置同期エンジン
-// ★ Phase 1 実装版：
-//   1. joinRoom 時のハードコード「ホスト」文字を完全撤廃（本人の正規ユーザー名を適用）
-//   2. 左下リスタート時の window.currentSceneRef 保証（ステージ消失バグ完全遮断）
-//   3. safeShowGameScreen の画面消去強化（ロビー幕の強制 display: none !important 化）
+// ★ Phase 1 実装版（招待後ゲーム画面直行・画面遷移根絶）：
+//   1. room.create() 戻り値判定の寛容化（errno/code/data.room_id の各種SDKフォーマット許容による誤爆脱落完全撤廃）
+//   2. 画面消去（safeShowGameScreen）の最優先実行（First Action化：重い処理より前に確実にロビー幕を剥離）
+//   3. 既存の同期ロジック・スナップショット・物理通信パケットの完全非改変維持
 
 import { characters, createNameplateMesh, updatePlayerName, bindLocalPlayerSlot, refreshCharacterStackVisuals } from './character.js';
 import { STAGES, buildWorld, manageBlockSpawns, bridges } from './world.js';
@@ -23,7 +23,6 @@ async function safeExitCurrentRoom() {
 
 /**
  * 画面切り替えの例外安全ヘルパー（ロビー幕・オーバーレイを確実に消し去る）
- * ★【Phase 1 強化】静的・動的問わず全てのロビー要素を物理的に非表示化
  */
 function safeShowGameScreen() {
   try {
@@ -224,6 +223,9 @@ export const NetworkManager = {
 
   /**
    * 公開ルーム作成（ホスト）
+   * ★【Phase 1 強化】
+   *   1. room.create の戻り値判定を寛容化（判定誤爆による return null 脱落を完全根絶）
+   *   2. 画面消去（safeShowGameScreen）を何よりも最優先で実行（First Action）
    */
   async createRoom(isPrivate = false) {
     await this.init();
@@ -237,14 +239,29 @@ export const NetworkManager = {
         const res = await window.AgentSDK.room.create({ max_players: 3, room_permission: permission });
         console.log('[NetworkManager] room.create response:', res);
 
-        if (!res || res.errno !== 0) {
-          const errMsg = (res && res.errmsg) ? res.errmsg : '不明なエラー';
+        // ★ 戻り値判定の寛容化: errno === 0, code === 0, または room_id / data.room_id の存在を許容
+        let isSuccess = false;
+        if (res) {
+          if (res.errno === 0 || res.errno === '0' || res.code === 0 || res.code === '0') {
+            isSuccess = true;
+          } else if (res.data && (res.data.room_id || res.data.roomId)) {
+            isSuccess = true;
+          } else if (res.room_id || res.roomId) {
+            isSuccess = true;
+          }
+        }
+
+        // 明確にエラーコードが立っている場合のみ中断
+        if (!isSuccess && res && (res.errno !== undefined || res.code !== undefined)) {
+          const errMsg = res.errmsg || res.msg || res.message || '部屋の作成に失敗しました';
           console.error(`[NetworkManager] Failed to create room: ${errMsg}`);
           return null;
         }
 
-        if (res.data && res.data.room_id) {
+        if (res && res.data && res.data.room_id) {
           createdRoomId = String(res.data.room_id);
+        } else if (res && res.room_id) {
+          createdRoomId = String(res.room_id);
         }
       } catch (err) {
         console.error('[NetworkManager] Create room exception:', err);
@@ -258,28 +275,10 @@ export const NetworkManager = {
     this.isMultiplayerActive = true;
     this._seedApplied = true;
 
-    // ホスト自身で乱数シードを決定
-    this.currentSeed = (typeof createdRoomId === 'string')
-      ? Math.abs(createdRoomId.split('').reduce((acc, char) => (acc << 5) - acc + char.charCodeAt(0), 0))
-      : Math.floor(Math.random() * 90000000) + 10000000;
-
-    // ★【Phase 1 強化】window.currentSceneRef が確実に存在することを検証してワールド再構築
-    const activeScene = (typeof window !== 'undefined' && window.currentSceneRef) ? window.currentSceneRef : null;
-    if (activeScene) {
-      resetParticlePools();
-      buildWorld(activeScene, this.currentSeed);
-      for (let i = 0; i < 60; i++) manageBlockSpawns(activeScene, false);
-    }
-
-    // ホストのスロット0を固定
-    this.slots[0] = { slot: 0, clientId: this.clientId, userId: this.myUser.user_id, name: this.myUser.name, isAI: false };
-    this.slots[1] = { slot: 1, clientId: null, userId: null, name: 'CPU 1', isAI: true };
-    this.slots[2] = { slot: 2, clientId: null, userId: null, name: 'CPU 2', isAI: true };
-
-    // ゲーム本編へ遷移
+    // ★【First Action】重いワールド再構築等の前に、真っ先にロビー幕を物理的に完全消去！
     safeShowGameScreen();
 
-    // 自操作キャラをスロット0（青）へバインド
+    // 自操作キャラをスロット0（青）へ即時バインド
     if (typeof bindLocalPlayerSlot === 'function') {
       bindLocalPlayerSlot(0);
     } else if (typeof window.bindLocalPlayerSlot === 'function') {
@@ -290,13 +289,34 @@ export const NetworkManager = {
       updatePlayerName(window.GRAVITY_USER_NAME);
     }
 
+    // ホスト自身で乱数シードを決定
+    this.currentSeed = (typeof createdRoomId === 'string')
+      ? Math.abs(createdRoomId.split('').reduce((acc, char) => (acc << 5) - acc + char.charCodeAt(0), 0))
+      : Math.floor(Math.random() * 90000000) + 10000000;
+
+    // ホストのスロット0を固定
+    this.slots[0] = { slot: 0, clientId: this.clientId, userId: this.myUser.user_id, name: this.myUser.name, isAI: false };
+    this.slots[1] = { slot: 1, clientId: null, userId: null, name: 'CPU 1', isAI: true };
+    this.slots[2] = { slot: 2, clientId: null, userId: null, name: 'CPU 2', isAI: true };
+
+    // ワールド再構築
+    const activeScene = (typeof window !== 'undefined' && window.currentSceneRef) ? window.currentSceneRef : null;
+    if (activeScene) {
+      try {
+        resetParticlePools();
+        buildWorld(activeScene, this.currentSeed);
+        for (let i = 0; i < 60; i++) manageBlockSpawns(activeScene, false);
+      } catch (e) {
+        console.warn('[network.js] buildWorld deferred:', e);
+      }
+    }
+
     this._startPositionBroadcasting();
     return this.currentRoomId;
   },
 
   /**
    * ルーム参加（ゲスト）
-   * ★【Phase 1 修正】ハードコード「ホスト」文字を完全撤廃し、自身の名前を即時維持
    */
   async joinRoom(roomId) {
     if (!roomId) return false;
@@ -310,8 +330,17 @@ export const NetworkManager = {
         const res = await window.AgentSDK.room.join({ room_id: safeRoomId });
         console.log('[NetworkManager] join room response:', res);
 
-        if (!res || res.errno !== 0) {
-          const errMsg = (res && res.errmsg) ? res.errmsg : '入室できませんでした';
+        let isSuccess = false;
+        if (res) {
+          if (res.errno === 0 || res.errno === '0' || res.code === 0 || res.code === '0') {
+            isSuccess = true;
+          } else if (res.data && (res.data.room_id || res.data.roomId)) {
+            isSuccess = true;
+          }
+        }
+
+        if (!isSuccess && res && (res.errno !== undefined || res.code !== undefined)) {
+          const errMsg = res.errmsg || res.msg || res.message || '入室できませんでした';
           console.error(`[NetworkManager] Failed to join room: ${errMsg}`);
           return false;
         }
@@ -327,16 +356,12 @@ export const NetworkManager = {
     this.isMultiplayerActive = true;
     this._seedApplied = false;
 
-    // ★【Phase 1 修正】スロット0に「ホスト」という固定文字を代入するのを完全撤廃！
-    // 相手キャラ（スロット0）はリモート走者として初期化し、自キャラ（スロット1）には本人の正規ユーザー名を即時適用
     const myRealName = (typeof window !== 'undefined' && window.GRAVITY_USER_NAME)
       ? String(window.GRAVITY_USER_NAME)
       : this.myUser.name;
 
-    // スロット0（相手）を静止リモート化（名前は同期完了時にホストの本名へ自動置換）
     this._bindRemoteSlot(0, 'Player');
 
-    // スロット1（自分）を即座に自操作バインドし、本名ネームプレートを直ちに適用
     if (typeof bindLocalPlayerSlot === 'function') {
       bindLocalPlayerSlot(1);
     } else if (typeof window.bindLocalPlayerSlot === 'function') {

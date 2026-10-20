@@ -1,8 +1,8 @@
 // dom.js: 画面UI・HUD・ロビー・待機室の動的生成モジュール
 // 既存のゲームコードには一切干渉せず、指定されたコンテナ内にUI要素を安全に構築します。
 // ★ Phase 2 実装版：
-//   1. UIController.showGame() のロビー幕・全オーバーレイ強制非表示（display: none !important）徹底
-//   2. GRAVITYネイティブ招待パネル閉じ後の画面直行保証（#test-lobby-overlay, #screen-lobby, .gravity-screen-overlayの完全剥離）
+//   1. 「公開ルームを作成」ボタンの特定と同時にイベントを即時直結（動的import遅延によるタップ空振りを完全遮断）
+//   2. UIController.showGame() での全ロビー幕・オーバーレイ・モーダルの強制非表示（display: none !important）徹底
 
 import { updatePlayerName } from './character.js';
 
@@ -221,6 +221,7 @@ export async function syncGravityUserName() {
 
 /**
  * 既存の静的要素（gravity_loader.html）が存在する場合のテキスト・レイアウト・順序自動補正
+ * ★【Phase 2 強化】ボタン特定時に、動的import遅延を待たずに即時リスナーを直結（空振り完全根絶）
  */
 export function patchExistingLobbyLabels() {
   const overlay = document.getElementById('test-lobby-overlay');
@@ -279,6 +280,31 @@ export function patchExistingLobbyLabels() {
       btn.removeAttribute('onclick');
       btn.onclick = null;
       btn.className = 'gravity-btn-green';
+
+      // ★ 即時バインド：動的importを待たずにクリック・タップを即座に安全実行
+      if (!btn._hasDirectHook) {
+        btn._hasDirectHook = true;
+        const triggerCreate = async (e) => {
+          if (e) {
+            e.preventDefault();
+            e.stopPropagation();
+          }
+          if (window.NetworkManager && typeof window.NetworkManager.createRoom === 'function') {
+            window.NetworkManager.createRoom(false);
+          } else {
+            try {
+              const netModule = await import('./network.js');
+              if (netModule && netModule.NetworkManager) {
+                netModule.NetworkManager.createRoom(false);
+              }
+            } catch (err) {
+              console.error('[dom.js] Failed to load network.js on button click:', err);
+            }
+          }
+        };
+        btn.addEventListener('click', triggerCreate);
+        btn.addEventListener('touchend', triggerCreate);
+      }
     } else if (text.includes('プライベート')) {
       btn.id = 'btn-create-private';
       btn.removeAttribute('onclick');
