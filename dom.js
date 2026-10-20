@@ -1,8 +1,9 @@
 // dom.js: 画面UI・HUD・ロビー・待機室の動的生成モジュール
 // 既存のゲームコードには一切干渉せず、指定されたコンテナ内にUI要素を安全に構築します。
-// ★ Phase 2 実装版：
-//   1. 「公開ルームを作成」ボタンの特定と同時にイベントを即時直結（動的import遅延によるタップ空振りを完全遮断）
-//   2. UIController.showGame() での全ロビー幕・オーバーレイ・モーダルの強制非表示（display: none !important）徹底
+// ★ Phase 3 実装版（イベントリスナー一本化・多重発火デバウンス仕上げ）：
+//   1. 「公開ルームを作成」ボタンのタップイベントに600msデバウンスガードを導入（touchend+clickの連動二重発火を完全防止）
+//   2. network.js のフックと重複しないようイベント登録を一元化・安全化
+//   3. UIController.showGame() での全オーバーレイ非表示（display: none !important）徹底
 
 import { updatePlayerName } from './character.js';
 
@@ -221,8 +222,10 @@ export async function syncGravityUserName() {
 
 /**
  * 既存の静的要素（gravity_loader.html）が存在する場合のテキスト・レイアウト・順序自動補正
- * ★【Phase 2 強化】ボタン特定時に、動的import遅延を待たずに即時リスナーを直結（空振り完全根絶）
+ * ★【Phase 3 仕上げ】イベント二重登録の整理 ＆ デバウンスガード付きトリガー
  */
+let lastDomCreateTime = 0;
+
 export function patchExistingLobbyLabels() {
   const overlay = document.getElementById('test-lobby-overlay');
   if (!overlay) return;
@@ -281,14 +284,25 @@ export function patchExistingLobbyLabels() {
       btn.onclick = null;
       btn.className = 'gravity-btn-green';
 
-      // ★ 即時バインド：動的importを待たずにクリック・タップを即座に安全実行
+      // ★【Phase 3】多重発火・二重実行を防止するデバウンス付きフック
       if (!btn._hasDirectHook) {
         btn._hasDirectHook = true;
         const triggerCreate = async (e) => {
+          const now = Date.now();
+          if (now - lastDomCreateTime < 600) {
+            if (e) {
+              e.preventDefault();
+              e.stopPropagation();
+            }
+            return;
+          }
+          lastDomCreateTime = now;
+
           if (e) {
             e.preventDefault();
             e.stopPropagation();
           }
+
           if (window.NetworkManager && typeof window.NetworkManager.createRoom === 'function') {
             window.NetworkManager.createRoom(false);
           } else {
@@ -302,8 +316,9 @@ export function patchExistingLobbyLabels() {
             }
           }
         };
+
+        btn.addEventListener('touchend', triggerCreate, { passive: false });
         btn.addEventListener('click', triggerCreate);
-        btn.addEventListener('touchend', triggerCreate);
       }
     } else if (text.includes('プライベート')) {
       btn.id = 'btn-create-private';
@@ -445,7 +460,7 @@ export function mountAllUI(container) {
 
 /**
  * UIステート表示切り替え制御
- * ★【Phase 2 強化】静的・動的・すべてのオーバーレイ幕を例外なく物理消去（display: none !important）
+ * 静的・動的・すべてのオーバーレイ幕を例外なく物理消去（display: none !important）
  */
 export const UIController = {
   showLobby() {

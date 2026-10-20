@@ -1,8 +1,7 @@
 // 3Dキャラクター外観構築・手足メッシュ・スタックプール・トロリー・ホバー展望リフト・スカイダイブ＆トラップドア姿勢管理・足元手前側（カメラ方向）フロスト投影ネームバッジ
-// ★ Phase 2 実装版（自他ネームプレート境界保護 ＆ 二重安全化）：
-//   1. bindLocalPlayerSlot での自端末ネーム特定フォールバック強化（GRAVITY_USER_NAME / NetworkManager.myUser / 既存名前の確実な継承）
-//   2. 他スロットへの自端末名混入を完全遮断し、リモート走者の名前と自キャラのシアン枠ネームを二重保護
-//   3. updatePlayerName の安全化（player 参照と MY_PLAYER_SLOT の両面からネームプレートを即時更新）
+// ★ Phase 1 実装版（合流時Stage 0初期化の基盤整備 ＆ 自他ネームプレート境界保護）：
+//   1. resetCharacterToStageZero() を新設：先行していたキャラの座標・ステージ番号・所持ブロック・ギミック姿勢を一括でStage 0初期状態へリセット
+//   2. bindLocalPlayerSlot での自端末ネーム特定フォールバックと他スロットへの名前混入遮断を維持・二重安全化
 
 import {
   TEAMS,
@@ -96,7 +95,7 @@ export function createNameplateMesh(nameText, isLocalPlayer = false) {
 export const createNameplateSprite = createNameplateMesh;
 
 /**
- * ★【Phase 2 強化】GRAVITYで取得された名前を自キャラ足元に遅延なく即時反映する安全関数
+ * GRAVITYで取得された名前を自キャラ足元に遅延なく即時反映する安全関数
  */
 export function updatePlayerName(newName) {
   if (!newName) return;
@@ -116,7 +115,111 @@ export function updatePlayerName(newName) {
 }
 
 /**
- * ★【Phase 2 強化】自他ネームプレート境界保護版 bindLocalPlayerSlot
+ * ★【Phase 1 新設】先行していたキャラを Stage 0 スタート地点へ安全に初期化する関数
+ * 奥の島へ進んでいたキャラの座標・ステージ番号・所持ブロック・ギミック搭乗状態を一括でStage 0初期状態へリセット
+ */
+export function resetCharacterToStageZero(char, nameText = null, isLocal = false) {
+  if (!char) return;
+
+  // 1. スロット固有の Stage 0 デフォルト座標を算出
+  let defaultX = 0.0;
+  if (char.team && char.team.id === 'red') {
+    defaultX = -4.0;
+  } else if (char.team && char.team.id === 'yellow') {
+    defaultX = 4.0;
+  } else {
+    const idx = characters.indexOf(char);
+    if (idx === 1) defaultX = -4.0;
+    else if (idx === 2) defaultX = 4.0;
+  }
+
+  char.pos.set(defaultX, 0.0, 4.0);
+  if (char.meshObj && char.meshObj.root) {
+    char.meshObj.root.position.copy(char.pos);
+    char.meshObj.root.rotation.set(0, Math.PI, 0);
+  }
+  if (!char.targetNetPos) {
+    char.targetNetPos = new THREE.Vector3();
+  }
+  char.targetNetPos.copy(char.pos);
+  char.targetNetRotY = Math.PI;
+
+  // 2. 内部進行状態のリセット
+  char.currentStage = 0;
+  char.stackCount = 0;
+  char.lastPlankIdx = -1;
+  char.walkCycle = 0;
+  char.stunTimer = 0;
+  char.shrinkTimer = 0;
+  char.invulnerableTimer = 0;
+  char.isJumping = false;
+  char.activeJumpTier = null;
+  char.speedBoostActive = false;
+  char.speedBoostTimer = 0;
+  char.puffTimer = 0;
+  char.magnetActive = false;
+  char.magnetTimer = 0;
+  char.isGhostStacked = false;
+
+  // 3. ギミック搭乗フラグの完全解除
+  char.onSlide = false;
+  char.onCurvedSlide = false;
+  char.curvedSlideProgress = 0;
+  char.curvedSlideOffset = 0;
+  char.slideCooldown = 0;
+  char.onZipline = false;
+  char.ziplineProgress = 0;
+  char.activeZipline = null;
+  char.onElevator = false;
+  char.elevatorProgress = 0;
+  char.activeElevator = null;
+  char.elevatorExiting = false;
+  char.elevatorExitTimer = 0;
+  char.onSkydive = false;
+  char.skydiveProgress = 0;
+  char.activeSkydive = null;
+  char.skydiveX = 0;
+  char.skydiveRoll = 0;
+  char.onTrapdoor = false;
+  char.trapdoorProgress = 0;
+  char.activeTrapdoor = null;
+  char.trapdoorX = 0;
+  char.onFreefall = false;
+  char.freefallProgress = 0;
+  char.activeFreefall = null;
+  char.freefallX = 0;
+  char.freefallRoll = 0;
+
+  // 4. メッシュ・オーラ・手足ポーズの直立不動整列
+  if (char.meshObj) {
+    if (char.meshObj.footAura) char.meshObj.footAura.visible = false;
+    if (char.meshObj.magnetAura) char.meshObj.magnetAura.visible = false;
+    if (char.meshObj.trolleyGroup) char.meshObj.trolleyGroup.visible = false;
+    if (char.meshObj.elevatorGroup) char.meshObj.elevatorGroup.visible = false;
+    char.meshObj.root.scale.set(1.0, 1.0, 1.0);
+    resetCharacterPose(char);
+  }
+
+  // 5. 背中ブロック表示のゼロクリア
+  refreshCharacterStackVisuals(char);
+
+  // 6. ネームプレートの更新
+  if (nameText) {
+    char.name = nameText;
+  }
+  if (char.nameplateSprite) {
+    if (char.nameplateSprite.material && char.nameplateSprite.material.map) {
+      char.nameplateSprite.material.map.dispose();
+    }
+    const newMesh = createNameplateMesh(char.name, isLocal);
+    char.nameplateSprite.material = newMesh.material;
+    char.nameplateSprite.visible = true;
+  }
+  updateNameplatePosition(char);
+}
+
+/**
+ * 自他ネームプレート境界保護版 bindLocalPlayerSlot
  */
 export function bindLocalPlayerSlot(slotIndex) {
   if (!characters || characters.length < 3) return;
@@ -131,7 +234,7 @@ export function bindLocalPlayerSlot(slotIndex) {
   }
 
   characters.forEach((c, idx) => {
-    // 付帯メッシュの初期非表示を強制徹底（ジップライン金具の残留を防止）
+    // 付帯メッシュの初期非表示を強制徹底
     if (c.meshObj) {
       if (c.meshObj.trolleyGroup) c.meshObj.trolleyGroup.visible = false;
       if (c.meshObj.elevatorGroup) c.meshObj.elevatorGroup.visible = false;
@@ -150,7 +253,7 @@ export function bindLocalPlayerSlot(slotIndex) {
       c.isAI = false;
       c.isRemote = false;
       c.name = myResolvedName;
-      player = c; // main.js の操作・カメラ対象を即座にスイッチ！
+      player = c; // main.js の操作・カメラ対象を即座にスイッチ
 
       // ネームプレートを「自キャラ（シアン枠）」に確実に更新
       if (c.nameplateSprite) {
@@ -168,7 +271,7 @@ export function bindLocalPlayerSlot(slotIndex) {
         c.isAI = true;
       }
 
-      // ★ 他スロットに自端末の名前が混ざるのを完全遮断
+      // 他スロットに自端末の名前が混ざるのを完全遮断
       let otherName = c.name;
       if (!otherName || otherName === 'YOU' || otherName === myResolvedName) {
         otherName = (idx === 0) ? 'norion' : (idx === 1 ? 'CPU 1' : 'CPU 2');
@@ -186,7 +289,6 @@ export function bindLocalPlayerSlot(slotIndex) {
       }
     }
 
-    // スロット切り替え後にブロック色を確実に再描画
     refreshCharacterStackVisuals(c);
   });
 
@@ -199,7 +301,6 @@ export function bindLocalPlayerSlot(slotIndex) {
 export function updateNameplatePosition(char) {
   if (!char || !char.nameplateSprite) return;
 
-  // リモートプレイヤーの場合はフラグ誤判定でネームプレートが消えないよう保護
   if (!char.isRemote) {
     if (
       char.onSlide ||
@@ -902,4 +1003,5 @@ export function resetCharacters(STAGES) {
 
 if (typeof window !== 'undefined') {
   window.bindLocalPlayerSlot = bindLocalPlayerSlot;
+  window.resetCharacterToStageZero = resetCharacterToStageZero;
 }
