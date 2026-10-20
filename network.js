@@ -1,9 +1,8 @@
 // network.js: AgentSDKラッパー ＆ 動的スロット・相互可視化・10Hz位置同期エンジン
-// ★ GRAVITY公式仕様完全準拠版：
-//   1. 未入室時 exit() の 200ms タイムアウトガード（フリーズ完全根絶）
-//   2. res.errno === 0 厳格成否判定（エラー時は errmsg 表示）
-//   3. room_id の文字列型（String）徹底（17桁の丸め破損防止）
-//   4. スマホWebViewのタップ保証（click ＋ touchend 両対応）
+// ★ Phase 1 実装版：
+//   1. joinRoom 時のハードコード「ホスト」文字を完全撤廃（本人の正規ユーザー名を適用）
+//   2. 左下リスタート時の window.currentSceneRef 保証（ステージ消失バグ完全遮断）
+//   3. safeShowGameScreen の画面消去強化（ロビー幕の強制 display: none !important 化）
 
 import { characters, createNameplateMesh, updatePlayerName, bindLocalPlayerSlot, refreshCharacterStackVisuals } from './character.js';
 import { STAGES, buildWorld, manageBlockSpawns, bridges } from './world.js';
@@ -23,7 +22,8 @@ async function safeExitCurrentRoom() {
 }
 
 /**
- * 画面切り替えの例外安全ヘルパー（ロビー幕を確実に消し去る）
+ * 画面切り替えの例外安全ヘルパー（ロビー幕・オーバーレイを確実に消し去る）
+ * ★【Phase 1 強化】静的・動的問わず全てのロビー要素を物理的に非表示化
  */
 function safeShowGameScreen() {
   try {
@@ -34,14 +34,32 @@ function safeShowGameScreen() {
     console.warn('[network.js] UIController.showGame deferred:', e);
   }
 
+  // 1. 静的ロビー（gravity_loader.html 直書き）
   const staticLobby = document.getElementById('test-lobby-overlay');
-  if (staticLobby) staticLobby.style.setProperty('display', 'none', 'important');
+  if (staticLobby) {
+    staticLobby.style.setProperty('display', 'none', 'important');
+    staticLobby.classList.add('hidden');
+  }
 
+  // 2. 動的ロビー（dom.js 生成）
   const dynamicLobby = document.getElementById('screen-lobby');
-  if (dynamicLobby) dynamicLobby.classList.add('hidden');
+  if (dynamicLobby) {
+    dynamicLobby.style.setProperty('display', 'none', 'important');
+    dynamicLobby.classList.add('hidden');
+  }
+
+  // 3. 全ての .gravity-screen-overlay 要素を強制非表示
+  const allOverlays = document.querySelectorAll('.gravity-screen-overlay');
+  allOverlays.forEach(overlay => {
+    overlay.style.setProperty('display', 'none', 'important');
+    overlay.classList.add('hidden');
+  });
 
   const waitingScreen = document.getElementById('screen-waiting');
-  if (waitingScreen) waitingScreen.classList.add('hidden');
+  if (waitingScreen) {
+    waitingScreen.style.setProperty('display', 'none', 'important');
+    waitingScreen.classList.add('hidden');
+  }
 
   const startModal = document.getElementById('modal-start');
   if (startModal) {
@@ -206,12 +224,9 @@ export const NetworkManager = {
 
   /**
    * 公開ルーム作成（ホスト）
-   * ★【修復】未入室時exitのタイムアウト保証 ＆ errno === 0 厳格判定
    */
   async createRoom(isPrivate = false) {
     await this.init();
-
-    // 未入室状態でも絶対にフリーズしない安全退室
     await safeExitCurrentRoom();
 
     let createdRoomId = 'local_room_' + Math.floor(Math.random() * 1000);
@@ -222,10 +237,9 @@ export const NetworkManager = {
         const res = await window.AgentSDK.room.create({ max_players: 3, room_permission: permission });
         console.log('[NetworkManager] room.create response:', res);
 
-        // ★ 公式仕様準拠：errno !== 0 の場合はエラーを表示して中断
         if (!res || res.errno !== 0) {
           const errMsg = (res && res.errmsg) ? res.errmsg : '不明なエラー';
-          alert(`部屋の作成に失敗しました: ${errMsg}`);
+          console.error(`[NetworkManager] Failed to create room: ${errMsg}`);
           return null;
         }
 
@@ -234,7 +248,6 @@ export const NetworkManager = {
         }
       } catch (err) {
         console.error('[NetworkManager] Create room exception:', err);
-        alert('部屋作成APIの呼び出し中にエラーが発生しました');
         return null;
       }
     }
@@ -250,11 +263,12 @@ export const NetworkManager = {
       ? Math.abs(createdRoomId.split('').reduce((acc, char) => (acc << 5) - acc + char.charCodeAt(0), 0))
       : Math.floor(Math.random() * 90000000) + 10000000;
 
-    // ワールド構築
-    if (typeof window !== 'undefined' && window.currentSceneRef) {
+    // ★【Phase 1 強化】window.currentSceneRef が確実に存在することを検証してワールド再構築
+    const activeScene = (typeof window !== 'undefined' && window.currentSceneRef) ? window.currentSceneRef : null;
+    if (activeScene) {
       resetParticlePools();
-      buildWorld(window.currentSceneRef, this.currentSeed);
-      for (let i = 0; i < 60; i++) manageBlockSpawns(window.currentSceneRef, false);
+      buildWorld(activeScene, this.currentSeed);
+      for (let i = 0; i < 60; i++) manageBlockSpawns(activeScene, false);
     }
 
     // ホストのスロット0を固定
@@ -282,15 +296,13 @@ export const NetworkManager = {
 
   /**
    * ルーム参加（ゲスト）
-   * ★【修復】room_id の文字列型徹底 ＆ errno === 0 厳格判定
+   * ★【Phase 1 修正】ハードコード「ホスト」文字を完全撤廃し、自身の名前を即時維持
    */
   async joinRoom(roomId) {
     if (!roomId) return false;
-    const safeRoomId = String(roomId); // 17桁以上の丸め誤差を防止
+    const safeRoomId = String(roomId);
 
     await this.init();
-
-    // 未入室状態でも絶対にフリーズしない安全退室
     await safeExitCurrentRoom();
 
     if (this.isSDKAvailable) {
@@ -298,15 +310,13 @@ export const NetworkManager = {
         const res = await window.AgentSDK.room.join({ room_id: safeRoomId });
         console.log('[NetworkManager] join room response:', res);
 
-        // ★ 公式仕様準拠：errno !== 0 の場合はエラーを表示して中断
         if (!res || res.errno !== 0) {
           const errMsg = (res && res.errmsg) ? res.errmsg : '入室できませんでした';
-          alert(`入室に失敗しました: ${errMsg}`);
+          console.error(`[NetworkManager] Failed to join room: ${errMsg}`);
           return false;
         }
       } catch (err) {
         console.error('[NetworkManager] Join room exception:', err);
-        alert('入室APIの呼び出し中にエラーが発生しました');
         return false;
       }
     }
@@ -317,8 +327,22 @@ export const NetworkManager = {
     this.isMultiplayerActive = true;
     this._seedApplied = false;
 
-    // ホストスロットをリモート固定
-    this._bindRemoteSlot(0, 'ホスト');
+    // ★【Phase 1 修正】スロット0に「ホスト」という固定文字を代入するのを完全撤廃！
+    // 相手キャラ（スロット0）はリモート走者として初期化し、自キャラ（スロット1）には本人の正規ユーザー名を即時適用
+    const myRealName = (typeof window !== 'undefined' && window.GRAVITY_USER_NAME)
+      ? String(window.GRAVITY_USER_NAME)
+      : this.myUser.name;
+
+    // スロット0（相手）を静止リモート化（名前は同期完了時にホストの本名へ自動置換）
+    this._bindRemoteSlot(0, 'Player');
+
+    // スロット1（自分）を即座に自操作バインドし、本名ネームプレートを直ちに適用
+    if (typeof bindLocalPlayerSlot === 'function') {
+      bindLocalPlayerSlot(1);
+    } else if (typeof window.bindLocalPlayerSlot === 'function') {
+      window.bindLocalPlayerSlot(1);
+    }
+    updatePlayerName(myRealName);
 
     safeShowGameScreen();
 
@@ -326,7 +350,7 @@ export const NetworkManager = {
       event: 'REQUEST_ROOM_SYNC',
       clientId: this.clientId,
       userId: this.myUser.user_id,
-      name: this.myUser.name
+      name: myRealName
     });
 
     this._startPositionBroadcasting();
@@ -439,12 +463,14 @@ export const NetworkManager = {
     if (!Array.isArray(syncedSlots)) return;
     this.slots = syncedSlots;
 
+    const activeScene = (typeof window !== 'undefined' && window.currentSceneRef) ? window.currentSceneRef : null;
+
     if (seed && (!this._seedApplied || this.currentSeed !== seed) && !this.isHost) {
       this.currentSeed = seed;
       this._seedApplied = true;
-      if (typeof window !== 'undefined' && window.currentSceneRef) {
+      if (activeScene) {
         resetParticlePools();
-        buildWorld(window.currentSceneRef, seed);
+        buildWorld(activeScene, seed);
 
         if (snapshot && Array.isArray(snapshot.blocks)) {
           snapshot.blocks.forEach(b => {
@@ -453,7 +479,7 @@ export const NetworkManager = {
             }
           });
         } else {
-          for (let i = 0; i < 60; i++) manageBlockSpawns(window.currentSceneRef, false);
+          for (let i = 0; i < 60; i++) manageBlockSpawns(activeScene, false);
         }
 
         if (snapshot && Array.isArray(snapshot.planks)) {
@@ -482,6 +508,9 @@ export const NetworkManager = {
           bindLocalPlayerSlot(s.slot);
         } else if (typeof window.bindLocalPlayerSlot === 'function') {
           window.bindLocalPlayerSlot(s.slot);
+        }
+        if (window.GRAVITY_USER_NAME) {
+          updatePlayerName(window.GRAVITY_USER_NAME);
         }
       } else if (!s.isAI && (s.clientId || s.userId)) {
         this._bindRemoteSlot(s.slot, s.name);
@@ -649,7 +678,6 @@ export const NetworkManager = {
 
 /**
  * dom.js 内のボタンと NetworkManager を自動接続するフック
- * ★【修復】click と touchend の両方を登録し、スマホでの無反応を完全根絶
  */
 export function hookLobbyNetworkEvents() {
   const btnCreatePublic = document.getElementById('btn-create-public');

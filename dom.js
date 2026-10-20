@@ -1,7 +1,8 @@
 // dom.js: 画面UI・HUD・ロビー・待機室の動的生成モジュール
 // 既存のゲームコードには一切干渉せず、指定されたコンテナ内にUI要素を安全に構築します。
-// ★ Phase 3.5: 取得した名前を即座に自キャラ足元ネームプレートへ反映する連携
-// ★ 不具合修復: ボタンテキスト検索による確実なID付与 ＆ onclick完全除去（セレクタずれ解消）
+// ★ Phase 2 実装版：
+//   1. UIController.showGame() のロビー幕・全オーバーレイ強制非表示（display: none !important）徹底
+//   2. GRAVITYネイティブ招待パネル閉じ後の画面直行保証（#test-lobby-overlay, #screen-lobby, .gravity-screen-overlayの完全剥離）
 
 import { updatePlayerName } from './character.js';
 
@@ -51,11 +52,9 @@ export function injectStyles() {
       display: flex;
       flex-direction: column;
       align-items: center;
-      /* ゲーム本編の青空・海と一体感のあるリッチなマリンブルーグラデーション */
       background: radial-gradient(circle at 50% 10%, rgba(14, 165, 233, 0.95) 0%, rgba(15, 23, 42, 0.97) 100%) !important;
       color: #ffffff;
       padding: 16px 22px;
-      /* GRAVITYアプリ上部UIバー（ノッチ・戻る・拡大・共有）との被りを完全に根絶する安全余白 */
       padding-top: max(112px, env(safe-area-inset-top, 44px) + 64px) !important;
       overflow-y: auto;
       -webkit-overflow-scrolling: touch;
@@ -74,7 +73,7 @@ export function injectStyles() {
       gap: 14px;
     }
 
-    /* ★ メインボタン「1人で遊ぶ」：自キャラカラーの鮮やかなポップブルー＆ゴールドシャドウ */
+    /* メインボタン「1人で遊ぶ」 */
     .btn-solo-hero {
       width: 100%;
       padding: 18px 24px;
@@ -98,7 +97,7 @@ export function injectStyles() {
       box-shadow: 0 4px 12px rgba(2, 132, 199, 0.35) !important;
     }
 
-    /* サブボタン：爽やかなエメラルドミント（公開ルーム作成） */
+    /* サブボタン：公開ルーム作成 */
     .gravity-btn-green,
     .btn-green {
       width: 100%;
@@ -118,13 +117,13 @@ export function injectStyles() {
       transform: scale(0.97);
     }
 
-    /* サブボタン：落ち着いたティールグリーン（プライベート作成） */
+    /* サブボタン：プライベート作成 */
     .btn-private {
       background: linear-gradient(135deg, #0d9488 0%, #0f766e 100%) !important;
       box-shadow: 0 5px 16px rgba(13, 148, 136, 0.35) !important;
     }
 
-    /* 公開ルーム一覧カード：透明感のあるすっきりしたホワイトフロスト調 */
+    /* 公開ルーム一覧カード */
     .room-list-box {
       width: 100%;
       background: rgba(255, 255, 255, 0.08) !important;
@@ -196,7 +195,6 @@ export async function syncGravityUserName() {
         displayName = res.data.name;
         window.GRAVITY_USER_NAME = displayName;
         
-        // 名前が取得できた瞬間に、3D空間内の自キャラ足元ネームプレートを即座に書き換え
         try {
           updatePlayerName(displayName);
         } catch (e) {
@@ -223,7 +221,6 @@ export async function syncGravityUserName() {
 
 /**
  * 既存の静的要素（gravity_loader.html）が存在する場合のテキスト・レイアウト・順序自動補正
- * ★【修復】脆い nth-of-type を完全廃止し、テキスト検索で確実にIDを付与＆古いonclickを除去
  */
 export function patchExistingLobbyLabels() {
   const overlay = document.getElementById('test-lobby-overlay');
@@ -232,7 +229,7 @@ export function patchExistingLobbyLabels() {
   const card = overlay.querySelector('.lobby-card');
   if (!card) return;
 
-  // タイトル：「階段を架けろ！」（ポップな立体スタイル）
+  // タイトル：「階段を架けろ！」
   const titleEl = card.querySelector('div:nth-child(1)');
   if (titleEl) {
     titleEl.textContent = '階段を架けろ！';
@@ -244,7 +241,7 @@ export function patchExistingLobbyLabels() {
     titleEl.style.margin = '4px 0 2px 0';
   }
 
-  // 挨拶テキストのスタイリング
+  // 挨拶テキスト
   const greetingEl = card.querySelector('div:nth-child(2)');
   if (greetingEl) {
     greetingEl.style.color = '#bae6fd';
@@ -252,13 +249,12 @@ export function patchExistingLobbyLabels() {
     greetingEl.style.marginBottom = '6px';
   }
 
-  // ボタンの順序入れ替え：【1人で遊ぶ】を一番上に配置！
+  // ボタンの順序入れ替え：【1人で遊ぶ】を一番上に配置
   const soloBtn = document.getElementById('btn-start-solo');
   if (soloBtn) {
     soloBtn.textContent = '▶ 1人で遊ぶ';
     soloBtn.className = 'btn-solo-hero';
     
-    // イベント二重登録防止
     if (!soloBtn._hasCustomListener) {
       soloBtn._hasCustomListener = true;
       soloBtn.addEventListener('click', () => {
@@ -269,12 +265,12 @@ export function patchExistingLobbyLabels() {
     }
   }
 
-  // DOMツリー上で soloBtn を挨拶文（2番目の要素）の直後へ移動
+  // DOMツリー上で soloBtn を挨拶文の直後へ移動
   if (soloBtn && greetingEl && soloBtn.previousElementSibling !== greetingEl) {
     greetingEl.after(soloBtn);
   }
 
-  // ★【修復】ボタンテキストで確実に「公開ルームを作成」「プライベートルームを作成」を特定
+  // ボタンテキストで確実に「公開ルームを作成」「プライベートルームを作成」を特定
   const allButtons = card.querySelectorAll('button');
   allButtons.forEach(btn => {
     const text = btn.textContent || '';
@@ -301,7 +297,6 @@ export function patchExistingLobbyLabels() {
       header.style.fontSize = '16px';
       header.style.fontWeight = '800';
 
-      // 更新ボタンが存在しない場合は作成、既存の場合はID割り当て
       let refreshBtn = header.querySelector('button');
       if (!refreshBtn) {
         refreshBtn = document.createElement('button');
@@ -315,7 +310,6 @@ export function patchExistingLobbyLabels() {
       }
     }
 
-    // ルームリストコンテナに ID を付与
     const listBody = roomSection.querySelector('div:last-child');
     if (listBody) {
       listBody.id = 'room-list-container';
@@ -382,11 +376,9 @@ export function mountAllUI(container) {
     <!-- 画面1: マルチプレイロビー -->
     <div id="screen-lobby" class="gravity-screen-overlay">
       <div class="gravity-card">
-        <!-- ★ タイトル：「階段を架けろ！」 -->
         <div style="font-size: 30px; font-weight: 900; letter-spacing: 0.05em; margin: 4px 0 2px 0; color: #ffffff; text-shadow: 0 3px 12px rgba(2, 132, 199, 0.8), 0 2px 4px rgba(0, 0, 0, 0.4);">階段を架けろ！</div>
         <div id="lobby-user-greeting" style="font-size: 14px; color: #bae6fd; margin-bottom: 6px;">ようこそ プレイヤー さん</div>
 
-        <!-- ★ メインボタン：「1人で遊ぶ」を最優先で一番上に配置！ -->
         <button id="btn-start-solo" type="button" class="btn-solo-hero">▶ 1人で遊ぶ</button>
 
         <div style="width: 100%; height: 1px; background: rgba(255,255,255,0.2); margin: 4px 0;"></div>
@@ -414,7 +406,6 @@ export function mountAllUI(container) {
         <div style="width: 100%; height: 1px; background: rgba(255,255,255,0.2); margin-bottom: 8px;"></div>
 
         <div id="waiting-members-list" style="width: 100%; display: flex; flex-direction: column; gap: 10px; margin: 16px 0;">
-          <!-- 動的スロット要素 -->
         </div>
 
         <button id="btn-host-start" type="button" class="btn-solo-hero" style="font-size: 18px !important;">ゲーム開始</button>
@@ -423,39 +414,89 @@ export function mountAllUI(container) {
     </div>
   `;
 
-  // マウント後にユーザーネームを同期
   syncGravityUserName();
 }
 
 /**
  * UIステート表示切り替え制御
+ * ★【Phase 2 強化】静的・動的・すべてのオーバーレイ幕を例外なく物理消去（display: none !important）
  */
 export const UIController = {
   showLobby() {
     const screenLobby = document.getElementById('screen-lobby');
     const staticOverlay = document.getElementById('test-lobby-overlay');
-    if (screenLobby) screenLobby.classList.remove('hidden');
-    if (staticOverlay) staticOverlay.style.display = 'flex';
+    if (screenLobby) {
+      screenLobby.classList.remove('hidden');
+      screenLobby.style.removeProperty('display');
+    }
+    if (staticOverlay) {
+      staticOverlay.classList.remove('hidden');
+      staticOverlay.style.removeProperty('display');
+      staticOverlay.style.display = 'flex';
+    }
     document.getElementById('screen-waiting')?.classList.add('hidden');
     this._setHUDVisible(false);
   },
 
   showWaitingRoom(roomId) {
-    document.getElementById('screen-lobby')?.classList.add('hidden');
-    const staticOverlay = document.getElementById('test-lobby-overlay');
-    if (staticOverlay) staticOverlay.style.display = 'none';
-    document.getElementById('screen-waiting')?.classList.remove('hidden');
+    this._hideAllLobbyOverlays();
+    const waitScreen = document.getElementById('screen-waiting');
+    if (waitScreen) {
+      waitScreen.classList.remove('hidden');
+      waitScreen.style.removeProperty('display');
+      waitScreen.style.display = 'flex';
+    }
     const tag = document.getElementById('waiting-room-tag');
     if (tag) tag.innerText = `ROOM #${roomId}`;
     this._setHUDVisible(false);
   },
 
   showGame() {
-    document.getElementById('screen-lobby')?.classList.add('hidden');
-    const staticOverlay = document.getElementById('test-lobby-overlay');
-    if (staticOverlay) staticOverlay.style.display = 'none';
-    document.getElementById('screen-waiting')?.classList.add('hidden');
+    // 1. 静的・動的問わず全オーバーレイ幕を確実に完全剥離
+    this._hideAllLobbyOverlays();
+
+    // 2. 待機部屋も確実に完全非表示化
+    const waitScreen = document.getElementById('screen-waiting');
+    if (waitScreen) {
+      waitScreen.classList.add('hidden');
+      waitScreen.style.setProperty('display', 'none', 'important');
+    }
+
+    // 3. スタートモーダルも安全に非表示化
+    const startModal = document.getElementById('modal-start');
+    if (startModal) {
+      startModal.classList.add('hidden');
+      startModal.style.setProperty('display', 'none', 'important');
+    }
+
+    // 4. ゲーム内HUD（スコア・タイマー・リスタート・サウンド）を表示
     this._setHUDVisible(true);
+  },
+
+  /**
+   * DOM上に存在する全種類のロビー幕を物理的に完全に隠滅するヘルパー
+   */
+  _hideAllLobbyOverlays() {
+    // ① 静的ローダーオーバーレイ
+    const staticOverlay = document.getElementById('test-lobby-overlay');
+    if (staticOverlay) {
+      staticOverlay.classList.add('hidden');
+      staticOverlay.style.setProperty('display', 'none', 'important');
+    }
+
+    // ② 動的生成ロビーオーバーレイ
+    const screenLobby = document.getElementById('screen-lobby');
+    if (screenLobby) {
+      screenLobby.classList.add('hidden');
+      screenLobby.style.setProperty('display', 'none', 'important');
+    }
+
+    // ③ クラス指定で存在する可能性のあるすべての全画面幕
+    const allOverlays = document.querySelectorAll('.gravity-screen-overlay');
+    allOverlays.forEach(overlay => {
+      overlay.classList.add('hidden');
+      overlay.style.setProperty('display', 'none', 'important');
+    });
   },
 
   _setHUDVisible(visible) {
@@ -482,14 +523,13 @@ export function initDOMEnhancements() {
   syncGravityUserName();
 }
 
-// スクリプト読み込み時に安全に自動実行
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', initDOMEnhancements);
 } else {
   initDOMEnhancements();
 }
 
-// ★ network.js を安全に読み込んでイベントをバインド
+// network.js を安全に読み込んでイベントをバインド
 import('./network.js').then(module => {
   if (module && typeof module.hookLobbyNetworkEvents === 'function') {
     module.hookLobbyNetworkEvents();
