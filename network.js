@@ -1,9 +1,7 @@
 // network.js: AgentSDKラッパー ＆ 動的スロット・相互可視化・10Hz位置同期エンジン
-// ★ Phase 2 実装版（二重作成根絶・公式joinroom即時合流・Self-Healing同期）：
-//   1. createRoom に _isCreatingRoom 排他ロックを導入（部屋の二重作成を完全遮断）
-//   2. aitools_game_joinroom による公式ネイティブ通知でゲストを即座にスロット1へ任命＆Stage 0呼び戻し
-//   3. 10Hz POS パケットに name を常時同梱し、パケット受信1発で相手キャラを実体化・自己復旧（Self-Healing）
-//   4. getPublicRooms の判定寛容化 ＆ ロビーボタンのスマホ二重発火（touchend+click）デバウンス遮断
+// ★ Phase 2 実装版：
+//   1. SCATTER_BLOCKS（タックル・アイテム・ゲート被弾散乱ブロック）の受信ハンドラを完全開通
+//   2. window.NetworkManager のグローバル登録、createRoom 排他ロック、公式joinroom即時合流、Self-Healing POS同期を完全維持
 
 import {
   characters,
@@ -159,7 +157,6 @@ export const NetworkManager = {
   _syncIntervalId: null,
   _retrySyncIntervalId: null,
 
-  // ★【二重作成根絶】排他ロックフラグ
   _isCreatingRoom: false,
 
   async init() {
@@ -210,9 +207,6 @@ export const NetworkManager = {
     }
   },
 
-  /**
-   * ★【判定寛容化】公開ルーム一覧の取得
-   */
   async getPublicRooms() {
     if (!this.isSDKAvailable) return [];
     const now = Date.now();
@@ -244,9 +238,6 @@ export const NetworkManager = {
     return [];
   },
 
-  /**
-   * ★【二重作成根絶】排他ロック付き公開ルーム作成（ホスト）
-   */
   async createRoom(isPrivate = false) {
     if (this._isCreatingRoom) {
       console.warn('[NetworkManager] createRoom is already in progress. Ignoring duplicate trigger.');
@@ -300,10 +291,8 @@ export const NetworkManager = {
       this.isMultiplayerActive = true;
       this._seedApplied = true;
 
-      // 画面切り替えを最優先実行
       safeShowGameScreen();
 
-      // 自操作キャラをスロット0（青）へ即時バインド
       if (typeof bindLocalPlayerSlot === 'function') {
         bindLocalPlayerSlot(0);
       } else if (typeof window.bindLocalPlayerSlot === 'function') {
@@ -314,17 +303,14 @@ export const NetworkManager = {
         updatePlayerName(window.GRAVITY_USER_NAME);
       }
 
-      // ホスト自身で乱数シードを決定
       this.currentSeed = (typeof createdRoomId === 'string')
         ? Math.abs(createdRoomId.split('').reduce((acc, char) => (acc << 5) - acc + char.charCodeAt(0), 0))
         : Math.floor(Math.random() * 90000000) + 10000000;
 
-      // ホストのスロット0を固定（他スロットは初期AIとして元気に走らせる）
       this.slots[0] = { slot: 0, clientId: this.clientId, userId: this.myUser.user_id, name: this.myUser.name, isAI: false };
       this.slots[1] = { slot: 1, clientId: null, userId: null, name: 'CPU 1', isAI: true };
       this.slots[2] = { slot: 2, clientId: null, userId: null, name: 'CPU 2', isAI: true };
 
-      // ワールド再構築
       const activeScene = (typeof window !== 'undefined' && window.currentSceneRef) ? window.currentSceneRef : null;
       if (activeScene) {
         try {
@@ -339,16 +325,12 @@ export const NetworkManager = {
       this._startPositionBroadcasting();
       return this.currentRoomId;
     } finally {
-      // 少し間を置いてからロック解除（二重連打防止）
       setTimeout(() => {
         this._isCreatingRoom = false;
       }, 600);
     }
   },
 
-  /**
-   * ルーム参加（ゲスト）
-   */
   async joinRoom(roomId) {
     if (!roomId) return false;
     const safeRoomId = String(roomId);
@@ -383,7 +365,7 @@ export const NetworkManager = {
 
     this.currentRoomId = safeRoomId;
     this.isHost = false;
-    this.mySlot = 1; // 初期フォールバックはスロット1(赤)
+    this.mySlot = 1;
     this.isMultiplayerActive = true;
     this._seedApplied = false;
 
@@ -391,10 +373,8 @@ export const NetworkManager = {
       ? String(window.GRAVITY_USER_NAME)
       : this.myUser.name;
 
-    // スロット0（ホスト）をリモート固定
     this._bindRemoteSlot(0, 'Player');
 
-    // 自操作キャラをスロット1（赤）へバインド
     if (typeof bindLocalPlayerSlot === 'function') {
       bindLocalPlayerSlot(1);
     } else if (typeof window.bindLocalPlayerSlot === 'function') {
@@ -404,7 +384,6 @@ export const NetworkManager = {
 
     safeShowGameScreen();
 
-    // 参加同期パケット（Ackが得られるまで最大4回リトライ送信して通信ロスを完全防止）
     let retries = 0;
     if (this._retrySyncIntervalId) clearInterval(this._retrySyncIntervalId);
     this._retrySyncIntervalId = setInterval(() => {
@@ -426,9 +405,6 @@ export const NetworkManager = {
     return true;
   },
 
-  /**
-   * ★【公式joinroom即時合流】ゲスト入室検知ハンドラ
-   */
   _handleUserJoined(data) {
     if (!data) return;
     const userId = String(data.user_id || '');
@@ -438,7 +414,6 @@ export const NetworkManager = {
       const guestName = data.name || 'ゲスト';
       let targetSlot = this.slots.findIndex(s => String(s.userId) === userId);
 
-      // まだスロットに割り当てられていなければ空きスロット（スロット1:赤、次いで2:黄）へ即時任命
       if (targetSlot === -1) {
         if (this.slots[1].isAI) targetSlot = 1;
         else if (this.slots[2].isAI) targetSlot = 2;
@@ -452,7 +427,6 @@ export const NetworkManager = {
           name: guestName,
           isAI: false
         };
-        // ホスト画面の目の前（Stage 0）に奥から即座に呼び戻して実体化！
         this._bindRemoteSlot(targetSlot, guestName);
       }
 
@@ -506,7 +480,6 @@ export const NetworkManager = {
                   name: reqName,
                   isAI: false
                 };
-                // ホスト側で赤キャラを即座に Stage 0 初期位置へ合流＆リモート化
                 this._bindRemoteSlot(targetSlot, reqName);
               }
             }
@@ -542,6 +515,13 @@ export const NetworkManager = {
           }
           break;
 
+        // ★【Phase 2 新設】散乱ブロック情報を受信した際の一括配置ハンドラ呼び出し
+        case 'SCATTER_BLOCKS':
+          if (typeof window.applyRemoteScatterBlocks === 'function') {
+            window.applyRemoteScatterBlocks(packet.stageIdx, packet.blocks);
+          }
+          break;
+
         case 'RESTART_GAME':
           if (typeof window.onRemoteRestartReceived === 'function') {
             window.onRemoteRestartReceived(packet);
@@ -553,9 +533,6 @@ export const NetworkManager = {
     }
   },
 
-  /**
-   * 自操作スロット保護版 ROOM_MEMBERS_SYNC 適用ハンドラ
-   */
   _applyRoomMembersSync(syncedSlots, seed, snapshot = null) {
     if (!Array.isArray(syncedSlots)) return;
     this.slots = syncedSlots;
@@ -599,7 +576,6 @@ export const NetworkManager = {
       const isMyClient = (s.clientId && s.clientId === this.clientId) || (!s.clientId && this.isHost && s.slot === 0);
       const isMyCurrentSlot = (s.slot === this.mySlot);
 
-      // 自端末の担当スロットは、ホストからの初期情報（CPU 1 等）で上書きされるのを完全にブロック
       if (isMyClient || isMyCurrentSlot) {
         this.mySlot = s.slot;
         window.MY_PLAYER_SLOT = s.slot;
@@ -615,7 +591,6 @@ export const NetworkManager = {
         return;
       }
 
-      // 他スロットの反映
       if (!s.isAI && (s.clientId || s.userId)) {
         this._bindRemoteSlot(s.slot, s.name);
       } else if (s.isAI) {
@@ -624,9 +599,6 @@ export const NetworkManager = {
     });
   },
 
-  /**
-   * ★【resetCharacterToStageZero 連携】キャラの Stage 0 合流 ＆ リモート化
-   */
   _bindRemoteSlot(slotIndex, playerName) {
     const targetChar = characters[slotIndex];
     if (!targetChar) return;
@@ -641,13 +613,11 @@ export const NetworkManager = {
     targetChar.searchCooldown = 999999;
     targetChar.name = playerName || (slotIndex === 0 ? 'norion' : 'ゲスト');
 
-    // ★ character.js に新設した Stage 0 初期化関数で一括リセット！
     if (typeof resetCharacterToStageZero === 'function') {
       resetCharacterToStageZero(targetChar, targetChar.name, false);
     } else if (typeof window.resetCharacterToStageZero === 'function') {
       window.resetCharacterToStageZero(targetChar, targetChar.name, false);
     } else {
-      // フォールバック
       const defaultX = (slotIndex === 1) ? -4.0 : (slotIndex === 2 ? 4.0 : 0.0);
       const stage0Y = (STAGES[0] ? STAGES[0].y : 0);
       const stage0Z = (STAGES[0] ? (STAGES[0].z + 4.0) : 4.0);
@@ -685,9 +655,6 @@ export const NetworkManager = {
     }
   },
 
-  /**
-   * ★【Self-Healing 同梱】10Hz 位置情報ブロードキャスト
-   */
   _startPositionBroadcasting() {
     if (this._syncIntervalId) clearInterval(this._syncIntervalId);
 
@@ -716,16 +683,12 @@ export const NetworkManager = {
     }, 100);
   },
 
-  /**
-   * ★【Self-Healing 受信】リモート位置受信ハンドラ
-   */
   _handleRemotePosition(packet) {
     if (packet.slot === this.mySlot || packet.clientId === this.clientId) return;
 
     const targetChar = characters[packet.slot];
     if (!targetChar) return;
 
-    // ★ まだ相手をAIや未認可と認識していた場合、このパケット1発で即座にリモート走者として自己復旧実体化！
     if (targetChar.isAI || !targetChar.isRemote || (packet.name && targetChar.name !== packet.name && packet.name !== 'YOU')) {
       targetChar.isRemote = true;
       targetChar.isAI = false;
@@ -745,7 +708,6 @@ export const NetworkManager = {
       }
     }
 
-    // ステージ飛び（合流ワープ等）の同期
     if (packet.stage !== undefined && targetChar.currentStage !== packet.stage) {
       targetChar.currentStage = packet.stage;
       targetChar.pos.set(packet.x, packet.y, packet.z);
@@ -825,8 +787,13 @@ export const NetworkManager = {
   }
 };
 
+// window.NetworkManager をグローバル公開
+if (typeof window !== 'undefined') {
+  window.NetworkManager = NetworkManager;
+}
+
 /**
- * ★【二重発火デバウンス】dom.js 内のボタンと NetworkManager を安全に接続するフック
+ * dom.js 内のボタンと NetworkManager を安全に接続するフック
  */
 let lastCreateActionTime = 0;
 
@@ -837,7 +804,6 @@ export function hookLobbyNetworkEvents() {
 
     const onCreateHandler = (e) => {
       const now = Date.now();
-      // 直前600ms以内の連打・二重発火（touchend + click）を完全遮断
       if (now - lastCreateActionTime < 600) {
         if (e) {
           e.preventDefault();

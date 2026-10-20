@@ -1,8 +1,7 @@
 // systems.js: 物理移動判定・スカイウォーク歩行開放・ハッチ進入同期・リュック収納アニメーション連動・シームレス風音連携・スカイダイブ＆スライダーボーナス回収・合流島安全着地完全整合・お邪魔キャラ衝突判定・下層島誤ワープ完全防止・階段/床ブロック取得リアルタイム同期
-// ★ Step 2 リファクタリング完了版:
-//   - 戦闘・タックル・飛び道具・ブロック散乱を combat.js へ分離
-//   - systems.js が純粋なコア移動物理および通信同期ハンドラにスリム化
-//   - 既存の呼び出し元（main.js, entities.js）との完全な後方互換性を維持
+// ★ Step 2 リファクタリング完了版 ＆ Phase 1 座標最優先ブロック消去同期化版:
+//   - applyRemoteBlockPicked を壊れやすい poolIdx から「指定座標 (x, z) 最近傍最優先マッチング」へ安全化
+//   - 既存呼び出し元との完全な後方互換性を維持
 
 import {
   TRAMPOLINE_TIERS,
@@ -117,31 +116,39 @@ export function applyRemotePlankBuilt(stageIdx, laneIdx, plankIdx, teamId) {
 }
 
 /**
- * リモートプレイヤーまたはホスト側AIが床ブロックを拾った際の受信ハンドラ（該当ブロックの即時消去同期）
+ * ★【Phase 1 強化】リモートプレイヤーまたはホスト側AIが床ブロックを拾った際の受信ハンドラ
+ * ズレやすい poolIdx の盲従を撤廃し、「指定座標 (x, z) から最も近いアクティブブロック」を最優先特定して消去（誤爆消滅を完全根絶）
  */
 export function applyRemoteBlockPicked(stageIdx, poolIdx, x, z) {
   const stageBlocks = getFloorBlocksForStage(stageIdx);
   let targetBlock = null;
 
-  // 1. 配列インデックス（poolIdx）による直接特定
-  if (poolIdx !== undefined && poolIdx >= 0 && poolIdx < floorBlockPool.length) {
-    const candidate = floorBlockPool[poolIdx];
-    if (candidate && candidate.active) {
-      targetBlock = candidate;
-    }
-  }
-
-  // 2. 座標近傍によるフォールバック特定
-  if (!targetBlock && x !== undefined && z !== undefined) {
+  // 1. 【最優先】座標マッチング（距離 1.4m 以内の最も近いアクティブブロックを特定）
+  if (x !== undefined && z !== undefined) {
+    let minDistSq = 1.4 * 1.4;
     for (let i = 0; i < stageBlocks.length; i++) {
       const b = stageBlocks[i];
-      if (b.active && Math.hypot(b.pos.x - x, b.pos.z - z) < 1.2) {
-        targetBlock = b;
-        break;
+      if (b.active) {
+        const dx = b.pos.x - x;
+        const dz = b.pos.z - z;
+        const distSq = dx * dx + dz * dz;
+        if (distSq < minDistSq) {
+          minDistSq = distSq;
+          targetBlock = b;
+        }
       }
     }
   }
 
+  // 2. 座標で見つからなかった場合のみ、配列インデックス（poolIdx）によるフォールバック特定
+  if (!targetBlock && poolIdx !== undefined && poolIdx >= 0 && poolIdx < floorBlockPool.length) {
+    const candidate = floorBlockPool[poolIdx];
+    if (candidate && candidate.active && candidate.stageIdx === stageIdx) {
+      targetBlock = candidate;
+    }
+  }
+
+  // 該当ブロックを安全に消去
   if (targetBlock) {
     targetBlock.active = false;
     targetBlock.mesh.visible = false;

@@ -1,5 +1,8 @@
 // blocks.js: 床ブロック管理・補充・スポーン・ホスト補充マルチ同期専用モジュール
 // world.js から床ブロック関連の責務を分離
+// ★ Phase 1 強化版:
+//   - applyRemoteBlockSpawned における二重生成防止＆安全配置
+//   - window.NetworkManager 連携による SPAWN_BLOCK ブロードキャスト確約
 
 import {
   BLOCK_TYPES,
@@ -40,12 +43,22 @@ export function getFloorBlocksForStage(stageIdx) {
 }
 
 /**
- * ホストから新ブロック補充パケットを受信した際の反映ハンドラ
- * poolIdx の強制上書きをやめ、空いている安全なスロットを探して配置
+ * ★【Phase 1 強化】ホストから新ブロック補充パケットを受信した際の反映ハンドラ
+ * 同一座標の二重配置を防止し、安全な空きスロットへ正確に同期配置
  */
 export function applyRemoteBlockSpawned(stageIdx, poolIdx, x, y, z, teamId) {
   const stageInfo = STAGES[stageIdx];
   if (!stageInfo) return;
+
+  const stageBlocks = getFloorBlocksForStage(stageIdx);
+
+  // 既に同一座標付近（0.6m以内）にアクティブブロックがある場合は二重配置しない
+  for (let i = 0; i < stageBlocks.length; i++) {
+    const b = stageBlocks[i];
+    if (b.active && Math.hypot(b.pos.x - x, b.pos.z - z) < 0.6) {
+      return;
+    }
+  }
 
   let poolItem = null;
   if (poolIdx >= 0 && poolIdx < floorBlockPool.length && !floorBlockPool[poolIdx].active) {
@@ -73,7 +86,6 @@ export function applyRemoteBlockSpawned(stageIdx, poolIdx, x, y, z, teamId) {
   poolItem.stageIdx = stageIdx;
   poolItem.attracting = false;
 
-  const stageBlocks = getFloorBlocksForStage(stageIdx);
   if (!stageBlocks.includes(poolItem)) {
     stageBlocks.push(poolItem);
   }

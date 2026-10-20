@@ -1,5 +1,8 @@
 // combat.js: タックル衝突・ノックアウト・攻撃スキル・ブロック散乱専用モジュール
 // systems.js から戦闘・妨害・被弾処理を分離
+// ★ Phase 2 実装版：
+//   - scatterBricks で床に散乱したブロック情報のブロードキャスト（SCATTER_BLOCKS）
+//   - リモート散乱ブロックの同一座標・中立色反映ハンドラ applyRemoteScatterBlocks の新設
 
 import { TEAMS } from './constants.js';
 import {
@@ -34,7 +37,66 @@ export function setCombatCallbacks(sound, updateHUD) {
 }
 
 /**
+ * ★【Phase 2 新設】相手端末で発生したブロック散乱（タックル・ゲート・被弾）の受取反映ハンドラ
+ * 送信元の座標に全く同じ中立（ニュートラル）ブロックを一括配置
+ */
+export function applyRemoteScatterBlocks(stageIdx, blocks) {
+  if (!Array.isArray(blocks) || blocks.length === 0) return;
+  const stage = STAGES[stageIdx] || STAGES[0];
+  const stageBlocks = getFloorBlocksForStage(stageIdx);
+
+  blocks.forEach(b => {
+    // 既存ブロックとの近接（0.6m以内）二重生成チェック
+    for (let i = 0; i < stageBlocks.length; i++) {
+      const existing = stageBlocks[i];
+      if (existing.active && Math.hypot(existing.pos.x - b.x, existing.pos.z - b.z) < 0.6) {
+        return;
+      }
+    }
+
+    let poolItem = floorBlockPool.find(item => !item.active);
+    if (!poolItem) {
+      let bestRecycleIdx = -1;
+      let minStageIdx = 999999;
+      for (let k = 0; k < floorBlockPool.length; k++) {
+        const blk = floorBlockPool[k];
+        if (blk.active && !blk.attracting && blk.stageIdx < minStageIdx) {
+          minStageIdx = blk.stageIdx;
+          bestRecycleIdx = k;
+        }
+      }
+      if (bestRecycleIdx >= 0) {
+        poolItem = floorBlockPool[bestRecycleIdx];
+        const oldStageBlocks = getFloorBlocksForStage(poolItem.stageIdx);
+        const oldIdx = oldStageBlocks.indexOf(poolItem);
+        if (oldIdx !== -1) oldStageBlocks.splice(oldIdx, 1);
+      }
+    }
+    if (!poolItem) return;
+
+    poolItem.mesh.material = sharedMats.blockNeutral;
+    poolItem.mesh.position.set(b.x, b.y !== undefined ? b.y : (stage.y + 0.29), b.z);
+    poolItem.mesh.rotation.set(0, Math.random() * Math.PI, 0);
+    poolItem.mesh.visible = true;
+
+    poolItem.active = true;
+    poolItem.team = TEAMS.NEUTRAL;
+    poolItem.pos = poolItem.mesh.position;
+    poolItem.stageIdx = stageIdx;
+    poolItem.attracting = false;
+
+    stageBlocks.push(poolItem);
+  });
+}
+
+// グローバル公開（network.js から安全に呼べるように登録）
+if (typeof window !== 'undefined') {
+  window.applyRemoteScatterBlocks = applyRemoteScatterBlocks;
+}
+
+/**
  * タックル被弾・ゲート通過時の所持ブロック床面散乱
+ * ★【Phase 2 強化】マルチプレイ時に散乱したブロック一覧を一括ブロードキャスト
  * @param {THREE.Scene} scene 
  * @param {Object} char 
  * @param {number} countToDrop 
@@ -46,6 +108,7 @@ export function scatterBricks(scene, char, countToDrop) {
   const maxR = stage.r - 1.0;
   const stageBlocks = getFloorBlocksForStage(char.currentStage);
   const centerX = stage.x || 0.0;
+  const droppedBlocks = [];
 
   for (let i = 0; i < count; i++) {
     removeBrickFromCharacter(char, updateHUDRef);
@@ -95,6 +158,32 @@ export function scatterBricks(scene, char, countToDrop) {
     poolItem.attracting = false;
 
     stageBlocks.push(poolItem);
+
+    droppedBlocks.push({
+      x: Number(dropX.toFixed(2)),
+      y: Number(floorY.toFixed(2)),
+      z: Number(dropZ.toFixed(2)),
+      teamId: 'neutral'
+    });
+  }
+
+  // ★【Phase 2】マルチプレイ時、自キャラ被弾またはホスト端末のAI被弾による散乱情報を他端末へブロードキャスト
+  const isMulti = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive);
+  const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
+  const shouldBroadcast = isMulti && (char.isPlayer || (isHost && char.isAI));
+
+  if (shouldBroadcast && droppedBlocks.length > 0 && typeof window !== 'undefined' && window.AgentSDK) {
+    try {
+      window.AgentSDK.room.sendMessage({
+        message: JSON.stringify({
+          event: 'SCATTER_BLOCKS',
+          stageIdx: char.currentStage,
+          blocks: droppedBlocks
+        })
+      });
+    } catch (err) {
+      console.warn('[combat.js] Failed to broadcast SCATTER_BLOCKS:', err);
+    }
   }
 }
 
