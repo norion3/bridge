@@ -1,8 +1,9 @@
 // network.js: AgentSDKラッパー ＆ ルーム入退室ライフサイクル・通信同期エンジン
-// ★ Phase 2 実装版（マルチゲーム起動確約 ＆ ロビーイベント接続の強固化）：
-//   1. safeShowGameScreen() 内で window.launchGameEngine() を直接実行し、マルチ参加・作成完了時にゲームループを確実に始動
-//   2. hookLobbyNetworkEvents を window オブジェクトへ明示的に公開し、dom.js からの再バインドを安全・確実に実行
-//   3. 既存の10Hz POS通信（state/速度ベクトル）、KNOCKOUT、スロット確定、ブロック・階段同期は100%維持
+// ★ 修正版（clientId & userId 二重照合による完全スロット確定 ＆ 複数ゲスト排他割り当て対応）：
+//   1. _applyRoomMembersSync で clientId と userId（AgentSDK一意ID）の二重照合を行い、ゲストが確実に自スロット（1人目:赤 / 2人目:黄）へ切り替わるよう修正
+//   2. ホスト側の _handleUserJoined および REQUEST_ROOM_SYNC において、clientId / userId を保持・更新し、スロットデータ欠落を防止
+//   3. ゲスト2人入室時（計3人プレイ）もスロット1・2が順次排他割り当てされ、自他判定が全端末で100%決定論的に一致
+//   4. 提案内容以外の通信プロトコル（POS、KNOCKOUT、ブロック・階段同期等）は100%維持
 
 import {
   characters,
@@ -30,8 +31,7 @@ async function safeExitCurrentRoom() {
 }
 
 /**
- * ★【Phase 2 改善】画面切り替え ＆ ゲームループ始動確約ヘルパー
- * UIControllerと連携し、さらに launchGameEngine() を直接呼んでマルチプレイを即座に動かす
+ * 画面切り替え ＆ ゲームループ始動確約ヘルパー
  */
 function safeShowGameScreen() {
   try {
@@ -54,12 +54,12 @@ function safeShowGameScreen() {
     startModal.classList.add('hidden');
   }
 
-  // 1. main.js の launchGameEngine() を直接実行（ゲームループを確実にオンにする）
+  // main.js の launchGameEngine() を直接実行（ゲームループを確実にオンにする）
   if (typeof window !== 'undefined' && typeof window.launchGameEngine === 'function') {
     window.launchGameEngine();
   }
 
-  // 2. フォールバックとしてのスタートボタン擬似クリック
+  // フォールバックとしてのスタートボタン擬似クリック
   const startBtn = document.getElementById('btn-start');
   if (startBtn) {
     startBtn.click();
@@ -389,7 +389,7 @@ export const NetworkManager = {
       let retries = 0;
       if (this._retrySyncIntervalId) clearInterval(this._retrySyncIntervalId);
       this._retrySyncIntervalId = setInterval(() => {
-        if (this.isSlotConfirmed || retries >= 6) {
+        if (this.isSlotConfirmed || retries >= 8) {
           clearInterval(this._retrySyncIntervalId);
           this._retrySyncIntervalId = null;
           return;
@@ -401,7 +401,7 @@ export const NetworkManager = {
           name: myRealName
         });
         retries++;
-      }, 350);
+      }, 300);
 
       this._startPositionBroadcasting();
       return true;
@@ -419,7 +419,7 @@ export const NetworkManager = {
 
     if (this.isHost) {
       const guestName = data.name || 'ゲスト';
-      let targetSlot = this.slots.findIndex(s => String(s.userId) === userId);
+      let targetSlot = this.slots.findIndex(s => s.userId && String(s.userId) === userId);
 
       if (targetSlot === -1) {
         if (this.slots[1].isAI) targetSlot = 1;
@@ -429,7 +429,7 @@ export const NetworkManager = {
       if (targetSlot !== -1) {
         this.slots[targetSlot] = {
           slot: targetSlot,
-          clientId: null,
+          clientId: this.slots[targetSlot].clientId || null,
           userId: userId,
           name: guestName,
           isAI: false
@@ -469,12 +469,15 @@ export const NetworkManager = {
             const reqName = packet.name || 'ゲスト';
 
             if (reqClientId && reqClientId !== this.clientId) {
+              // 1. clientId による既存スロット特定
               let targetSlot = this.slots.findIndex(s => s.clientId === reqClientId);
 
-              if (targetSlot === -1 && reqUserId) {
-                targetSlot = this.slots.findIndex(s => String(s.userId) === reqUserId);
+              // 2. userId による既存スロット特定
+              if (targetSlot === -1 && reqUserId && reqUserId !== 'local_user') {
+                targetSlot = this.slots.findIndex(s => s.userId && String(s.userId) === reqUserId);
               }
 
+              // 3. 空きAIスロットへの順次割り当て（ゲスト1=スロット1, ゲスト2=スロット2）
               if (targetSlot === -1) {
                 if (this.slots[1].isAI) {
                   targetSlot = 1;
@@ -487,7 +490,7 @@ export const NetworkManager = {
                 this.slots[targetSlot] = {
                   slot: targetSlot,
                   clientId: reqClientId,
-                  userId: reqUserId,
+                  userId: reqUserId || this.slots[targetSlot].userId,
                   name: reqName,
                   isAI: false
                 };
@@ -553,6 +556,9 @@ export const NetworkManager = {
     }
   },
 
+  /**
+   * ★【核心】clientId & userId 二重照合による厳格スロット確定処理
+   */
   _applyRoomMembersSync(syncedSlots, seed, snapshot = null) {
     if (!Array.isArray(syncedSlots)) return;
     this.slots = syncedSlots;
@@ -602,7 +608,22 @@ export const NetworkManager = {
     }
 
     syncedSlots.forEach((s) => {
-      const isMyClient = (s.clientId && s.clientId === this.clientId) || (!s.clientId && this.isHost && s.slot === 0);
+      // 1. clientId 完全一致
+      const isClientIdMatch = !!(s.clientId && s.clientId === this.clientId);
+
+      // 2. AgentSDK の userId 完全一致
+      const isUserIdMatch = !!(
+        s.userId &&
+        this.myUser &&
+        this.myUser.user_id &&
+        s.userId !== 'local_user' &&
+        String(s.userId) === String(this.myUser.user_id)
+      );
+
+      // 3. ホスト自身のスロット0確定
+      const isHostDefaultSlot0 = (!s.clientId && this.isHost && s.slot === 0);
+
+      const isMyClient = isClientIdMatch || isUserIdMatch || isHostDefaultSlot0;
 
       if (isMyClient) {
         if (!this.isSlotConfirmed || this.mySlot !== s.slot) {
@@ -610,6 +631,7 @@ export const NetworkManager = {
           this.isSlotConfirmed = true;
           window.MY_PLAYER_SLOT = s.slot;
 
+          // 自操作キャラ（スロット番号：0青、1赤、2黄）へ切り替え
           if (typeof bindLocalPlayerSlot === 'function') {
             bindLocalPlayerSlot(s.slot);
           } else if (typeof window.bindLocalPlayerSlot === 'function') {
@@ -624,6 +646,7 @@ export const NetworkManager = {
         return;
       }
 
+      // 自分以外のスロットの処理
       if (!s.isAI && (s.clientId || s.userId)) {
         this._bindRemoteSlot(s.slot, s.name);
       } else if (s.isAI) {
@@ -842,7 +865,7 @@ export const NetworkManager = {
   _handleUserExited(data) {
     if (!data) return;
     const userId = String(data.user_id || '');
-    const exitedSlotIdx = this.slots.findIndex(s => String(s.userId) === userId);
+    const exitedSlotIdx = this.slots.findIndex(s => s.userId && String(s.userId) === userId);
 
     if (exitedSlotIdx !== -1 && exitedSlotIdx !== 0) {
       this.slots[exitedSlotIdx] = {
@@ -894,7 +917,7 @@ if (typeof window !== 'undefined') {
 }
 
 /**
- * ★【Phase 2 改善】dom.js 内のボタンと NetworkManager を安全に接続するフック
+ * dom.js 内のボタンと NetworkManager を安全に接続するフック
  */
 let lastCreateActionTime = 0;
 
@@ -1027,7 +1050,6 @@ export function hookLobbyNetworkEvents() {
   }
 }
 
-// dom.js など他モジュールから確実に再配線できるようグローバルにも公開
 if (typeof window !== 'undefined') {
   window.hookLobbyNetworkEvents = hookLobbyNetworkEvents;
 }
