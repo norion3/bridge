@@ -1,8 +1,10 @@
-// 物理移動判定・スカイウォーク歩行開放・ハッチ進入同期・リュック収納アニメーション連動・シームレス風音連携・スカイダイブ＆スライダーボーナス回収・合流島安全着地完全整合・お邪魔キャラ衝突判定・下層島誤ワープ完全防止・ゲームバランス適正化（タックル上限クランプ＆サンダー鈍足速度マイルド化）版
-// ★ マスターコード完全準拠版：階段架け（BUILD_PLANK）＆ プレイヤー/AI床ブロック取得（PICK_BLOCK）リアルタイム同期組み込み
+// systems.js: 物理移動判定・スカイウォーク歩行開放・ハッチ進入同期・リュック収納アニメーション連動・シームレス風音連携・スカイダイブ＆スライダーボーナス回収・合流島安全着地完全整合・お邪魔キャラ衝突判定・下層島誤ワープ完全防止・階段/床ブロック取得リアルタイム同期
+// ★ Step 2 リファクタリング完了版:
+//   - 戦闘・タックル・飛び道具・ブロック散乱を combat.js へ分離
+//   - systems.js が純粋なコア移動物理および通信同期ハンドラにスリム化
+//   - 既存の呼び出し元（main.js, entities.js）との完全な後方互換性を維持
 
 import {
-  TEAMS,
   TRAMPOLINE_TIERS,
   LANES,
   ELEVATOR_CONFIG,
@@ -10,20 +12,13 @@ import {
   TRAPDOOR_CONFIG
 } from './constants.js';
 import {
-  sharedMats,
-  blockGeometry,
-  COLOR_NEUTRAL_PLANK,
   COLOR_BLUE_PLANK,
   COLOR_RED_PLANK,
   COLOR_YELLOW_PLANK,
-  _tempVec3A,
-  _tempVec3B,
-  disposeHierarchy,
-  lightningPillarGeo
+  disposeHierarchy
 } from './materials.js';
 import {
   characters,
-  player,
   addBrickToCharacter,
   removeBrickFromCharacter
 } from './character.js';
@@ -34,15 +29,11 @@ import {
   activeMagnetBlocks,
   floorItems,
   getFloorBlocksForStage,
-  setAttackCamTimer,
   obstacleMobs,
   updateObstacleMobs
 } from './world.js';
 import {
   triggerLandingShockwave,
-  projectilePool,
-  thunderProjectilePool,
-  drainBlockPool,
   floorBlockPool
 } from './particles.js';
 import {
@@ -52,6 +43,23 @@ import {
   updateZiplineMovement,
   updateCurvedSlideMovement
 } from './gimmicks.js';
+import {
+  setCombatCallbacks,
+  scatterBricks,
+  fireHomingCrystal,
+  fireThunderStrike,
+  handleTackles,
+  tackleKnockout
+} from './combat.js';
+
+// 他モジュールへの後方互換再エクスポート
+export {
+  scatterBricks,
+  fireHomingCrystal,
+  fireThunderStrike,
+  handleTackles,
+  tackleKnockout
+};
 
 let soundRef = null;
 let updateHUDRef = null;
@@ -63,10 +71,11 @@ export function setSystemCallbacks(sound, updateHUD, onPlankPlaced = null) {
   soundRef = sound;
   updateHUDRef = updateHUD;
   onPlankPlacedCallback = onPlankPlaced;
+  setCombatCallbacks(sound, updateHUD);
 }
 
 /**
- * ★ リモートプレイヤーが階段を設置した際の受信ハンドラ（段板カラー即時同期）
+ * リモートプレイヤーが階段を設置した際の受信ハンドラ（段板カラー即時同期）
  */
 export function applyRemotePlankBuilt(stageIdx, laneIdx, plankIdx, teamId) {
   const localBridges = bridgesByStage.get(stageIdx) || [];
@@ -108,7 +117,7 @@ export function applyRemotePlankBuilt(stageIdx, laneIdx, plankIdx, teamId) {
 }
 
 /**
- * ★ リモートプレイヤーまたはホスト側AIが床ブロックを拾った際の受信ハンドラ（該当ブロックの即時消去同期）
+ * リモートプレイヤーまたはホスト側AIが床ブロックを拾った際の受信ハンドラ（該当ブロックの即時消去同期）
  */
 export function applyRemoteBlockPicked(stageIdx, poolIdx, x, z) {
   const stageBlocks = getFloorBlocksForStage(stageIdx);
@@ -148,65 +157,6 @@ export function applyRemoteBlockPicked(stageIdx, poolIdx, x, z) {
 if (typeof window !== 'undefined') {
   window.applyRemotePlankBuilt = applyRemotePlankBuilt;
   window.applyRemoteBlockPicked = applyRemoteBlockPicked;
-}
-
-export function scatterBricks(scene, char, countToDrop) {
-  const count = Math.min(char.stackCount, countToDrop);
-  const stage = STAGES[char.currentStage] || STAGES[0];
-  const floorY = stage.y + 0.29;
-  const maxR = stage.r - 1.0;
-  const stageBlocks = getFloorBlocksForStage(char.currentStage);
-  const centerX = stage.x || 0.0;
-
-  for (let i = 0; i < count; i++) {
-    removeBrickFromCharacter(char, updateHUDRef);
-
-    const angle = i * 2.39996 + Math.random() * 0.35;
-    const dist = 1.6 + Math.sqrt(i + 1) * 0.85;
-    let dropX = char.pos.x + Math.cos(angle) * dist;
-    let dropZ = char.pos.z + Math.sin(angle) * dist;
-
-    const distFromCenter = Math.hypot(dropX - centerX, dropZ - stage.z);
-    if (distFromCenter > maxR && distFromCenter > 0.001) {
-      dropX = centerX + ((dropX - centerX) / distFromCenter) * maxR;
-      dropZ = stage.z + ((dropZ - stage.z) / distFromCenter) * maxR;
-    }
-
-    let poolItem = floorBlockPool.find(b => !b.active);
-    if (!poolItem) {
-      let bestRecycleIdx = -1;
-      let minStageIdx = 999999;
-      for (let k = 0; k < floorBlockPool.length; k++) {
-        const blk = floorBlockPool[k];
-        if (blk.active && !blk.attracting) {
-          if (blk.stageIdx < minStageIdx) {
-            minStageIdx = blk.stageIdx;
-            bestRecycleIdx = k;
-          }
-        }
-      }
-      if (bestRecycleIdx >= 0) {
-        poolItem = floorBlockPool[bestRecycleIdx];
-        const oldStageBlocks = getFloorBlocksForStage(poolItem.stageIdx);
-        const oldIdx = oldStageBlocks.indexOf(poolItem);
-        if (oldIdx !== -1) oldStageBlocks.splice(oldIdx, 1);
-      }
-    }
-    if (!poolItem) break;
-
-    poolItem.mesh.material = sharedMats.blockNeutral;
-    poolItem.mesh.position.set(dropX, floorY, dropZ);
-    poolItem.mesh.rotation.set(0, Math.random() * Math.PI, 0);
-    poolItem.mesh.visible = true;
-
-    poolItem.active = true;
-    poolItem.team = TEAMS.NEUTRAL;
-    poolItem.pos = poolItem.mesh.position;
-    poolItem.stageIdx = char.currentStage;
-    poolItem.attracting = false;
-
-    stageBlocks.push(poolItem);
-  }
 }
 
 export function checkGateCollisions(scene, char) {
@@ -287,157 +237,6 @@ export function checkObstacleMobCollisions(scene, char) {
         break;
       }
     }
-  }
-}
-
-export function fireHomingCrystal(char) {
-  if (soundRef) soundRef.playAttackShoot();
-
-  let bestForwardTarget = null, minForwardDist = 999999;
-  let bestRearTarget = null, minRearDist = 999999;
-
-  characters.forEach(c => {
-    if (c === char) return;
-    const dz = char.pos.z - c.pos.z;
-    const totalDistSq = (char.pos.x - c.pos.x) ** 2 + (char.pos.z - c.pos.z) ** 2;
-
-    if (dz > 0.5) {
-      if (totalDistSq < minForwardDist) {
-        minForwardDist = totalDistSq;
-        bestForwardTarget = c;
-      }
-    } else if (dz < -0.5) {
-      if (totalDistSq < minRearDist) {
-        minRearDist = totalDistSq;
-        bestRearTarget = c;
-      }
-    }
-  });
-
-  const selectedTarget = bestForwardTarget || bestRearTarget;
-  let isRearShot = false;
-
-  const targetPosVec = _tempVec3A;
-  if (selectedTarget) {
-    targetPosVec.copy(selectedTarget.pos);
-    isRearShot = (char.pos.z < selectedTarget.pos.z);
-  } else {
-    targetPosVec.set(char.pos.x, char.pos.y, char.pos.z - 30);
-  }
-
-  triggerLandingShockwave(char.pos.x, char.pos.y + 0.1, char.pos.z, 2.8, 0xf43f5e);
-
-  let proj = projectilePool.find(p => !p.active);
-  if (!proj) {
-    proj = projectilePool[0];
-    let maxProg = proj.progress;
-    for (let i = 1; i < projectilePool.length; i++) {
-      if (projectilePool[i].progress > maxProg) {
-        maxProg = projectilePool[i].progress;
-        proj = projectilePool[i];
-      }
-    }
-  }
-
-  proj.active = true;
-  proj.shooter = char;
-  proj.target = selectedTarget;
-  proj.isRear = isRearShot;
-  proj.progress = 0;
-  proj.duration = 1.35;
-
-  proj.startPos.copy(char.pos);
-  proj.startPos.y += 1.3;
-  proj.targetPos.copy(targetPosVec);
-  if (selectedTarget) proj.targetPos.y += 1.0;
-
-  proj.group.position.copy(proj.startPos);
-  proj.group.visible = true;
-
-  if (selectedTarget && proj.reticle) {
-    proj.reticle.position.set(selectedTarget.pos.x, selectedTarget.pos.y + 0.08, selectedTarget.pos.z);
-    proj.reticle.visible = true;
-  }
-
-  for (let h = 0; h < proj.history.length; h++) {
-    proj.history[h].copy(proj.startPos);
-  }
-
-  for (let j = 0; j < proj.trailSpheres.length; j++) {
-    const item = proj.trailSpheres[j];
-    item.mesh.position.copy(proj.startPos);
-    item.mesh.visible = true;
-    const lifeFade = 1.0 - (j / proj.trailSpheres.length);
-    item.material.opacity = lifeFade * 0.95;
-  }
-
-  if (char.isPlayer) {
-    setAttackCamTimer(1.4);
-  }
-}
-
-export function fireThunderStrike(scene, userChar) {
-  if (soundRef && soundRef.playAttackShoot) soundRef.playAttackShoot();
-
-  let target = null;
-  let minZ = 999999;
-  characters.forEach(c => {
-    if (c === userChar) return;
-    if (c.pos.z < minZ) {
-      minZ = c.pos.z;
-      target = c;
-    }
-  });
-
-  if (!target) return;
-
-  let tp = thunderProjectilePool.find(p => !p.active);
-  if (!tp) {
-    tp = thunderProjectilePool[0];
-    let maxProg = tp.progress;
-    for (let i = 1; i < thunderProjectilePool.length; i++) {
-      if (thunderProjectilePool[i].progress > maxProg) {
-        maxProg = thunderProjectilePool[i].progress;
-        tp = thunderProjectilePool[i];
-      }
-    }
-  }
-
-  tp.active = true;
-  tp.shooter = userChar;
-  tp.target = target;
-  tp.progress = 0;
-  tp.duration = 1.35;
-
-  tp.startPos.copy(userChar.pos);
-  tp.startPos.y += 1.3;
-  tp.targetPos.copy(target.pos);
-  tp.targetPos.y += 1.0;
-
-  tp.group.position.copy(tp.startPos);
-  tp.group.visible = true;
-
-  if (target && tp.reticle) {
-    tp.reticle.position.set(target.pos.x, target.pos.y + 0.08, target.pos.z);
-    tp.reticle.visible = true;
-  }
-
-  for (let h = 0; h < tp.history.length; h++) {
-    tp.history[h].copy(tp.startPos);
-  }
-
-  for (let j = 0; j < tp.trailSpheres.length; j++) {
-    const item = tp.trailSpheres[j];
-    item.mesh.position.copy(tp.startPos);
-    item.mesh.visible = true;
-    const lifeFade = 1.0 - (j / tp.trailSpheres.length);
-    item.material.opacity = lifeFade * 0.95;
-  }
-
-  triggerLandingShockwave(userChar.pos.x, userChar.pos.y + 0.1, userChar.pos.z, 2.2, 0xfacc15);
-
-  if (userChar.isPlayer) {
-    setAttackCamTimer(1.4);
   }
 }
 
@@ -781,7 +580,7 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
                   }
                 }
 
-                // ★【リアルタイム同期フック】自操作キャラが階段を架けた時、他端末へ即時ブロードキャスト！
+                // 自操作キャラが階段を架けた時、他端末へ即時ブロードキャスト
                 if (char.isPlayer && typeof window !== 'undefined' && window.AgentSDK) {
                   try {
                     window.AgentSDK.room.sendMessage({
@@ -835,10 +634,9 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
     }
   }
 
-  // ★ 7. 島内滞在判定（現在ステージ最優先 ＆ 高度差 ±3.5m ガードで下層島誤ワープ完全防止）
+  // 7. 島内滞在判定（現在ステージ最優先 ＆ 高度差 ±3.5m ガードで下層島誤ワープ完全防止）
   let onStage = null;
 
-  // ルール1: まず現在いるステージを最優先で評価
   const curStage = STAGES[char.currentStage];
   if (curStage) {
     const curCenterX = curStage.x || 0.0;
@@ -851,12 +649,11 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
     }
   }
 
-  // ルール2: 現在の島から外れた場合のみ、高度差 ±3.5m 以内の隣接島を探索
   if (onStage === null) {
     for (let i = Math.max(0, char.currentStage - 1); i < STAGES.length; i++) {
       const stage = STAGES[i];
       const heightDiff = Math.abs(char.pos.y - stage.y);
-      if (heightDiff >= 3.5) continue; // 高度が大きく異なる島（下層・上空）は物理的に完全除外
+      if (heightDiff >= 3.5) continue;
 
       const stgCenterX = stage.x || 0.0;
       const dx = nextX - stgCenterX;
@@ -1000,7 +797,6 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
               duration: 0.55
             });
 
-            // ★【ステップ2 改善】プレイヤー または ホスト側のAI のマグネット吸引時も他端末へ即時消去ブロードキャスト！
             const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
             const shouldBroadcastMagnet = char.isPlayer || (isHost && char.isAI);
             if (shouldBroadcastMagnet && typeof window !== 'undefined' && window.AgentSDK) {
@@ -1241,7 +1037,6 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
           stageBlocks.splice(i, 1);
           addBrickToCharacter(char, char.team, 1, soundRef, updateHUDRef);
 
-          // ★【ステップ2 改善】自操作キャラ(isPlayer) または ホスト端末のAI(isAI) が拾った時に PICK_BLOCK を送信！
           const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
           const shouldBroadcastPick = char.isPlayer || (isHost && char.isAI);
           if (shouldBroadcastPick && typeof window !== 'undefined' && window.AgentSDK) {
@@ -1370,62 +1165,4 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
   }
 
   char.meshObj.root.position.copy(char.pos);
-}
-
-export function handleTackles(scene) {
-  for (let i = 0; i < characters.length; i++) {
-    for (let j = i + 1; j < characters.length; j++) {
-      const c1 = characters[i], c2 = characters[j];
-      if (c1.currentStage !== c2.currentStage) continue;
-      if (c1.invulnerableTimer > 0 || c2.invulnerableTimer > 0) continue;
-
-      const stage = STAGES[c1.currentStage];
-      if (!stage) continue;
-
-      const centerX = stage.x || 0.0;
-      const onIsland1 = ((c1.pos.x - centerX) ** 2 + (c1.pos.z - stage.z) ** 2) < (stage.r * stage.r);
-      const onIsland2 = ((c2.pos.x - centerX) ** 2 + (c2.pos.z - stage.z) ** 2) < (stage.r * stage.r);
-      if (!onIsland1 || !onIsland2) continue;
-
-      const tdx = c1.pos.x - c2.pos.x;
-      const tdz = c1.pos.z - c2.pos.z;
-      if ((tdx * tdx + tdz * tdz < 1.69) && Math.abs(c1.pos.y - c2.pos.y) < 1.0) {
-        if (c1.stackCount > c2.stackCount) tackleKnockout(scene, c1, c2);
-        else if (c2.stackCount > c1.stackCount) tackleKnockout(scene, c2, c1);
-      }
-    }
-  }
-}
-
-export function tackleKnockout(scene, winner, loser) {
-  if (loser.stunTimer > 0 || loser.invulnerableTimer > 0) return;
-  loser.stunTimer = 1.4;
-  if (soundRef) soundRef.playTackle();
-
-  const drops = Math.min(6, Math.max(2, Math.floor(loser.stackCount * 0.35)));
-  scatterBricks(scene, loser, drops);
-
-  const kx = loser.pos.x - winner.pos.x, kz = loser.pos.z - winner.pos.z;
-  const mag = Math.hypot(kx, kz) || 1;
-  const pushX = (kx / mag) * 2.0;
-  const pushZ = (kz / mag) * 2.0;
-  const stage = STAGES[loser.currentStage];
-  if (stage) {
-    const centerX = stage.x || 0.0;
-    const nextX = loser.pos.x + pushX;
-    const nextZ = loser.pos.z + pushZ;
-    const distToCenter = Math.hypot(nextX - centerX, nextZ - stage.z);
-    if (distToCenter > stage.r) {
-      const normX = (nextX - centerX) / distToCenter;
-      const normZ = (nextZ - stage.z) / distToCenter;
-      loser.pos.x = centerX + normX * (stage.r - 0.5);
-      loser.pos.z = stage.z + normZ * (stage.r - 0.5);
-    } else {
-      loser.pos.x = nextX;
-      loser.pos.z = nextZ;
-    }
-  } else {
-    loser.pos.x += pushX;
-    loser.pos.z += pushZ;
-  }
 }

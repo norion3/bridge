@@ -1,16 +1,16 @@
-// コース伸長・浮島・橋・スライド・ジップライン・エレベーター・スカイダイブ・ドロップタワー施設・二股分岐＆合流・目鼻なし愛嬌お邪魔キャラ（分岐ゲート×2撤廃・DDA連動バランシング版）
-// ★ ステップ1：ホストによる新ブロック補充同期（SPAWN_BLOCK送信＆安全な空きスロット配置ハンドラ）組み込み版
-// ★ ステージ消失バグ解消版：buildWorld() 実行時の stageMeshes に対する無差別 disposeHierarchy を撤廃し、共有ジオメトリ・マテリアルを保護
+// world.js: コース伸長・浮島・橋・スライド・ジップライン・エレベーター・スカイダイブ・ドロップタワー施設・二股分岐＆合流・目鼻なし愛嬌お邪魔キャラ
+// ★ Step 3 リファクタリング完了版:
+//   - 床ブロック管理・スポーン・補充・同期を blocks.js へ完全分離
+//   - world.js が純粋なコース幾何構造・ギミック・島・お邪魔キャラ配置ビルダーに純化
+//   - 既存呼び出し元（main.js, systems.js, network.js）との完全な後方互換性を維持
+
 import {
-  BLOCK_TYPES,
   TRAMPOLINE_TIERS,
   LANES,
   PLANK_LENGTH,
-  STAGE_TYPES,
   ELEVATOR_CONFIG,
   SKYDIVE_CONFIG,
-  TRAPDOOR_CONFIG,
-  ITEM_COLORS
+  TRAPDOOR_CONFIG
 } from './constants.js';
 import {
   sharedMats,
@@ -23,12 +23,9 @@ import {
   itemThunderGeo,
   itemBeaconRingGeo,
   COLOR_NEUTRAL_PLANK,
-  COLOR_BLUE_PLANK,
-  COLOR_RED_PLANK,
-  COLOR_YELLOW_PLANK,
   disposeHierarchy
 } from './materials.js';
-import { resetParticlePools, floorBlockPool } from './particles.js';
+import { resetParticlePools } from './particles.js';
 import { createZiplineTrolleyMesh, characters, player } from './character.js';
 import {
   createModifierGate,
@@ -43,16 +40,29 @@ import {
   createIslandMesh,
   createObstacleMobMesh
 } from './structures.js';
+import {
+  floorBlocksByStage,
+  getFloorBlocksForStage,
+  applyRemoteBlockSpawned,
+  spawnSingleBlock,
+  manageBlockSpawns
+} from './blocks.js';
 
-export { createModifierGate };
+// 後方互換再エクスポート
+export {
+  createModifierGate,
+  floorBlocksByStage,
+  getFloorBlocksForStage,
+  applyRemoteBlockSpawned,
+  spawnSingleBlock,
+  manageBlockSpawns
+};
 
-// ★ 確定論的疑似乱数生成器（Mulberry32 PRNG）
-// 同一シード値を渡すことで、全クライアントが1文字も通信せずに100%同一のコース・アイテム・ギミックを生成可能！
+// 確定論的疑似乱数生成器（Mulberry32 PRNG）
 export let currentWorldSeed = 12345678;
 let _prngState = 12345678;
 
 export function setWorldSeed(seed = null) {
-  // シードが指定されていればそれを使用し、未指定（GitHubシングルプレイ時など）はMath.random()で新シードを自動生成
   currentWorldSeed = (seed !== null && seed !== undefined) ? (seed >>> 0) : ((Math.random() * 0xFFFFFFFF) >>> 0);
   _prngState = currentWorldSeed;
   return currentWorldSeed;
@@ -79,10 +89,9 @@ export const ziplineBonusBlocks = [];
 export const skydiveBonusBlocks = [];
 export const slideBonusBlocks = [];
 export const activeMagnetBlocks = [];
-export const floorBlocksByStage = new Map();
 export const bridgesByStage = new Map();
 
-// ★ お邪魔キャラ管理配列 ＆ スマート・ディレクター用カウンター
+// お邪魔キャラ管理配列 ＆ スマート・ディレクター用カウンター
 export const obstacleMobs = [];
 let stagesSinceLastObstacle = 0;
 
@@ -138,60 +147,6 @@ function getNextAscentGimmick() {
     }
   }
   return ascentBag.pop();
-}
-
-export function getFloorBlocksForStage(stageIdx) {
-  let bucket = floorBlocksByStage.get(stageIdx);
-  if (!bucket) {
-    bucket = [];
-    floorBlocksByStage.set(stageIdx, bucket);
-  }
-  return bucket;
-}
-
-/**
- * ★【ステップ1 改善版】ホストから新ブロック補充パケットを受信した際の反映ハンドラ
- * poolIdx の強制上書きをやめ、空いている安全なスロットを探して配置（既存ブロックのワープ上書き消滅を完全根絶）
- */
-export function applyRemoteBlockSpawned(stageIdx, poolIdx, x, y, z, teamId) {
-  const stageInfo = STAGES[stageIdx];
-  if (!stageInfo) return;
-
-  // 指定されたスロットが空いていれば優先使用し、使用中なら空いているスロットを安全に探索
-  let poolItem = null;
-  if (poolIdx >= 0 && poolIdx < floorBlockPool.length && !floorBlockPool[poolIdx].active) {
-    poolItem = floorBlockPool[poolIdx];
-  } else {
-    poolItem = floorBlockPool.find(b => !b.active);
-  }
-  if (!poolItem) return;
-
-  const team = BLOCK_TYPES.find(t => t.id === teamId) || BLOCK_TYPES[0];
-  let mat;
-  if (teamId === 'blue') mat = sharedMats.blockBlue;
-  else if (teamId === 'red') mat = sharedMats.blockRed;
-  else if (teamId === 'yellow') mat = sharedMats.blockYellow;
-  else mat = sharedMats.blockNeutral;
-
-  poolItem.mesh.material = mat;
-  poolItem.mesh.position.set(x, y !== undefined ? y : (stageInfo.y + 0.25), z);
-  poolItem.mesh.rotation.set(0, 0, 0);
-  poolItem.mesh.visible = true;
-
-  poolItem.active = true;
-  poolItem.team = team;
-  poolItem.pos = poolItem.mesh.position;
-  poolItem.stageIdx = stageIdx;
-  poolItem.attracting = false;
-
-  const stageBlocks = getFloorBlocksForStage(stageIdx);
-  if (!stageBlocks.includes(poolItem)) {
-    stageBlocks.push(poolItem);
-  }
-}
-
-if (typeof window !== 'undefined') {
-  window.applyRemoteBlockSpawned = applyRemoteBlockSpawned;
 }
 
 export function spawnItem(scene, stageIdx, type = 'speed') {
@@ -334,12 +289,10 @@ export function spawnGatesOnIsland(scene, stageIdx, islandZ, islandY, islandX = 
   createModifierGate(scene, stageIdx, islandX + 3.2, gateZ, islandY, p.right.op, p.right.val, p.right.label);
 }
 
-// ★ 分岐中継島専用：確定「×2」を完全撤廃し、動的難易度調整（DDA）と連動した適正ゲート選定
 function getForkThemeGates(themeRole) {
   const playerCount = player ? player.stackCount : 0;
 
   if (themeRole === 'shortcut') {
-    // スプリント型（Rush & Dive）：スピードとリスクの引き換え
     if (playerCount >= 51) {
       return [
         { op: 'add', val: 4, label: '+4' },
@@ -357,7 +310,6 @@ function getForkThemeGates(themeRole) {
       ];
     }
   } else if (themeRole === 'rich') {
-    // 資材ブースト型（Rich & Boost）：確定「×2」を廃止し、安心できる定数加算（+8, +10）へ適正化
     if (playerCount >= 51) {
       return [
         { op: 'add', val: 6, label: '+6' },
@@ -375,7 +327,6 @@ function getForkThemeGates(themeRole) {
       ];
     }
   } else {
-    // テクニカル型（Technical & Gimmick）：アイテムと小気味よい選択
     if (playerCount >= 51) {
       return [
         { op: 'add', val: 4, label: '+4' },
@@ -395,25 +346,20 @@ function getForkThemeGates(themeRole) {
   }
 }
 
-// ★ スマート・ディレクターによる目鼻なしお邪魔キャラ出現制御（PRNG同期）
 export function spawnObstacleMobOnStage(scene, stageIdx, islandZ, islandY, islandX = 0.0) {
-  // 1. ブラックリスト除外判定
-  if (stageIdx <= 3) return; // 序盤チュートリアルは完全平穏
+  if (stageIdx <= 3) return;
   const stageInfo = STAGES[stageIdx];
-  if (!stageInfo || stageInfo.r < 9.0 || stageInfo.isFork || stageInfo.isMerge) return; // 狭い島・分岐・合流は禁止
+  if (!stageInfo || stageInfo.r < 9.0 || stageInfo.isFork || stageInfo.isMerge) return;
 
-  // 2. 最低4ステージの完全平穏保証（クールダウン）
   if (stagesSinceLastObstacle < 4) {
     stagesSinceLastObstacle++;
     return;
   }
 
-  // 3. 5〜6ステージ経過後、35%の確率で出現（6ステージ以上なら確定）
   const spawnChance = (stagesSinceLastObstacle >= 6) ? 1.0 : 0.35;
   if (seededRandom() < spawnChance) {
-    stagesSinceLastObstacle = 0; // カウンターリセット
+    stagesSinceLastObstacle = 0;
 
-    // ゲートの手前（または島の中央付近）を左右に往復する安全なパトロール
     const hasGates = (stageIdx % 2 === 1);
     const spawnZ = hasGates ? (islandZ + 1.2) : islandZ;
     const mobObj = createObstacleMobMesh(islandX, islandY, spawnZ);
@@ -440,7 +386,6 @@ export function spawnObstacleMobOnStage(scene, stageIdx, islandZ, islandY, islan
   }
 }
 
-// ★ お邪魔キャラのパトロール移動・ポヨンポヨン弾み歩行・ピコピコアンテナ点滅・吹き飛ばされ物理更新
 export function updateObstacleMobs(dt, scene) {
   const timeSec = performance.now() * 0.001;
 
@@ -449,8 +394,7 @@ export function updateObstacleMobs(dt, scene) {
     if (!mob.active) continue;
 
     if (mob.blownAway) {
-      // スピードブーストで突進された際の豪快な吹き飛び物理
-      mob.blowVelocity.y -= 38.0 * dt; // 重力
+      mob.blowVelocity.y -= 38.0 * dt;
       mob.group.position.addScaledVector(mob.blowVelocity, dt);
       mob.group.rotation.x += dt * 14.0;
       mob.group.rotation.y += dt * 18.0;
@@ -462,24 +406,20 @@ export function updateObstacleMobs(dt, scene) {
         obstacleMobs.splice(i, 1);
       }
     } else {
-      // のんびり左右パトロール（2.8m/s）
       mob.currentX += mob.direction * mob.speed * dt;
       if (Math.abs(mob.currentX - mob.centerX) >= mob.rangeX) {
         mob.direction *= -1;
         mob.currentX = mob.centerX + Math.sign(mob.currentX - mob.centerX) * mob.rangeX;
       }
 
-      // ★ オモチャのようにポヨンポヨン弾む愛らしい歩行モーション（ゴムまりのようなバウンス）
       const bounceCycle = Math.abs(Math.sin(timeSec * 7.5 + mob.stageIdx)) * 0.14;
       mob.group.position.set(mob.currentX, mob.baseY + bounceCycle, mob.baseZ);
       mob.group.rotation.y = (mob.direction > 0) ? (Math.PI / 2) : (-Math.PI / 2);
 
-      // アンテナ先端ランプの愛らしいピコピコ明滅（1秒間に約3回点滅）
       if (mob.bulb) {
         mob.bulb.visible = (Math.floor(timeSec * 6.0) % 2 === 0);
       }
 
-      // 足元デンジャーリングの微細なパルス
       if (mob.dangerRing) {
         const ringPulse = 1.0 + Math.sin(timeSec * 4.5) * 0.05;
         mob.dangerRing.scale.set(ringPulse, ringPulse, ringPulse);
@@ -488,7 +428,6 @@ export function updateObstacleMobs(dt, scene) {
   }
 }
 
-// 架橋生成（通常ステージは厳格に3本 [0, 1, 2] を配置、分岐ステージのみ singleLaneOnly = true で中央の1本のみ）
 export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, nextIslandZ, prevR, nextR, startY, endY, type, islandCenterX = 0.0, singleLaneOnly = false) {
   if (type === 'skydive') {
     const startZ = prevIslandZ - prevR + 1.2;
@@ -848,7 +787,6 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     const laneIdx = laneIndices[lIdx];
 
     const actualBridgeX = singleLaneOnly ? islandCenterX : (islandCenterX + LANES[laneIdx]);
-    const laneX = singleLaneOnly ? 0.0 : LANES[laneIdx];
 
     const fromStageObj = STAGES[stageIdx];
     const fromStageCenterX = fromStageObj ? (fromStageObj.x || 0.0) : 0.0;
@@ -1029,7 +967,6 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
   }
 }
 
-// 高低差立体レイアウト ＆ 各ルート橋1本化 ＆ 隙間ゼロ完全接合コース生成（PRNG同期）
 export function extendCourseForkPatternB(scene) {
   const forkIdx = STAGES.length;
   const prev = STAGES[forkIdx - 1];
@@ -1056,7 +993,6 @@ export function extendCourseForkPatternB(scene) {
   CONNECTIONS.push({ from: forkIdx - 1, to: forkIdx, type: 'bridge' });
   createBridgeLinks(scene, forkIdx - 1, forkIdx, prev.z, forkZ, prev.r, forkR, prev.y, forkY, 'bridge', 0.0, false);
 
-  // ★ 確定「×2」の安売りを完全撤廃し、テーマの性格を明確化
   const themeA = {
     id: 'theme_a',
     name: 'Rush & Dive',
@@ -1122,7 +1058,6 @@ export function extendCourseForkPatternB(scene) {
   CONNECTIONS.push({ from: forkIdx, to: leftStageIdx, type: leftTheme.connType, branch: 'left' });
   createBridgeLinks(scene, forkIdx, leftStageIdx, forkZ, leftMidZ, forkR, leftMidR, forkY, leftMidY, leftTheme.connType, leftMidX, true);
 
-  // ★ 左中継島：DDA連動・適正定数加算ゲート生成（確定×2排除）
   const leftGates = getForkThemeGates(leftTheme.role);
   if (seededRandom() < 0.5) {
     const tmp = leftGates[0]; leftGates[0] = leftGates[1]; leftGates[1] = tmp;
@@ -1158,7 +1093,6 @@ export function extendCourseForkPatternB(scene) {
   CONNECTIONS.push({ from: forkIdx, to: rightStageIdx, type: rightTheme.connType, branch: 'right' });
   createBridgeLinks(scene, forkIdx, rightStageIdx, forkZ, rightMidZ, forkR, rightMidR, forkY, rightMidY, rightTheme.connType, rightMidX, true);
 
-  // ★ 右中継島：DDA連動・適正定数加算ゲート生成（確定×2排除）
   const rightGates = getForkThemeGates(rightTheme.role);
   if (seededRandom() < 0.5) {
     const tmp = rightGates[0]; rightGates[0] = rightGates[1]; rightGates[1] = tmp;
@@ -1320,11 +1254,9 @@ export function extendCourse(scene) {
       spawnItem(scene, idx, typeToSpawn);
     }
 
-    // ★ スマート・ディレクターによる目鼻なし愛嬌お邪魔キャラの配置判定（たまに出るアクセント）
     spawnObstacleMobOnStage(scene, idx, nextZ, nextY, currentIslandX);
   }
 
-  // 1. コース横の既存の雲
   if (idx % 2 === 0) {
     const cloudSide = (idx % 4 === 0) ? 1 : -1;
     const cloudMesh = createCloudMesh();
@@ -1336,7 +1268,6 @@ export function extendCourse(scene) {
     cloudObjects.push({ mesh: cloudMesh, stageIdx: idx, baseY: cloudY, offset: seededRandom() * 10 });
   }
 
-  // 2. 高度感の物差し：コースと海面の中間高度（Y = +6m 〜 +11m）の既存雲
   if (Math.max(prev.y, nextY) >= 16.0 && seededRandom() < 0.65) {
     const midCloudMesh = createCloudMesh();
     const midCloudSide = seededRandom() < 0.5 ? 1 : -1;
@@ -1348,7 +1279,6 @@ export function extendCourse(scene) {
     cloudObjects.push({ mesh: midCloudMesh, stageIdx: idx, baseY: midCloudY, offset: seededRandom() * 10 });
   }
 
-  // 3. 自然な海上群島（近景・中景・遠景）
   const distanceZones = [
     { minX: 16, maxX: 23, weight: 0.60, minScale: 0.80, maxScale: 1.15 },
     { minX: 28, maxX: 42, weight: 0.50, minScale: 0.65, maxScale: 0.95 },
@@ -1373,7 +1303,6 @@ export function extendCourse(scene) {
 }
 
 export function buildWorld(scene, seed = null) {
-  // ★ シード初期化（指定があればそのシードで完全同一コース生成、未指定ならランダム新シード生成）
   setWorldSeed(seed);
 
   descentBag.length = 0;
@@ -1381,7 +1310,7 @@ export function buildWorld(scene, seed = null) {
   itemBag.length = 0;
   lastGimmickCategory = 'descent';
   lastMergeStageIdx = -1;
-  stagesSinceLastObstacle = 0; // スマート・ディレクター用カウンター初期化
+  stagesSinceLastObstacle = 0;
 
   floorBlocksByStage.forEach(bucket => {
     bucket.forEach(b => {
@@ -1394,8 +1323,6 @@ export function buildWorld(scene, seed = null) {
   floorBlocksByStage.clear();
   bridgesByStage.clear();
 
-  // ★【ステージ消失バグ根絶】共有マテリアルやジオメトリを破壊する disposeHierarchy() を撤廃し、
-  // シーンからの切り離しのみを行うことで、2回目以降の島生成時でも100%正常に白い浮島を描画する！
   stageMeshes.forEach(m => {
     scene.remove(m.meshGroup);
   });
@@ -1452,7 +1379,6 @@ export function buildWorld(scene, seed = null) {
     }
   });
 
-  // お邪魔キャラの完全破棄・配列リセット
   obstacleMobs.forEach(mob => {
     if (mob.group) {
       disposeHierarchy(mob.group);
@@ -1520,7 +1446,6 @@ export function buildWorld(scene, seed = null) {
   for (let i = 0; i < 6; i++) extendCourse(scene);
 }
 
-// クリーンアップ安全化：古いステージのお邪魔キャラ・メッシュを安全に消去
 export function cleanupOldData(scene) {
   if (!player) return;
 
@@ -1532,7 +1457,6 @@ export function cleanupOldData(scene) {
   }
   const safeStage = Math.max(0, minActiveStage - 2);
 
-  // 古いお邪魔キャラの破棄
   for (let i = obstacleMobs.length - 1; i >= 0; i--) {
     if (obstacleMobs[i].stageIdx < safeStage) {
       if (obstacleMobs[i].group) {
@@ -1556,7 +1480,6 @@ export function cleanupOldData(scene) {
     }
   }
 
-  // ★【ステージ消失バグ根絶】古いステージメッシュも共有リソース破壊を避けて scene.remove のみ実行
   for (let i = stageMeshes.length - 1; i >= 0; i--) {
     if (stageMeshes[i].stageIdx < safeStage) {
       scene.remove(stageMeshes[i].meshGroup);
@@ -1667,161 +1590,6 @@ export function cleanupOldData(scene) {
         scene.remove(slideBonusBlocks[i].mesh);
       }
       slideBonusBlocks.splice(i, 1);
-    }
-  }
-}
-
-export function spawnSingleBlock(scene, stageIdx, targetTeam = null) {
-  const stageInfo = STAGES[stageIdx];
-  if (!stageInfo) return;
-
-  const minClearanceSq = 1.35 * 1.35;
-  let validPos = null;
-  let attempts = 0;
-  const stageBlocks = getFloorBlocksForStage(stageIdx);
-  const centerX = stageInfo.x || 0.0;
-
-  const stageBridges = bridgesByStage.get(stageIdx) || [];
-  const skydiveB = stageBridges.find(b => b.isSkydive);
-  const trapdoorB = stageBridges.find(b => b.isTrapdoor);
-  const eleB = stageBridges.find(b => b.isElevator);
-
-  while (attempts < 25) {
-    const r = Math.sqrt(seededRandom()) * (stageInfo.r - 2.2);
-    const theta = seededRandom() * Math.PI * 2;
-    const candX = centerX + Math.cos(theta) * r;
-    const candZ = stageInfo.z + Math.sin(theta) * r;
-
-    if (skydiveB) {
-      const dSkySq = (candX - (skydiveB.launchPoint ? skydiveB.launchPoint.x : centerX)) ** 2 + (candZ - skydiveB.startZ) ** 2;
-      if (dSkySq < (SKYDIVE_CONFIG.CATAPULT.exclusionRadius * SKYDIVE_CONFIG.CATAPULT.exclusionRadius)) {
-        attempts++;
-        continue;
-      }
-    }
-
-    if (trapdoorB) {
-      const dHatchSq = (candX - centerX) ** 2 + (candZ - trapdoorB.startZ) ** 2;
-      if (dHatchSq < (TRAPDOOR_CONFIG.HATCH.exclusionRadius * TRAPDOOR_CONFIG.HATCH.exclusionRadius)) {
-        attempts++;
-        continue;
-      }
-    }
-
-    if (eleB) {
-      if (candZ < stageInfo.z - stageInfo.r * 0.45 && Math.abs(candX - centerX) < 5.5) {
-        attempts++;
-        continue;
-      }
-    }
-
-    let isOverlapping = false;
-    for (let i = 0; i < stageBlocks.length; i++) {
-      const b = stageBlocks[i];
-      if (b.active) {
-        const dx = b.pos.x - candX;
-        const dz = b.pos.z - candZ;
-        if (dx * dx + dz * dz < minClearanceSq) {
-          isOverlapping = true;
-          break;
-        }
-      }
-    }
-
-    if (!isOverlapping) {
-      validPos = { x: candX, z: candZ };
-      break;
-    }
-    attempts++;
-  }
-
-  if (!validPos) return;
-
-  let poolItem = floorBlockPool.find(b => !b.active);
-  if (!poolItem) return;
-
-  const team = targetTeam || BLOCK_TYPES[Math.floor(seededRandom() * BLOCK_TYPES.length)];
-  let mat;
-  if (team.id === 'blue') mat = sharedMats.blockBlue;
-  else if (team.id === 'red') mat = sharedMats.blockRed;
-  else if (team.id === 'yellow') mat = sharedMats.blockYellow;
-  else mat = sharedMats.blockNeutral;
-
-  poolItem.mesh.material = mat;
-  poolItem.mesh.position.set(validPos.x, stageInfo.y + 0.25, validPos.z);
-  poolItem.mesh.rotation.set(0, seededRandom() * Math.PI, 0);
-  poolItem.mesh.visible = true;
-
-  poolItem.active = true;
-  poolItem.team = team;
-  poolItem.pos = poolItem.mesh.position;
-  poolItem.stageIdx = stageIdx;
-  poolItem.attracting = false;
-
-  stageBlocks.push(poolItem);
-
-  // ★【ステップ1 新設】マルチプレイ時、ホストが補充したブロック情報を他端末へ即時ブロードキャスト！
-  const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
-  const isMulti = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive);
-  if (isMulti && isHost && typeof window !== 'undefined' && window.AgentSDK) {
-    const poolIdx = floorBlockPool.indexOf(poolItem);
-    try {
-      window.AgentSDK.room.sendMessage({
-        message: JSON.stringify({
-          event: 'SPAWN_BLOCK',
-          poolIdx: poolIdx,
-          stageIdx: stageIdx,
-          x: Number(validPos.x.toFixed(2)),
-          y: Number((stageInfo.y + 0.25).toFixed(2)),
-          z: Number(validPos.z.toFixed(2)),
-          teamId: team.id
-        })
-      });
-    } catch (err) {
-      console.warn('[world.js] Failed to broadcast SPAWN_BLOCK:', err);
-    }
-  }
-}
-
-export function manageBlockSpawns(scene, isGameOver = false) {
-  if (isGameOver) return;
-
-  for (let cIdx = 0; cIdx < characters.length; cIdx++) {
-    const s = characters[cIdx].currentStage;
-
-    let alreadyChecked = false;
-    for (let prevIdx = 0; prevIdx < cIdx; prevIdx++) {
-      if (characters[prevIdx].currentStage === s) {
-        alreadyChecked = true;
-        break;
-      }
-    }
-    if (alreadyChecked) continue;
-
-    const stageBlocks = getFloorBlocksForStage(s);
-
-    for (let tIdx = 0; tIdx < BLOCK_TYPES.length; tIdx++) {
-      const team = BLOCK_TYPES[tIdx];
-      const targetCount = (team.id === 'blue') ? 13 : 7;
-
-      let currentCount = 0;
-      for (let bIdx = 0; bIdx < stageBlocks.length; bIdx++) {
-        const b = stageBlocks[bIdx];
-        if (b.active && b.team.id === team.id) {
-          currentCount++;
-        }
-      }
-
-      for (let mIdx = 0; mIdx < activeMagnetBlocks.length; mIdx++) {
-        const mb = activeMagnetBlocks[mIdx];
-        if (mb.targetChar && mb.targetChar.currentStage === s && mb.team && mb.team.id === team.id) {
-          currentCount++;
-        }
-      }
-
-      if (currentCount < targetCount) {
-        spawnSingleBlock(scene, s, team);
-      }
     }
   }
 }
