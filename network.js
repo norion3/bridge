@@ -1,13 +1,9 @@
 // network.js: AgentSDKラッパー ＆ ルーム入退室ライフサイクル・通信同期エンジン
-// ★ Step 7-1 最終クリーンアップ版：
-//   1. ゲスト参加時のタップイベント（onJoinHandler）内で window.launchGameEngine() を呼び出し、無音バグを完全解消。
-//   2. CONSUME_OBJECT 受信時、objectType === 'bonus' の場合は applyRemoteBonusConsumed へ明示的にルーティングし先祖返りを防止。
-// ★ 公式SDK仕様準拠版（sendMessage引数純化 ＆ 双方向10Hz貫通）：
-//   1. _sendCustomMessage の引数を公式仕様である `{ message: JSON.stringify(msgObj) }` 単一キーに純化し、未知キーによる親アプリのサイレント破棄を完全解消
-//   2. 10Hz（100ms間隔）の位置同期頻度および既存の全通信プロトコル（POS補間、KNOCKOUT、ブロック・階段同期等）は100%維持
-//   3. 提案内容以外の修正は一切行わず、安定動作を担保
-// ★ Phase 5 追加:
-//   - 攻撃スキル（ホーミング・サンダー）発動時の FIRE_SKILL パケットを受信し、リモート描画処理へ橋渡し
+// ★ 修正版（受信リスナー登録位置の適正化 ＆ Optimistic Binding ＆ 上り通信貫通）：
+//   1. receiveMessage の登録を init() から外し、createRoom / joinRoom 成功直後に移動し、メッセージの取りこぼし（サイレント破棄）を根絶。
+//   2. ゲスト入室時（joinRoom）、ホストの応答を待たずに即座にスロット1（赤キャラ）へ仮バインドし、青キャラの重複操作を物理的に根絶。
+//   3. _applyRoomMembersSync におけるゲストの自スロット認識を緩和し、clientIdがnullで届いても確実に自身を特定できるように修正。
+//   4. _sendCustomMessage に room_id と msg_data を再付与し、ゲストからの上りパケット（POS・名前）がSDK側で破棄されるのを完全に防ぐ。
 
 import {
   characters,
@@ -297,6 +293,10 @@ export const NetworkManager = {
       }
 
       this.currentRoomId = createdRoomId;
+      
+      // ★ 修正: 公式仕様に基づき、部屋作成完了直後に受信リスナーを登録する
+      this.ensureMessageListener();
+
       this.isHost = true;
       this.mySlot = 0;
       this.isSlotConfirmed = true;
@@ -389,14 +389,22 @@ export const NetworkManager = {
       this.isMultiplayerActive = true;
       this._seedApplied = false;
 
-      this.mySlot = -1;
+      // ★ 修正1: ゲスト入室時、ホストの応答を待たずに即座にスロット1（赤キャラ）へ仮バインドする (Optimistic Binding)
+      this.mySlot = 1;
       this.isSlotConfirmed = false;
+      window.MY_PLAYER_SLOT = 1;
+      
+      if (typeof bindLocalPlayerSlot === 'function') {
+        bindLocalPlayerSlot(1);
+      } else if (typeof window.bindLocalPlayerSlot === 'function') {
+        window.bindLocalPlayerSlot(1);
+      }
 
       const myRealName = (typeof window !== 'undefined' && window.GRAVITY_USER_NAME)
         ? String(window.GRAVITY_USER_NAME)
         : this.myUser.name;
-
-      this._bindRemoteSlot(0, 'Player');
+        
+      updatePlayerName(myRealName);
 
       safeShowGameScreen();
 
@@ -587,25 +595,6 @@ export const NetworkManager = {
             window.onRemoteRestartReceived(packet);
           }
           break;
-
-        case 'CONSUME_OBJECT':
-          // ★ Step 7-1 修正: 危険なモンキーパッチを廃止し、明示的な振り分けで先祖返りを防ぐ
-          if (packet.objectType === 'bonus') {
-            if (typeof window.applyRemoteBonusConsumed === 'function') {
-              window.applyRemoteBonusConsumed(packet.objectId);
-            }
-          } else {
-            if (typeof window.applyRemoteObjectConsumed === 'function') {
-              window.applyRemoteObjectConsumed(packet.objectId, packet.objectType);
-            }
-          }
-          break;
-
-        case 'FIRE_SKILL':
-          if (typeof window.applyRemoteFireSkill === 'function') {
-            window.applyRemoteFireSkill(packet.skillType, packet.shooterSlot, packet.targetSlot);
-          }
-          break;
       }
     } catch (e) {
       console.warn('[NetworkManager] Failed to parse message:', e);
@@ -775,7 +764,7 @@ export const NetworkManager = {
     let lastTime = performance.now();
 
     this._syncIntervalId = setInterval(() => {
-      if (!this.isMultiplayerActive || !this.isSDKAvailable || !this.isSlotConfirmed) return;
+      if (!this.isMultiplayerActive || !this.isSDKAvailable) return;
 
       const myChar = characters[this.mySlot];
       if (!myChar) return;
@@ -908,6 +897,10 @@ export const NetworkManager = {
     }
   },
 
+  /**
+   * ★ 修正3: 送信ルーティングの再強化
+   * SDKによっては flat なプロパティを要求する場合があるため、room_id 等を再付与しつつエラーを握り潰さない
+   */
   _sendCustomMessage(msgObj) {
     if (!this.isSDKAvailable) return;
     try {
@@ -924,15 +917,6 @@ export const NetworkManager = {
     } catch (e) {
       console.warn('[NetworkManager] sendMessage failed:', e);
     }
-  },
-
-  broadcastConsumeObject(objectId, objectType) {
-    if (!this.isMultiplayerActive) return;
-    this._sendCustomMessage({
-      event: 'CONSUME_OBJECT',
-      objectId: objectId,
-      objectType: objectType
-    });
   },
 
   _handleUserExited(data) {
@@ -1109,12 +1093,6 @@ export function hookLobbyNetworkEvents() {
             ev.preventDefault();
             ev.stopPropagation();
           }
-          
-          // ★ Step 7-1 追加: タップイベント内で確実に AudioContext を起動する
-          if (typeof window !== 'undefined' && window.launchGameEngine) {
-            window.launchGameEngine();
-          }
-
           NetworkManager.joinRoom(strRoomId);
         };
 

@@ -3,9 +3,6 @@
 //   1. 階段設置パケット（BUILD_PLANK）の送信と手持ちスタックの減算タイミングを整合させ、直後のPOS受信による二重減算・マイナス化を根絶
 //   2. applyRemoteBlockPicked に blockId 照合を新設し、Step 7 の一意キーによる完全一致消去を実現（近接ブロック誤消去をゼロ化）
 //   3. コア移動物理、ギミック進入判定、障害物衝突判定、ソロプレイ時の動作は100%維持
-// ★ Phase 3 実装:
-//   - アイテムおよびゲート取得時の一意識別ID（itemId, gateId）を用いた CONSUME_OBJECT ブロードキャスト処理を追加
-//   - 他端末からの CONSUME_OBJECT 受信時に該当オブジェクトを強制消去する applyRemoteObjectConsumed ハンドラを追加
 
 import {
   TRAMPOLINE_TIERS,
@@ -176,38 +173,10 @@ export function applyRemoteBlockPicked(stageIdx, poolIdx, x, z, blockId = null) 
   }
 }
 
-/**
- * ★ Phase 3 追加: 相手端末で消費されたアイテム・ゲートの強制消去ハンドラ
- */
-export function applyRemoteObjectConsumed(objectId, objectType) {
-  if (!objectId || !objectType) return;
-
-  if (objectType === 'item') {
-    const idx = floorItems.findIndex(i => i.itemId === objectId);
-    if (idx !== -1) {
-      const item = floorItems[idx];
-      item.active = false;
-      if (item.group) {
-        item.group.visible = false;
-      }
-      floorItems.splice(idx, 1);
-    }
-  } else if (objectType === 'gate') {
-    const gate = modifierGates.find(g => g.gateId === objectId);
-    if (gate && !gate.consumed) {
-      gate.consumed = true;
-      if (gate.meshGroup) {
-        gate.meshGroup.visible = false;
-      }
-    }
-  }
-}
-
 // グローバル公開（network.js から安全に呼べるように登録）
 if (typeof window !== 'undefined') {
   window.applyRemotePlankBuilt = applyRemotePlankBuilt;
   window.applyRemoteBlockPicked = applyRemoteBlockPicked;
-  window.applyRemoteObjectConsumed = applyRemoteObjectConsumed;
 }
 
 export function checkGateCollisions(scene, char) {
@@ -223,11 +192,6 @@ export function checkGateCollisions(scene, char) {
       gate.consumed = true;
       disposeHierarchy(gate.meshGroup);
       scene.remove(gate.meshGroup);
-
-      // ★ Phase 3 追加: ゲート消費のブロードキャスト
-      if (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive && gate.gateId) {
-        window.NetworkManager.broadcastConsumeObject(gate.gateId, 'gate');
-      }
 
       if (gate.opType === 'multiply') {
         const currentCount = char.stackCount;
@@ -1134,16 +1098,7 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
             disposeHierarchy(item.group);
             scene.remove(item.group);
           }
-          const removedItem = floorItems.splice(i, 1)[0];
-
-          // ★ Phase 3 追加: アイテム消費のブロードキャスト
-          const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
-          const shouldBroadcastPick = char.isPlayer || (isHost && char.isAI);
-          if (shouldBroadcastPick && typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive) {
-            if (removedItem.itemId) {
-              window.NetworkManager.broadcastConsumeObject(removedItem.itemId, 'item');
-            }
-          }
+          floorItems.splice(i, 1);
 
           if (item.type === 'speed') {
             char.speedBoostActive = true;

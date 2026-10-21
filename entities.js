@@ -26,7 +26,6 @@ import {
   projectilePool,
   thunderProjectilePool,
   drainBlockPool,
-  lightningPillarPool,
   triggerLandingShockwave
 } from './particles.js';
 import {
@@ -227,16 +226,12 @@ export function updateSceneEntities(scene, dt, timeSec, player, sound) {
 
       if (tp.reticle) tp.reticle.visible = false;
 
-      // ★ Phase 7-4 改善: GCスパイクを引き起こす動的生成を廃止し、プールから取得
-      let bolt = lightningPillarPool.find(p => !p.active);
-      if (!bolt) bolt = lightningPillarPool[0]; // フォールバック
-      if (bolt) {
-        bolt.active = true;
-        bolt.life = 0;
-        bolt.mesh.position.set(tp.targetPos.x, tp.targetPos.y + 13.0, tp.targetPos.z);
-        bolt.mesh.material.opacity = 0.95;
-        bolt.mesh.visible = true;
-      }
+      const boltMesh = new THREE.Mesh(lightningPillarGeo, sharedMats.lightningBolt);
+      boltMesh.position.set(tp.targetPos.x, tp.targetPos.y + 13.0, tp.targetPos.z);
+      scene.add(boltMesh);
+      setTimeout(() => {
+        try { scene.remove(boltMesh); } catch (e) {}
+      }, 130);
 
       if (tp.target) {
         tp.target.shrinkTimer = 5.5;
@@ -450,19 +445,6 @@ export function updateSceneEntities(scene, dt, timeSec, player, sound) {
     if (sw.life > 0.45) {
       sw.active = false;
       sw.mesh.visible = false;
-    }
-  }
-
-  // 11. 雷の柱エフェクトのフェード消去
-  for (let i = 0; i < lightningPillarPool.length; i++) {
-    const bolt = lightningPillarPool[i];
-    if (!bolt.active) continue;
-    bolt.life += dt;
-    if (bolt.life > bolt.maxLife) {
-      bolt.active = false;
-      bolt.mesh.visible = false;
-    } else {
-      bolt.mesh.material.opacity = 0.95 * (1.0 - (bolt.life / bolt.maxLife));
     }
   }
 }
