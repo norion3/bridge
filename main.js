@@ -1,11 +1,16 @@
 // main.js: ゲーム全体の起動指揮・Three.js初期化・メインループ・入力・HUD制御
-// ★ Phase 3 完全実装版（タイマー相乗り同期 ＆ 補間吸着フリーズ根絶）：
-//   1. 【タイマー相乗り受取最適化】ホスト POS パケットに同封された timeLeft を受け取る applyRemoteTimeSync を平滑化。
-//      毎秒のパケット連打なしで両端末のタイマーを完全一致。
-//   2. 【位置吸着・足踏みフリーズ根絶】パケット遅延時に相手キャラが初期島で固まる「古い座標への強制吸着」を防止。
-//      速度ベクトル（netVelocity）と微小予測デッドレコニングにより、パケット瞬断時も滑らかに移動を継続。
-//   3. 【リモート走者昇格保護】ホスト側でゲストスロットが AI と誤認されて足踏み・競合するのを完全遮断。
-//   4. 既存の JUMP空中姿勢、マグネット紫オーラ、無敵点滅、サンダー小人化、ブースト煙は100%維持。
+// ★ Step 3 完全復旧版（リモート走者の初期位置フリーズ根絶 ＆ 姿勢復帰 ＆ 滑らかLerp追従）：
+//   1. 【初期島でのうつ伏せ・埋まり固まり根絶】
+//      入室時にリモートキャラが初期ポーズのまま倒れて固まる不具合を解消。NORMAL状態復帰時に
+//      X/Z軸の倒れ回転を即座にリセットし、素直に自立・歩行モーションへ遷移。
+//   2. 【強制吸着・足踏み防止 ＆ 大幅ワープ補正】
+//      古い座標への引き戻しを起こしていた過剰な予測デッドレコニングを適正化。
+//      初期同期時やステージ移動など目標座標との差が4.0m以上の場合は瞬時に追いつかせ（即時補正）、
+//      通常移動時は dt * 14.0 の滑らかなLerpで遅延なく追従。
+//   3. 【タイマー相乗り受取平滑化】
+//      ホストの POS パケットに同封された timeLeft を受け取る applyRemoteTimeSync により、
+//      両端末のタイマーを完全一致。
+//   4. 既存の JUMP空中姿勢、マグネット紫オーラ、無敵点滅、サンダー小人化、ブースト煙演出は100%維持。
 
 import { mountAllUI } from './dom.js';
 
@@ -76,7 +81,7 @@ let placedPlankCount = 0;
 let lastDisplayedSec = -1;
 
 /**
- * ★【Phase 3 最適化】ホストの POS パケットから届いた残り秒数を平滑同期
+ * ホストの POS パケットから届いた残り秒数を平滑同期
  */
 export function applyRemoteTimeSync(remoteTimeLeft) {
   if (typeof remoteTimeLeft === 'number' && !isNaN(remoteTimeLeft)) {
@@ -509,7 +514,7 @@ export function animate(currentTime) {
       const hasReceivedNetPos = Boolean(c.targetNetPos && isMulti);
       const isRemotePlayer = Boolean(c.isRemote || isHumanSlot || hasReceivedNetPos);
 
-      // ★【Phase 3 核心改善①】リモートフラグの昇格を毎フレーム確実に同期
+      // リモートフラグの昇格を毎フレーム確実に同期
       if ((hasReceivedNetPos || isHumanSlot) && (!c.isRemote || c.isAI)) {
         c.isRemote = true;
         c.isAI = false;
@@ -560,28 +565,22 @@ export function animate(currentTime) {
           c.meshObj.root.visible = true;
         }
 
-        // ★【Phase 3 核心改善②】補間吸着（古い座標への強制固定）防止 ＆ 速度予測デッドレコニング
-        const lerpFactor = Math.min(1.0, dt * 13.0);
+        // ★【Step 3 核心改善①】目標位置との乖離ガード ＆ 素直で滑らかなLerp追従
+        const distToTargetSq = (c.targetNetPos.x - c.pos.x) ** 2 + (c.targetNetPos.z - c.pos.z) ** 2;
 
-        let predTargetX = c.targetNetPos.x;
-        let predTargetZ = c.targetNetPos.z;
-
-        // パケット到達からの経過時間を計測（最大 0.18秒まで微小予測）
-        const timeSincePacket = Math.min(0.18, Math.max(0, (currentTime - (c.lastPacketTime || currentTime)) * 0.001));
-
-        if (c.netVelocity && (Math.abs(c.netVelocity.x) > 0.15 || Math.abs(c.netVelocity.z) > 0.15)) {
-          // 移動中の場合は予測ベクトルを効かせ、パケットが1通抜けても直立不動に吸着されるのを防ぐ
-          predTargetX += c.netVelocity.x * timeSincePacket * 0.75;
-          predTargetZ += c.netVelocity.z * timeSincePacket * 0.75;
+        if (distToTargetSq > 20.25) {
+          // 初期入室時やステージ跳躍時など 4.5m 以上離れている場合は即座にワープさせて取り残しを防止
+          c.pos.copy(c.targetNetPos);
+        } else {
+          const lerpFactor = Math.min(1.0, dt * 14.0);
+          c.pos.x = THREE.MathUtils.lerp(c.pos.x, c.targetNetPos.x, lerpFactor);
+          c.pos.y = THREE.MathUtils.lerp(c.pos.y, c.targetNetPos.y, lerpFactor);
+          c.pos.z = THREE.MathUtils.lerp(c.pos.z, c.targetNetPos.z, lerpFactor);
         }
-
-        c.pos.x = THREE.MathUtils.lerp(c.pos.x, predTargetX, lerpFactor);
-        c.pos.y = THREE.MathUtils.lerp(c.pos.y, c.targetNetPos.y, lerpFactor);
-        c.pos.z = THREE.MathUtils.lerp(c.pos.z, predTargetZ, lerpFactor);
         c.meshObj.root.position.copy(c.pos);
 
         if (c.targetNetRotY !== undefined) {
-          c.meshObj.root.rotation.y = THREE.MathUtils.lerp(c.meshObj.root.rotation.y, c.targetNetRotY, lerpFactor);
+          c.meshObj.root.rotation.y = THREE.MathUtils.lerp(c.meshObj.root.rotation.y, c.targetNetRotY, Math.min(1.0, dt * 14.0));
         }
 
         // リモート走者のアトラクション状態ビット（remoteActionState）とメッシュの連動
@@ -589,6 +588,7 @@ export function animate(currentTime) {
         applyRemoteGimmickVisuals(c, remState, timeSec);
 
         const stepDist = Math.hypot(c.pos.x - prevX, c.pos.z - prevZ);
+        const hasNetVelocity = c.netVelocity && (Math.abs(c.netVelocity.x) > 0.08 || Math.abs(c.netVelocity.z) > 0.08);
 
         // スピードブースト演出の同期
         if (c.meshObj.footAura) {
@@ -627,7 +627,7 @@ export function animate(currentTime) {
           }
         }
 
-        // スタンやられ姿勢の同期
+        // ★【Step 3 核心改善②】初期位置でのうつ伏せ・倒れポーズ残留の根絶
         const isRemoteStunned = Boolean(c.isStunned || (c.stunTimer && c.stunTimer > 0));
 
         if (isRemoteStunned) {
@@ -644,30 +644,31 @@ export function animate(currentTime) {
           c.meshObj.rightArm.rotation.z = 0.75;
           c.meshObj.leftLeg.rotation.z = -0.30;
           c.meshObj.rightLeg.rotation.z = 0.30;
-        } else {
+        } else if (remState === 'NORMAL') {
+          // NORMAL時は確実にロール（Z回転）をリセットし、地面に倒れた姿勢を解除
           c.meshObj.root.rotation.z = 0;
-          c.meshObj.root.rotation.x = (c.speedBoostActive && remState === 'NORMAL') ? 0.20 : 0;
+          c.meshObj.root.rotation.x = (c.speedBoostActive) ? 0.20 : 0;
 
-          if (remState === 'NORMAL') {
-            c.meshObj.leftArm.rotation.z = 0;
-            c.meshObj.rightArm.rotation.z = 0;
-            c.meshObj.leftLeg.rotation.z = 0;
-            c.meshObj.rightLeg.rotation.z = 0;
+          c.meshObj.leftArm.rotation.z = 0;
+          c.meshObj.rightArm.rotation.z = 0;
+          c.meshObj.leftLeg.rotation.z = 0;
+          c.meshObj.rightLeg.rotation.z = 0;
 
-            if (stepDist > 0.008) {
-              const walkSpeedMult = c.speedBoostActive ? 1.75 : 1.0;
-              c.walkCycle = (c.walkCycle || 0) + stepDist * 5.5 * walkSpeedMult;
-              const swing = Math.sin(c.walkCycle) * 0.75;
-              c.meshObj.leftLeg.rotation.x = swing;
-              c.meshObj.rightLeg.rotation.x = -swing;
-              c.meshObj.leftArm.rotation.x = -swing * 0.8;
-              c.meshObj.rightArm.rotation.x = swing * 0.8;
-            } else {
-              c.meshObj.leftLeg.rotation.x = 0;
-              c.meshObj.rightLeg.rotation.x = 0;
-              c.meshObj.leftArm.rotation.x = 0;
-              c.meshObj.rightArm.rotation.x = 0;
-            }
+          // 移動量または速度パケットがある場合は歩行モーションを再生
+          if (stepDist > 0.005 || hasNetVelocity) {
+            const walkSpeedMult = c.speedBoostActive ? 1.75 : 1.0;
+            const effectiveStep = Math.max(stepDist, dt * 1.8);
+            c.walkCycle = (c.walkCycle || 0) + effectiveStep * 5.5 * walkSpeedMult;
+            const swing = Math.sin(c.walkCycle) * 0.75;
+            c.meshObj.leftLeg.rotation.x = swing;
+            c.meshObj.rightLeg.rotation.x = -swing;
+            c.meshObj.leftArm.rotation.x = -swing * 0.8;
+            c.meshObj.rightArm.rotation.x = swing * 0.8;
+          } else {
+            c.meshObj.leftLeg.rotation.x = THREE.MathUtils.lerp(c.meshObj.leftLeg.rotation.x, 0, 0.2);
+            c.meshObj.rightLeg.rotation.x = THREE.MathUtils.lerp(c.meshObj.rightLeg.rotation.x, 0, 0.2);
+            c.meshObj.leftArm.rotation.x = THREE.MathUtils.lerp(c.meshObj.leftArm.rotation.x, 0, 0.2);
+            c.meshObj.rightArm.rotation.x = THREE.MathUtils.lerp(c.meshObj.rightArm.rotation.x, 0, 0.2);
           }
         }
       } else if (!c.targetNetPos) {

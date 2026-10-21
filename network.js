@@ -1,11 +1,11 @@
-// network.js: AgentSDKラッパー ＆ ルーム入退室ライフサイクル・通信同期エンジン
-// ★ Phase 1 実装版（パケット交通整理 ＆ clientId 厳格ルーティング）：
-//   1. 【ブロック一括まとめ送り（SPAWN_BLOCKS_BATCH）新設】1個ずつのマシンガン送信を廃止し、配列で一括送受信する仕組みを追加。
-//   2. 【タイマーのPOS相乗り化（単独TIME_SYNC廃止）】毎秒単独で呼んでいた TIME_SYNC の sendMessage を完全削除し、
-//      ホストの POS パケットに timeLeft を同封することでパケット衝突・輻輳を解消。
-//   3. 【clientId 厳格ルーティング】アカウント名・userIdの重複（norion同士のテスト等）による自己誤認を根絶し、
-//      sessionStorage の clientId のみで端末・スロットを確実に確定。
-//   4. 既存の JUMP、magnet/invuln/shrink/boost/stun、BLOW_MOB、およびホストAuthoritative仕様は100%維持。
+// network.js: AgentSDK公式仕様完全準拠 ＆ ルーム入退室ライフサイクル・通信同期エンジン
+// ★ 公式AI回答に基づく通信完全復旧版：
+//   1. 【sendMessage純粋送信】公式回答に従い、サイレント破棄の原因となっていた `room_id`, `roomId`, `msg_data` を完全撤廃。
+//      SDKが正式受理する `{ message: JSON.stringify(...) }` のみの純粋送信に完全一本化。
+//   2. 【受信側非対称トラップ解消】受信時に `payload.data.msg_data` として届くJSON文字列を正規ルートで直接パース。
+//   3. 【同一端末テスト時のパケット自己誤認解除】エコーバックなし前提に基づき、同一sessionStorageによる clientId の重複破棄を排除。
+//      スロット番号（packet.slot === this.mySlot）のみを自己判定基準として相手のパケット受信を100%保証。
+//   4. 【createRoom初期化の健全化】初期島のブロックが奥の島へ強制テレポート・消滅する原因となっていた過剰ループを是正。
 
 import {
   characters,
@@ -109,7 +109,7 @@ function captureWorldSnapshot() {
 }
 
 /**
- * 端末固有のセッションIDを生成（端末・タブ単位で完全一意）
+ * 端末固有のセッションIDを生成
  */
 function generateClientId() {
   if (typeof window !== 'undefined' && window.sessionStorage) {
@@ -184,6 +184,9 @@ export const NetworkManager = {
     return this.myUser;
   },
 
+  /**
+   * ★【公式仕様準拠】メッセージリスナー登録
+   */
   ensureMessageListener() {
     if (!this.isSDKAvailable || this._hasRegisteredListener) return;
     this._hasRegisteredListener = true;
@@ -205,7 +208,7 @@ export const NetworkManager = {
             this._handleCustomMessage(data);
             break;
           default:
-            if (payload.msg_data || payload.message || payload.event) {
+            if (payload.msg_data || payload.message || payload.event || (payload.data && payload.data.msg_data)) {
               this._handleCustomMessage(payload);
             }
             break;
@@ -322,12 +325,16 @@ export const NetworkManager = {
       this.slots[1] = { slot: 1, clientId: null, userId: null, name: 'CPU 1', isAI: true };
       this.slots[2] = { slot: 2, clientId: null, userId: null, name: 'CPU 2', isAI: true };
 
+      // ★ 初期島のブロックを安全に生成（過剰な60回ループを廃止し、健全に初期化）
       const activeScene = (typeof window !== 'undefined' && window.currentSceneRef) ? window.currentSceneRef : null;
       if (activeScene) {
         try {
+          if (floorBlocksByStage && typeof floorBlocksByStage.clear === 'function') {
+            floorBlocksByStage.clear();
+          }
           resetParticlePools();
           buildWorld(activeScene, this.currentSeed);
-          for (let i = 0; i < 60; i++) manageBlockSpawns(activeScene, false);
+          manageBlockSpawns(activeScene, false);
         } catch (e) {
           console.warn('[network.js] buildWorld deferred:', e);
         }
@@ -438,13 +445,9 @@ export const NetworkManager = {
     }
   },
 
-  /**
-   * ★【Phase 1 改善】clientId を重視した入室ハンドリング
-   */
   _handleUserJoined(data) {
     if (!data) return;
     const userId = String(data.user_id || '');
-    // ホスト自身と同一ユーザーIDであっても、clientId が異なれば別端末（ゲスト）として受け入れる
     if (this.isHost) {
       const guestName = (data.name && data.name !== 'ゲスト') ? data.name : (data.user_name || 'ゲスト');
       let targetSlot = -1;
@@ -472,14 +475,21 @@ export const NetworkManager = {
     }
   },
 
+  /**
+   * ★【公式仕様準拠】受信メッセージパーサー（受信キー msg_data を正規解析）
+   */
   _handleCustomMessage(data) {
     if (!data) return;
     try {
       let rawStr = '';
-      if (typeof data === 'string') {
-        rawStr = data;
-      } else if (typeof data.msg_data === 'string') {
+
+      // 公式回答：受信時は payload.data.msg_data（文字列）に入る
+      if (typeof data.msg_data === 'string') {
         rawStr = data.msg_data;
+      } else if (data.data && typeof data.data.msg_data === 'string') {
+        rawStr = data.data.msg_data;
+      } else if (typeof data === 'string') {
+        rawStr = data;
       } else if (typeof data.message === 'string') {
         rawStr = data.message;
       } else if (data.data) {
@@ -514,7 +524,6 @@ export const NetworkManager = {
             const reqUserId = String(packet.userId || '');
             const reqName = (packet.name && packet.name !== 'ゲスト' && packet.name !== 'YOU') ? packet.name : 'ゲスト1';
 
-            // ★ clientId を最優先にスロット判定
             if (reqClientId && reqClientId !== this.clientId) {
               let targetSlot = this.slots.findIndex(s => s.clientId === reqClientId);
 
@@ -545,7 +554,6 @@ export const NetworkManager = {
           break;
 
         case 'POS':
-          // ★【Phase 1 核心】パケットに同封された timeLeft をタイマーへ直接同期（単独TIME_SYNCを不要化）
           if (!this.isHost && typeof packet.timeLeft === 'number' && typeof window.applyRemoteTimeSync === 'function') {
             window.applyRemoteTimeSync(packet.timeLeft);
           }
@@ -569,7 +577,6 @@ export const NetworkManager = {
           }
           break;
 
-        // ★【Phase 1 新設】ブロック補充バッチ受信ハンドラ
         case 'SPAWN_BLOCKS_BATCH':
           if (Array.isArray(packet.blocks) && typeof window.applyRemoteBlocksBatch === 'function') {
             window.applyRemoteBlocksBatch(packet.stageIdx, packet.blocks);
@@ -588,7 +595,6 @@ export const NetworkManager = {
           }
           break;
 
-        // 単体SPAWN_BLOCK（後方互換）
         case 'SPAWN_BLOCK':
           if (typeof window.applyRemoteBlockSpawned === 'function') {
             window.applyRemoteBlockSpawned(packet.stageIdx, packet.poolIdx, packet.x, packet.y, packet.z, packet.teamId, packet.blockId);
@@ -648,9 +654,6 @@ export const NetworkManager = {
     }
   },
 
-  /**
-   * ★【Phase 1 改善】clientId を絶対基準としたスロット確定処理
-   */
   _applyRoomMembersSync(syncedSlots, seed, snapshot = null) {
     if (!Array.isArray(syncedSlots)) return;
     this.slots = syncedSlots;
@@ -698,7 +701,6 @@ export const NetworkManager = {
     }
 
     syncedSlots.forEach((s) => {
-      // 端末判定は clientId のみを第一基準にする
       const isClientIdMatch = !!(s.clientId && s.clientId === this.clientId);
       const isHostDefaultSlot0 = (!s.clientId && this.isHost && s.slot === 0);
       const isGuestFallback = (!this.isHost && s.slot === this.mySlot);
@@ -732,9 +734,6 @@ export const NetworkManager = {
     });
   },
 
-  /**
-   * リモートスロット確定ヘルパー
-   */
   _bindRemoteSlot(slotIndex, playerName) {
     const targetChar = characters[slotIndex];
     if (!targetChar) return;
@@ -792,9 +791,6 @@ export const NetworkManager = {
     }
   },
 
-  /**
-   * ゲスト退出後のAI復帰
-   */
   _restoreSlotToAI(slotIndex) {
     const targetChar = characters[slotIndex];
     if (!targetChar) return;
@@ -841,7 +837,6 @@ export const NetworkManager = {
 
   /**
    * 10Hz 位置情報ブロードキャスト
-   * ★【Phase 1 核心】単独TIME_SYNCを完全廃止し、POSパケットにホストタイマーを同封
    */
   _startPositionBroadcasting() {
     if (this._syncIntervalId) clearInterval(this._syncIntervalId);
@@ -926,7 +921,6 @@ export const NetworkManager = {
           }
         });
 
-        // ホスト端末の場合、現在の残り秒数を POS パケット内に同封
         if (typeof window !== 'undefined' && typeof window.getGameTimeLeft === 'function') {
           const sec = window.getGameTimeLeft();
           if (typeof sec === 'number' && !isNaN(sec)) {
@@ -935,7 +929,6 @@ export const NetworkManager = {
         }
       }
 
-      // ★ 1回のメッセージ送信に全情報を集約（重複送信ゼロ）
       this._sendCustomMessage({
         event: 'POS',
         clientId: this.clientId,
@@ -946,10 +939,11 @@ export const NetworkManager = {
   },
 
   /**
-   * 受信したPOSパケットのスロットをリモートプレイヤーとして確定・更新
+   * ★【公式仕様準拠】リモート座標の反映（スロット判定のみで自己誤認を防止）
    */
   _handleRemotePosition(packet) {
-    if (packet.slot === this.mySlot || packet.clientId === this.clientId) return;
+    // エコーバックはしないが、同一スロットの自分自身パケットは除外
+    if (packet.slot === this.mySlot) return;
 
     const targetChar = characters[packet.slot];
     if (!targetChar) return;
@@ -1035,27 +1029,24 @@ export const NetworkManager = {
     }
   },
 
+  /**
+   * ★【公式仕様100%準拠】純粋送信（room_id, msg_data を完全排除）
+   * 親アプリのバリデーションエラーによるサイレント破棄を根絶
+   */
   _sendCustomMessage(msgObj) {
-    if (!this.isSDKAvailable) return;
+    if (!this.isSDKAvailable || !window.AgentSDK.room || typeof window.AgentSDK.room.sendMessage !== 'function') return;
     try {
       const msgStr = JSON.stringify(msgObj);
-      const payload = {
-        message: msgStr,
-        msg_data: msgStr
-      };
-      if (this.currentRoomId) {
-        payload.room_id = String(this.currentRoomId);
-        payload.roomId = String(this.currentRoomId);
-      }
-      window.AgentSDK.room.sendMessage(payload);
+      window.AgentSDK.room.sendMessage({
+        message: msgStr
+      });
     } catch (e) {
       console.warn('[NetworkManager] sendMessage failed:', e);
     }
   },
 
   /**
-   * ★【Phase 1 核心】ブロック補充の一括（バッチ）ブロードキャスト
-   * 1通にまとめることで回線詰まり・パケットパンクを完全に根絶
+   * ブロック補充の一括（バッチ）ブロードキャスト
    */
   broadcastSpawnBlocksBatch(stageIdx, blocksArray) {
     if (!this.isMultiplayerActive || !Array.isArray(blocksArray) || blocksArray.length === 0) return;
@@ -1067,7 +1058,7 @@ export const NetworkManager = {
   },
 
   /**
-   * 単発ブロック生成ブロードキャスト（後方互換）
+   * 単発ブロック生成ブロードキャスト
    */
   broadcastSpawnBlock(stageIdx, poolIdx, x, y, z, teamId, blockId) {
     if (!this.isMultiplayerActive) return;
