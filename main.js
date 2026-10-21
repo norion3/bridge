@@ -1,9 +1,8 @@
 // main.js: ゲーム全体の起動指揮・Three.js初期化・メインループ・入力・HUD制御
-// ★ Step 10 実装版（10Hz移動補間の速度予測平滑化 ＆ リモートアトラクション姿勢連動）：
-//   1. リモート走者の10Hz受信間隔を速度ベクトル（vx, vz）を加味した線形・Hermite平滑化補間でスムーズに繋ぎ、歩行のカクつき（シャッター現象）を根絶
-//   2. リモート走者の状態ビット（remoteActionState）に応じて applyRemoteGimmickVisuals を呼び出し、他走者のエレベーターカゴ・ダイビング姿勢を完全連動
-//   3. 既存の3D描画、物理演算、ステージ伸長、ソロプレイ操作は100%維持
-// ★ Phase 1 実装：launchGameEngine() を新設し、外部（network.js / dom.js）からゲームループを安全かつ確実に始動可能に
+// ★ Phase 1 修正版（ホスト側でのAIによるゲスト座標上書きを完全遮断）：
+//   1. shouldRunAI の判定ロジックを強化し、targetNetPos を保持しているスロットやリモート判定スロットに対する updateAICharacter の誤爆を100%防止
+//   2. リモート走者パケット受信時の補間処理（Lerp）への確実な進入を保証
+//   3. 10Hz移動補間の速度予測平滑化 ＆ アトラクション姿勢連動、ソロプレイ・ホストAuthoritative仕様は完全維持
 
 import { mountAllUI } from './dom.js';
 
@@ -455,16 +454,27 @@ export function animate(currentTime) {
       updateSingleCharacter(scene, player, moveDirX, moveDirZ, dt, spawnPuffCloud, spawnSpeedStepRing);
       updateNameplatePosition(player);
     }
+
     for (let cIdx = 0; cIdx < characters.length; cIdx++) {
       const c = characters[cIdx];
       if (c === player || c.isPlayer) continue;
 
       const isHumanSlot = isMulti && window.NetworkManager && Array.isArray(window.NetworkManager.slots) &&
         window.NetworkManager.slots[cIdx] && !window.NetworkManager.slots[cIdx].isAI;
-      const isRemotePlayer = c.isRemote || isHumanSlot;
 
-      // マルチプレイ時、ホスト端末のみがAI思考を実行
-      const shouldRunAI = (!isMulti || isHost) && !isRemotePlayer && c.isAI !== false;
+      // ★ Phase 1 核心改善①: targetNetPos（リモート座標パケット）が一度でも届いている場合、
+      // またはスロット/フラグで人間と判明している場合は、100%「リモートプレイヤー」として昇格・確定させる
+      const hasReceivedNetPos = Boolean(c.targetNetPos && isMulti);
+      const isRemotePlayer = Boolean(c.isRemote || isHumanSlot || hasReceivedNetPos);
+
+      if (hasReceivedNetPos && (!c.isRemote || c.isAI)) {
+        c.isRemote = true;
+        c.isAI = false;
+      }
+
+      // ★ Phase 1 核心改善②: リモートプレイヤーとして扱われているスロットは、
+      // ホスト端末上であっても AI 思考ルーチン（updateAICharacter）の実行を100%遮断する
+      const shouldRunAI = (!isMulti || isHost) && !isRemotePlayer && c.isAI === true && !c.targetNetPos;
 
       if (shouldRunAI) {
         updateAICharacter(scene, c, dt, spawnPuffCloud, spawnSpeedStepRing);
@@ -473,7 +483,6 @@ export function animate(currentTime) {
         const prevZ = c.pos.z;
 
         // ★【Step 10 改善】フレームレート非依存かつ速度予測付きの平滑化補間（シャッター現象の根絶）
-        // 受信間隔（100ms）に対して、固定係数ではなく経過時間に応じたLerp率を採用
         const lerpFactor = Math.min(1.0, dt * 14.0);
 
         let predTargetX = c.targetNetPos.x;
@@ -494,7 +503,7 @@ export function animate(currentTime) {
           c.meshObj.root.rotation.y = THREE.MathUtils.lerp(c.meshObj.root.rotation.y, c.targetNetRotY, lerpFactor);
         }
 
-        // ★【Step 10 改善】リモート走者のアトラクション状態ビット（remoteActionState）とメッシュの連動
+        // リモート走者のアトラクション状態ビット（remoteActionState）とメッシュの連動
         const remState = c.remoteActionState || 'NORMAL';
         applyRemoteGimmickVisuals(c, remState, timeSec);
 
@@ -529,6 +538,7 @@ export function animate(currentTime) {
       }
       updateNameplatePosition(c);
     }
+
     handleTackles(scene);
 
     blockSpawnTimer += dt;

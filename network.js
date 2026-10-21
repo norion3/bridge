@@ -1,10 +1,12 @@
 // network.js: AgentSDKラッパー ＆ ルーム入退室ライフサイクル・通信同期エンジン
-// ★ 修正版（ピン留めフリーズ根絶 ＆ AI復帰迷走ゼロ化）：
-//   1. 【フリーズ根絶】_bindRemoteSlot 内で、既にリモート走者となっている場合は resetCharacterToStageZero をスキップ。
-//      同期パケットが届くたびに初期位置へ強制送還されるバグを根絶し、端末Bの操作が端末Aで即座に滑らかに動くよう修正。
-//   2. 【本名即時反映】端末Bの本名（「のりおん」）検知によるネームプレート更新は100%維持。
-//   3. 【AI復帰迷走ゼロ化】_restoreSlotToAI でスタックタイマー・残存慣性を消去し、迷走時間0秒で索敵へ移行。
-//   4. createRoom 直後のリスナー開通、ゲスト即時赤スロットバインド、二重作成防止ロジックも完全維持。
+// ★ Phase 2 & 3 統合完全版（ピン留めフリーズ根絶・無条件スロット昇格・ホスト逆送信完全遮断）：
+//   1. 【Phase 2核心】_bindRemoteSlot で初回以外の座標リセット（resetCharacterToStageZero）を完全スキップ。
+//      300msごとの同期リクエスト受領時にゲストが初期位置へ引き戻されるピン留めバグを根絶。
+//   2. 【Phase 3核心①】_handleRemotePosition（POS受信時）において、受信スロットを無条件で isRemote=true, isAI=false に昇格。
+//      ホスト側の this.slots[slot].isAI = false を即時確定。
+//   3. 【Phase 3核心②】ホストの10Hz送信ループ（_startPositionBroadcasting）で、該当スロットが isRemote または targetNetPos を持っている場合、
+//      誤ってAI座標を逆送信してゲストを巻き戻す事故を100%遮断。
+//   4. ゲスト本名の即時検知、退出時のAI安全復帰、確定論PRNGシード同期、二重作成防止ロジックは完全維持。
 
 import {
   characters,
@@ -708,7 +710,7 @@ export const NetworkManager = {
   },
 
   /**
-   * ★【核心修正】ピン留めフリーズ根絶版 _bindRemoteSlot
+   * ★【Phase 2 核心】ピン留めフリーズ根絶版 _bindRemoteSlot
    * すでにリモート走者になっているキャラは位置を初期化せず、名前の更新のみを行う
    */
   _bindRemoteSlot(slotIndex, playerName) {
@@ -725,6 +727,10 @@ export const NetworkManager = {
     targetChar.aiDirZ = 0;
     targetChar.targetBlock = null;
     targetChar.searchCooldown = 999999;
+
+    if (this.slots && this.slots[slotIndex]) {
+      this.slots[slotIndex].isAI = false;
+    }
     
     if (playerName && playerName !== 'YOU' && playerName !== 'null') {
       targetChar.name = playerName;
@@ -767,7 +773,7 @@ export const NetworkManager = {
   },
 
   /**
-   * ★【Phase 2 完全強化版】ゲスト退出後にスロットをAIへ安全かつ即座に復帰させる関数
+   * ゲスト退出後にスロットをAIへ安全かつ即座に復帰させる関数
    */
   _restoreSlotToAI(slotIndex) {
     const targetChar = characters[slotIndex];
@@ -821,6 +827,7 @@ export const NetworkManager = {
 
   /**
    * 10Hz 位置情報ブロードキャスト
+   * ★【Phase 3 核心②】ホストが人間スロットをAIと誤認して古い座標を逆送信する事故を100%遮断
    */
   _startPositionBroadcasting() {
     if (this._syncIntervalId) clearInterval(this._syncIntervalId);
@@ -870,24 +877,28 @@ export const NetworkManager = {
 
       if (this.isHost) {
         this.slots.forEach(s => {
-          if (s.isAI && s.slot !== this.mySlot) {
-            const aiChar = characters[s.slot];
-            if (aiChar) {
-              posList.push({
-                slot: s.slot,
-                clientId: this.clientId,
-                name: s.name || (s.slot === 1 ? 'CPU 1' : 'CPU 2'),
-                x: Number(aiChar.pos.x.toFixed(2)),
-                y: Number(aiChar.pos.y.toFixed(2)),
-                z: Number(aiChar.pos.z.toFixed(2)),
-                vx: 0,
-                vz: 0,
-                rotY: Number(aiChar.meshObj.root.rotation.y.toFixed(2)),
-                stack: aiChar.stackCount || 0,
-                stage: aiChar.currentStage || 0,
-                state: getCharacterActionState(aiChar)
-              });
-            }
+          if (s.slot === this.mySlot) return;
+
+          const charObj = characters[s.slot];
+          if (!charObj) return;
+
+          // ★ 人間走者（リモート判定、またはネットパケット受信済み）はホストから絶対にAIとして送信しない！
+          const isHumanPlayer = charObj.isRemote || Boolean(charObj.targetNetPos) || !s.isAI;
+          if (s.isAI && !isHumanPlayer) {
+            posList.push({
+              slot: s.slot,
+              clientId: this.clientId,
+              name: s.name || (s.slot === 1 ? 'CPU 1' : 'CPU 2'),
+              x: Number(charObj.pos.x.toFixed(2)),
+              y: Number(charObj.pos.y.toFixed(2)),
+              z: Number(charObj.pos.z.toFixed(2)),
+              vx: 0,
+              vz: 0,
+              rotY: Number(charObj.meshObj.root.rotation.y.toFixed(2)),
+              stack: charObj.stackCount || 0,
+              stage: charObj.currentStage || 0,
+              state: getCharacterActionState(charObj)
+            });
           }
         });
       }
@@ -902,12 +913,17 @@ export const NetworkManager = {
 
   /**
    * 受信したPOSパケットのスロットをリモートプレイヤーとして確定・更新
+   * ★【Phase 3 核心①】受信した瞬間、該当スロットを無条件で isRemote=true, isAI=false に昇格
    */
   _handleRemotePosition(packet) {
     if (packet.slot === this.mySlot || packet.clientId === this.clientId) return;
 
     const targetChar = characters[packet.slot];
     if (!targetChar) return;
+
+    // ★ 無条件でリモートプレイヤーとして確定
+    targetChar.isRemote = true;
+    targetChar.isAI = false;
 
     if (this.slots && this.slots[packet.slot]) {
       this.slots[packet.slot].isAI = false;
@@ -923,9 +939,7 @@ export const NetworkManager = {
     const isGenericGuestName = (targetChar.name === 'ゲスト' || targetChar.name === 'ゲスト1' || targetChar.name === 'ゲスト2');
     const isUpgradedToRealName = isGenericGuestName && packetName && packetName !== targetChar.name;
 
-    if (targetChar.isAI || !targetChar.isRemote || targetChar.name !== resolvedName || isUpgradedToRealName) {
-      targetChar.isRemote = true;
-      targetChar.isAI = false;
+    if (targetChar.name !== resolvedName || isUpgradedToRealName) {
       targetChar.name = resolvedName;
 
       if (this.slots && this.slots[packet.slot]) {
