@@ -1,15 +1,15 @@
 // network.js: AgentSDK連携 ＆ ルーム入退室ライフサイクル・マルチプレイ通信同期エンジン
-// ★ 先祖返り完全根絶・ゲスト操作同期確定版：
-//   1. 【ホスト側AI干渉の完全遮断】
-//      ホストがスロット1（ゲスト）のPOSパケットを受信した瞬間、targetChar.isAI = false, isRemote = true を
-//      確定させ、ホストのAI思考（updateAICharacter）がゲストの座標を初期位置に上書きする競合を100%根絶。
-//   2. 【強制初期位置リセットの再発防止】
-//      ゲーム進行中に _applyRoomMembersSync が呼ばれても、既に動いているゲストの座標を (-4, 4) へ
-//      引き戻す初期化テレポートを完全ガード。
-//   3. 【スロット二重割当ガード完全維持】
-//      REQUEST_ROOM_SYNC 時に userId で照合し、スロット1（赤）に固定。スロット2（黄色）への押し出しを防止。
-//   4. 【操作キャラ実体からの座標送信 ＆ 実機必須プロパティ完全維持】
-//      player 実体の座標取得、および room_id, roomId, msg_data 同封を100%維持。
+// ★ ロジック誤認根絶・ゲスト操作同期確定版：
+//   1. 【ゲストスロット誤認判定の完全遮断】
+//      _applyRoomMembersSync において、ゲスト端末がスロット0（ホスト）を自分と誤認して
+//      mySlot = 0 に書き換わる致命的ロジック欠陥を根絶。ゲストは確実にスロット1（赤）に固定。
+//   2. 【送信キャラ実体の厳格直結】
+//      曖昧な外部参照を排除し、現在操作中キャラ（characters[this.mySlot] / isPlayer）の
+//      実測座標・回転・スタック数をダイレクトに抽出して送信。
+//   3. 【ホスト側受信フィルターの安全化 ＆ AI干渉遮断】
+//      ホスト側でスロット1のパケットを受信した瞬間に AI 介入を確実に遮断し、滑らかに座標を直結。
+//   4. 【実機WebView必須プロパティ完全維持】
+//      room_id, roomId, msg_data 同封を100%維持し、ネイティブ層での破棄を防止。
 
 import {
   player,
@@ -374,6 +374,8 @@ export const NetworkManager = {
               isSuccess = true;
             } else if (res.data && (res.data.room_id || res.data.roomId)) {
               isSuccess = true;
+            } else if (res.room_id || res.roomId) {
+              isSuccess = true;
             }
           }
 
@@ -395,6 +397,7 @@ export const NetworkManager = {
       this.isMultiplayerActive = true;
       this._seedApplied = false;
 
+      // ゲスト初期スロットは確実に 1
       this.mySlot = 1;
       this.isSlotConfirmed = true;
       window.MY_PLAYER_SLOT = 1;
@@ -535,16 +538,20 @@ export const NetworkManager = {
                 targetSlot = this.slots.findIndex(s => s.userId && String(s.userId) === reqUserId);
               }
 
+              // スロット1が空いているか、または未バインドのゲスト枠なら優先してスロット1へ
               if (targetSlot === -1) {
-                if (this.slots[1].isAI) targetSlot = 1;
-                else if (this.slots[2].isAI) targetSlot = 2;
+                if (this.slots[1].isAI || !this.slots[1].clientId || (reqUserId && this.slots[1].userId === reqUserId)) {
+                  targetSlot = 1;
+                } else if (this.slots[2].isAI) {
+                  targetSlot = 2;
+                }
               }
 
               if (targetSlot !== -1) {
                 this.slots[targetSlot] = {
                   slot: targetSlot,
                   clientId: reqClientId,
-                  userId: reqUserId || this.slots[targetSlot].userId,
+                  userId: reqUserId || this.slots[targetSlot].userId || `guest_${targetSlot}`,
                   name: reqName,
                   isAI: false
                 };
@@ -663,7 +670,7 @@ export const NetworkManager = {
   },
 
   /**
-   * s.userId による人間プレイヤー判定
+   * ★【核心修正①】ゲスト端末がスロット0を自分と誤認するロジック欠陥を完全遮断
    */
   _applyRoomMembersSync(syncedSlots, seed, snapshot = null) {
     if (!Array.isArray(syncedSlots)) return;
@@ -712,20 +719,28 @@ export const NetworkManager = {
     }
 
     syncedSlots.forEach((s) => {
-      const isClientIdMatch = !!(s.clientId && s.clientId === this.clientId);
+      let isMyClient = false;
 
-      const isUserIdMatch = !!(
-        s.userId &&
-        this.myUser &&
-        this.myUser.user_id &&
-        s.userId !== 'local_user' &&
-        String(s.userId) === String(this.myUser.user_id)
-      );
+      if (this.isHost) {
+        // ホスト端末はスロット0のみが自分
+        isMyClient = (s.slot === 0);
+      } else {
+        // ★ ゲスト端末：スロット0は絶対に自分ではない（100%ホストのもの）
+        if (s.slot !== 0) {
+          const isClientIdMatch = !!(s.clientId && s.clientId === this.clientId);
+          const isUserIdMatch = !!(
+            s.userId &&
+            this.myUser &&
+            this.myUser.user_id &&
+            s.userId !== 'local_user' &&
+            String(s.userId) === String(this.myUser.user_id)
+          );
+          const isMyCurrentGuestSlot = (s.slot === this.mySlot);
+          const isSlot1Fallback = (this.mySlot <= 1 && s.slot === 1);
 
-      const isHostDefaultSlot0 = (!s.clientId && this.isHost && s.slot === 0);
-      const isGuestFallback = (!this.isHost && s.slot === this.mySlot);
-
-      const isMyClient = isClientIdMatch || isUserIdMatch || isHostDefaultSlot0 || isGuestFallback;
+          isMyClient = isClientIdMatch || isUserIdMatch || isMyCurrentGuestSlot || isSlot1Fallback;
+        }
+      }
 
       if (isMyClient) {
         if (this.mySlot !== s.slot) {
@@ -746,7 +761,7 @@ export const NetworkManager = {
         return;
       }
 
-      // clientId が null であっても userId があれば人間スロットとして確定
+      // 自分以外のスロットで、人間プレイヤー確定のものはリモートバインド
       if (!s.isAI && (s.clientId || s.userId || (!this.isHost && s.slot === 0))) {
         this._bindRemoteSlot(s.slot, s.name);
       } else if (s.isAI) {
@@ -761,7 +776,7 @@ export const NetworkManager = {
 
     const wasAlreadyRemote = targetChar.isRemote && !targetChar.isAI;
 
-    // ★【重要】リモートプレイヤーフラグを完全固定し、ホスト側AIの干渉を確実に停止
+    // リモートプレイヤーフラグを完全固定し、ホスト側AI思考の介入を遮断
     targetChar.isPlayer = false;
     targetChar.isAI = false;
     targetChar.isRemote = true;
@@ -792,8 +807,8 @@ export const NetworkManager = {
       targetChar.nameplateSprite.visible = true;
     }
 
-    // ★ 初回のみ初期配置を設定。2回目以降は現在座標を壊さない
-    if (!wasAlreadyRemote) {
+    // 初回のみ初期配置を設定。2回目以降は現在座標を壊さない
+    if (!wasAlreadyRemote && !targetChar.targetNetPos) {
       if (typeof resetCharacterToStageZero === 'function') {
         resetCharacterToStageZero(targetChar, targetChar.name, false);
       } else if (typeof window.resetCharacterToStageZero === 'function') {
@@ -808,7 +823,7 @@ export const NetworkManager = {
           targetChar.meshObj.root.position.copy(targetChar.pos);
           targetChar.meshObj.root.rotation.set(0, Math.PI, 0);
         }
-        if (!targetChar.targetNetPos) targetChar.targetNetPos = new THREE.Vector3();
+        targetChar.targetNetPos = new THREE.Vector3();
         targetChar.targetNetPos.copy(targetChar.pos);
       }
     }
@@ -859,7 +874,7 @@ export const NetworkManager = {
   },
 
   /**
-   * 10Hz 位置情報ブロードキャスト
+   * ★【核心修正②】送信キャラ実体の厳格取得 ＆ 送信スロット番号の確約
    */
   _startPositionBroadcasting() {
     if (this._syncIntervalId) clearInterval(this._syncIntervalId);
@@ -870,16 +885,22 @@ export const NetworkManager = {
     this._syncIntervalId = setInterval(() => {
       if (!this.isMultiplayerActive || !this.isSDKAvailable) return;
 
-      // 画面上で実際にジョイスティック操作を受けて動いているキャラクター実体を特定
+      // 送信スロットの確定（ゲスト時はスロット0での送信を絶対に阻止）
+      const effectiveSlot = (!this.isHost && (this.mySlot === 0 || !this.mySlot)) ? 1 : this.mySlot;
+
+      // 操作キャラ実体を厳格に取得
       let myChar = null;
-      if (typeof window !== 'undefined' && window.localPlayerInstance) {
-        myChar = window.localPlayerInstance;
+      if (Array.isArray(characters) && characters[effectiveSlot] && characters[effectiveSlot].isPlayer) {
+        myChar = characters[effectiveSlot];
+      }
+      if (!myChar && Array.isArray(characters)) {
+        myChar = characters.find(c => c && c.isPlayer);
+      }
+      if (!myChar && Array.isArray(characters) && characters[effectiveSlot]) {
+        myChar = characters[effectiveSlot];
       }
       if (!myChar && player) {
         myChar = player;
-      }
-      if (!myChar && Array.isArray(characters)) {
-        myChar = characters.find(c => c && c.isPlayer) || characters[this.mySlot];
       }
       if (!myChar) return;
 
@@ -903,7 +924,7 @@ export const NetworkManager = {
       const posList = [];
 
       posList.push({
-        slot: this.mySlot,
+        slot: effectiveSlot,
         clientId: this.clientId,
         name: myName,
         x: Number(myChar.pos.x.toFixed(2)),
@@ -925,12 +946,12 @@ export const NetworkManager = {
       let hostTimeLeft = undefined;
       if (this.isHost) {
         this.slots.forEach(s => {
-          if (s.slot === this.mySlot) return;
+          if (s.slot === effectiveSlot) return;
 
           const charObj = characters[s.slot];
           if (!charObj) return;
 
-          // ★ 人間プレイヤー（ゲスト）のスロットはホストが勝手に送信しない
+          // 人間プレイヤーのスロットはホストが勝手に送信しない
           const isHumanPlayer = charObj.isRemote || Boolean(charObj.targetNetPos) || !s.isAI || Boolean(s.userId);
           if (s.isAI && !isHumanPlayer) {
             posList.push({
@@ -973,16 +994,17 @@ export const NetworkManager = {
   },
 
   /**
-   * リモート座標の反映
-   * ★【核心修正】パケットを受信した瞬間に、対象キャラの AI 状態を 100% 遮断・リモート化
+   * ★【核心修正③】ホスト側でのスロット1パケットの確実受理 ＆ AI思考強制停止
    */
   _handleRemotePosition(packet) {
-    if (packet.slot === this.mySlot) return;
+    // ホスト端末（slot 0）ならスロット0パケットのみ除外、ゲスト端末なら自分のスロットのみ除外
+    if (this.isHost && packet.slot === 0) return;
+    if (!this.isHost && packet.slot === this.mySlot) return;
 
     const targetChar = characters[packet.slot];
     if (!targetChar) return;
 
-    // ★【重要】受信した瞬間に AI フラグを完全に折り、ホスト側AI思考（updateAICharacter）の介入を完全封鎖
+    // パケットを受信した瞬間に AI フラグを完全に折り、ホスト側AIの干渉を遮断
     targetChar.isRemote = true;
     targetChar.isAI = false;
     targetChar.aiState = 'REMOTE_IDLE';
