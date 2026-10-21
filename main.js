@@ -1,10 +1,10 @@
 // main.js: ゲーム全体の起動指揮・Three.js初期化・メインループ・入力・HUD制御
-// ★ Step 2 実装版（リモート走者のスピード演出 ＆ スタン姿勢の完全同期）：
-//   1. 【スピード演出同期】相手が `speedBoostActive` の時、リモート走者の足元オーラ（footAura）を点灯・パルス拡縮し、
-//      移動量（stepDist）に応じて足元から煙（spawnPuffCloud）と加速ステップリング（spawnSpeedStepRing）を噴射。
-//   2. 【スタン姿勢同期】相手が `isStunned` の時、歩行アニメーションを直ちに停止し、ローカル同様のプルプル震え姿勢
-//      （Z軸振動・前傾）を描画。ぶつかり（タックル）時のやられアクションが両画面で完全に一致。
-//   3. Phase 1 で確立した「AIによるゲスト座標上書き遮断」および速度予測Lerp補間は100%維持。
+// ★ Step B 実装版（リモート走者のサンダー小人化スケール連動 ＆ スタン揺れの永久ループ解消）：
+//   1. 【小人化スケール同期】相手が `isShrunk`（または `shrinkTimer > 0`）の時、リモート走者のメッシュ全体を
+//      ローカル同様に 0.42 倍へ即座に縮小。サンダー効果終了時は 1.0 倍へスムーズに復帰。
+//   2. 【スタン永久ループ根絶】リモート走者ループ内でも `c.stunTimer -= dt` を毎フレーム確実に減算し、
+//      相手端末でスタン解除された際にローカル画面上でもプルプル震えが完全に停止するよう修正。
+//   3. 既存のスピードオーラ・ダッシュ煙演出、AIによるゲスト座標上書き遮断、速度予測Lerp補間は100%維持。
 
 import { mountAllUI } from './dom.js';
 
@@ -464,8 +464,6 @@ export function animate(currentTime) {
       const isHumanSlot = isMulti && window.NetworkManager && Array.isArray(window.NetworkManager.slots) &&
         window.NetworkManager.slots[cIdx] && !window.NetworkManager.slots[cIdx].isAI;
 
-      // ★ Phase 1 核心改善①: targetNetPos（リモート座標パケット）が一度でも届いている場合、
-      // またはスロット/フラグで人間と判明している場合は、100%「リモートプレイヤー」として昇格・確定させる
       const hasReceivedNetPos = Boolean(c.targetNetPos && isMulti);
       const isRemotePlayer = Boolean(c.isRemote || isHumanSlot || hasReceivedNetPos);
 
@@ -474,8 +472,6 @@ export function animate(currentTime) {
         c.isAI = false;
       }
 
-      // ★ Phase 1 核心改善②: リモートプレイヤーとして扱われているスロットは、
-      // ホスト端末上であっても AI 思考ルーチン（updateAICharacter）の実行を100%遮断する
       const shouldRunAI = (!isMulti || isHost) && !isRemotePlayer && c.isAI === true && !c.targetNetPos;
 
       if (shouldRunAI) {
@@ -484,7 +480,27 @@ export function animate(currentTime) {
         const prevX = c.pos.x;
         const prevZ = c.pos.z;
 
-        // ★【Step 10 改善】フレームレート非依存かつ速度予測付きの平滑化補間（シャッター現象の根絶）
+        // ★【Step B 核心①】リモート走者のローカル stunTimer の毎フレーム減算
+        if (c.stunTimer > 0) {
+          c.stunTimer -= dt;
+          if (c.stunTimer <= 0) {
+            c.stunTimer = 0;
+            c.isStunned = false;
+          }
+        }
+
+        // ★【Step B 核心②】リモート走者の小人化タイマー減算 ＆ メッシュスケール連動
+        if (c.shrinkTimer > 0) {
+          c.shrinkTimer -= dt;
+          if (c.shrinkTimer <= 0) {
+            c.shrinkTimer = 0;
+            c.isShrunk = false;
+          }
+        }
+        const isRemoteShrunk = Boolean(c.isShrunk || (c.shrinkTimer && c.shrinkTimer > 0));
+        const targetScale = isRemoteShrunk ? 0.42 : 1.0;
+        c.meshObj.root.scale.set(targetScale, targetScale, targetScale);
+
         const lerpFactor = Math.min(1.0, dt * 14.0);
 
         let predTargetX = c.targetNetPos.x;
@@ -511,7 +527,7 @@ export function animate(currentTime) {
 
         const stepDist = Math.hypot(c.pos.x - prevX, c.pos.z - prevZ);
 
-        // ★【Step 2 改善①】スピードブースト演出の同期（オーラ点灯 ＆ 煙パーティクル）
+        // スピードブースト演出の同期（オーラ点灯 ＆ 煙パーティクル）
         if (c.meshObj.footAura) {
           if (c.speedBoostActive) {
             c.meshObj.footAura.visible = true;
@@ -535,11 +551,11 @@ export function animate(currentTime) {
           }
         }
 
-        // ★【Step 2 改善②】スタンやられ姿勢の同期（プルプル震え・歩行停止）
+        // ★【Step B 核心③】スタンやられ姿勢の同期（解除時の完全ニュートラル復帰）
         const isRemoteStunned = Boolean(c.isStunned || (c.stunTimer && c.stunTimer > 0));
 
         if (isRemoteStunned) {
-          // 歩行を完全に止め、ローカル同様のやられ振動と前傾を適用
+          // 歩行を止め、ローカル同様のやられ振動と前傾を適用
           c.meshObj.root.rotation.z = Math.sin(currentTime * 0.02) * 0.4;
           c.meshObj.root.rotation.x = 0;
           c.meshObj.leftLeg.rotation.x = 0;

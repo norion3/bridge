@@ -1,9 +1,10 @@
 // network.js: AgentSDKラッパー ＆ ルーム入退室ライフサイクル・通信同期エンジン
-// ★ Step 1 実装版（スピード加速 ＆ スタン状態のパケット拡張）：
-//   1. 【送信側拡張】10Hz POS パケットに `boost`（加速中フラグ）と `stun`（気絶中フラグ）を同封。
-//   2. 【受信側反映】_handleRemotePosition で受信したフラグを相手キャラクターのプロパティへ即時格納。
-//      （targetChar.speedBoostActive, targetChar.isStunned）
-//   3. Phase 2 & 3 の「ピン留めフリーズ根絶」「無条件スロット昇格」「ホスト逆送信完全遮断」ロジックは100%維持。
+// ★ Step A 実装版（小人化ステート同期 ＆ スタン解除フェイルセーフ）：
+//   1. 【送信側拡張】10Hz POS パケットに `shrink`（サンダー小人化フラグ: shrinkTimer > 0）を同封。
+//   2. 【受信側反映】_handleRemotePosition で受信した `shrink` を `targetChar.isShrunk` へ格納。
+//   3. 【スタン解除同期】受信パケットで `packet.stun === false` の場合、相手の `targetChar.stunTimer` を 0 クリアし、
+//      端末Aでスタン解除されたのに端末Bで永久にプルプル震え続けるバグを完全防止。
+//   4. 既存の boost/stun 同期、ピン留めフリーズ根絶、無条件スロット昇格、ホスト逆送信遮断は100%維持。
 
 import {
   characters,
@@ -581,7 +582,7 @@ export const NetworkManager = {
 
         case 'KNOCKOUT':
           if (typeof window.applyRemoteKnockout === 'function') {
-            window.applyRemoteKnockout(packet.loserSlot, packet.pushX, packet.pushZ);
+            window.applyRemoteKnockout(packet.loserSlot, packet.pushX, packet.pushZ, packet.targetX, packet.targetZ);
           }
           break;
 
@@ -707,8 +708,7 @@ export const NetworkManager = {
   },
 
   /**
-   * ★【Phase 2 核心】ピン留めフリーズ根絶版 _bindRemoteSlot
-   * すでにリモート走者になっているキャラは位置を初期化せず、名前の更新のみを行う
+   * ピン留めフリーズ根絶版 _bindRemoteSlot
    */
   _bindRemoteSlot(slotIndex, playerName) {
     const targetChar = characters[slotIndex];
@@ -746,8 +746,6 @@ export const NetworkManager = {
       targetChar.nameplateSprite.visible = true;
     }
 
-    // ★ 既にリモート走者として動いているなら初期位置リセットは絶対に呼ばない！
-    // AIから初めてゲストへ切り替わった初回の1度だけ初期位置リセットを実行する
     if (!wasAlreadyRemote) {
       if (typeof resetCharacterToStageZero === 'function') {
         resetCharacterToStageZero(targetChar, targetChar.name, false);
@@ -776,28 +774,24 @@ export const NetworkManager = {
     const targetChar = characters[slotIndex];
     if (!targetChar) return;
 
-    // 1. スロット権限をAI自律思考へ復帰
     targetChar.isPlayer = false;
     targetChar.isAI = true;
     targetChar.isRemote = false;
     targetChar.aiState = 'COLLECT';
     targetChar.name = (slotIndex === 1) ? 'CPU 1' : 'CPU 2';
 
-    // 残存慣性・ネットワーク補間を完全ニュートラル化
     targetChar.netVelocity = { x: 0, z: 0 };
     targetChar.remoteActionState = 'NORMAL';
     if (targetChar.targetNetPos) {
       targetChar.targetNetPos.copy(targetChar.pos);
     }
 
-    // AIスタック回避タイマーの完全クリア
     targetChar.unstuckTimer = 0;
     targetChar.stuckCheckTimer = 0;
     targetChar.lastPosCheck = null;
     targetChar.unstuckDirX = 0;
     targetChar.unstuckDirZ = 0;
 
-    // ターゲット・進行ベクトルの完全リフレッシュ
     targetChar.targetBlock = null;
     targetChar.aiDirX = 0;
     targetChar.aiDirZ = -1;
@@ -806,10 +800,8 @@ export const NetworkManager = {
     targetChar.botSlideOffsetTarget = 0;
     targetChar.searchCooldown = (targetChar.team && targetChar.team.id === 'red') ? 0 : 0.06;
 
-    // 2. 状態・スタック表示の整合
     refreshCharacterStackVisuals(targetChar);
 
-    // 3. ネームプレートを「CPU名」へ確実に更新
     if (targetChar.nameplateSprite) {
       if (targetChar.nameplateSprite.material && targetChar.nameplateSprite.material.map) {
         targetChar.nameplateSprite.material.map.dispose();
@@ -824,7 +816,7 @@ export const NetworkManager = {
 
   /**
    * 10Hz 位置情報ブロードキャスト
-   * ★【Step 1 拡張】自キャラおよびAIキャラの boost（加速フラグ）と stun（スタンフラグ）をパケットに含める
+   * ★【Step A 拡張】自キャラおよびAIキャラの boost, stun に加え、shrink（小人化フラグ）をパケットに含める
    */
   _startPositionBroadcasting() {
     if (this._syncIntervalId) clearInterval(this._syncIntervalId);
@@ -871,7 +863,8 @@ export const NetworkManager = {
         stage: myChar.currentStage || 0,
         state: getCharacterActionState(myChar),
         boost: Boolean(myChar.speedBoostActive),
-        stun: Boolean(myChar.stunTimer > 0)
+        stun: Boolean(myChar.stunTimer > 0),
+        shrink: Boolean(myChar.shrinkTimer > 0)
       });
 
       if (this.isHost) {
@@ -881,7 +874,6 @@ export const NetworkManager = {
           const charObj = characters[s.slot];
           if (!charObj) return;
 
-          // 人間走者はホストから絶対にAIとして逆送信しない
           const isHumanPlayer = charObj.isRemote || Boolean(charObj.targetNetPos) || !s.isAI;
           if (s.isAI && !isHumanPlayer) {
             posList.push({
@@ -898,7 +890,8 @@ export const NetworkManager = {
               stage: charObj.currentStage || 0,
               state: getCharacterActionState(charObj),
               boost: Boolean(charObj.speedBoostActive),
-              stun: Boolean(charObj.stunTimer > 0)
+              stun: Boolean(charObj.stunTimer > 0),
+              shrink: Boolean(charObj.shrinkTimer > 0)
             });
           }
         });
@@ -914,7 +907,7 @@ export const NetworkManager = {
 
   /**
    * 受信したPOSパケットのスロットをリモートプレイヤーとして確定・更新
-   * ★【Step 1 拡張】相手の boost（加速フラグ）と stun（スタンフラグ）を targetChar に格納
+   * ★【Step A 拡張】相手の boost, stun, shrink を targetChar に格納し、stun解除時のタイマークリアも同期
    */
   _handleRemotePosition(packet) {
     if (packet.slot === this.mySlot || packet.clientId === this.clientId) return;
@@ -922,7 +915,6 @@ export const NetworkManager = {
     const targetChar = characters[packet.slot];
     if (!targetChar) return;
 
-    // 無条件でリモートプレイヤーとして確定
     targetChar.isRemote = true;
     targetChar.isAI = false;
 
@@ -980,9 +972,21 @@ export const NetworkManager = {
     targetChar.remoteActionState = packet.state || 'NORMAL';
     targetChar.lastPacketTime = performance.now();
 
-    // ★ Step 1: 加速・スタン状態フラグをキャラオブジェクトへ即座に反映
+    // 加速・スタン状態フラグをキャラオブジェクトへ即座に反映
     targetChar.speedBoostActive = Boolean(packet.boost);
     targetChar.isStunned = Boolean(packet.stun);
+
+    // ★【Step A 核心改善】相手側でスタンが終了した（packet.stun === false）場合は、
+    // ローカルに残存している stunTimer を直ちにクリアして永久震えループを断ち切る
+    if (!packet.stun) {
+      targetChar.stunTimer = 0;
+    }
+
+    // ★【Step A 核心改善】サンダー小人化フラグを格納
+    targetChar.isShrunk = Boolean(packet.shrink);
+    if (!packet.shrink) {
+      targetChar.shrinkTimer = 0;
+    }
 
     if (targetChar.stackCount !== packet.stack) {
       targetChar.stackCount = packet.stack;
