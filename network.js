@@ -1,11 +1,11 @@
 // network.js: AgentSDKラッパー ＆ ルーム入退室ライフサイクル・通信同期エンジン
-// ★ 通信リンク確立 ＆ ルーム二重作成防止 完全修正版：
-//   1. 【最重要修正】createRoom 完了直後に this.ensureMessageListener() を配置し、ホスト端末の受信を完全開通。
-//   2. 【最重要修正】ゲスト入室時（joinRoom）、即座にスロット1（赤キャラ）へ暫定バインド＆名前反映し、norion青のまま固まる現象を根絶。
-//   3. 【最重要修正】ゲストの位置ブロードキャストを即座に始動し、ホスト側がパケットを受信した瞬間にもゲストとして自動確定。
-//   4. 【二重作成防止】createRoom の最先頭で即座にロックをかけ、touchend 処理時に後続の click イベントを完全キャンセル。
-//   5. 【再入室保証】exitRoom 時に _hasRegisteredListener をリセットし、再入室時の通信デッドロックを防止。
-//   6. 既存の全パケット仕様（POS、BUILD_PLANK、KNOCKOUT、_sendCustomMessage形式等）は100%維持。
+// ★ ゲスト本名同期 ＆ ネームプレート強制上書き 完全修正版：
+//   1. 【最重要修正】端末Bから届く REQUEST_ROOM_SYNC および POS パケット内の本名（「のりおん」等）を検知した瞬間、
+//      ホスト側のスロット配列および 3D ネームプレート（targetChar.nameplateSprite）を即座に本名テクスチャへ強制書き換え。
+//   2. 【名前固定化防止】SDK初期イベント（aitools_game_joinroom）の「ゲスト」という仮名で固まる現象を根絶。
+//   3. 【通信リンク・二重作成防止】createRoom 完了直後の受信リスナー開通、ゲスト即時赤スロットバインド、
+//      touchend 後の擬似 click キャンセル、exitRoom のフラグリセットは 100% 維持。
+//   4. 既存の全パケット仕様（POS、BUILD_PLANK、KNOCKOUT、_sendCustomMessage形式等）は100%維持。
 
 import {
   characters,
@@ -247,7 +247,6 @@ export const NetworkManager = {
   },
 
   async createRoom(isPrivate = false) {
-    // ★ 即時ロック：多重呼び出しを関数の同期実行段階で完全遮断
     if (this._isCreatingRoom || this._isJoiningRoom) {
       console.warn('[NetworkManager] Room transaction is already in progress.');
       return null;
@@ -294,8 +293,6 @@ export const NetworkManager = {
       }
 
       this.currentRoomId = createdRoomId;
-
-      // ★【最重要修正】ホスト作成直後に確実に受信リスナーを開通（端末Aの耳を開ける）
       this.ensureMessageListener();
 
       this.isHost = true;
@@ -388,8 +385,6 @@ export const NetworkManager = {
       this.isMultiplayerActive = true;
       this._seedApplied = false;
 
-      // ★【最重要修正】ゲスト入室時に即座にスロット1（赤キャラ）へ暫定バインド
-      // これにより、ホストの応答を待たずに端末Bは自分を「赤キャラ・自分の名前」として操作開始でき、norion青固まりを完全解消
       this.mySlot = 1;
       this.isSlotConfirmed = true;
       window.MY_PLAYER_SLOT = 1;
@@ -405,7 +400,6 @@ export const NetworkManager = {
       }
       updatePlayerName(myRealName);
 
-      // スロット0（ホスト）をリモート走者としてバインド
       this._bindRemoteSlot(0, 'norion');
 
       safeShowGameScreen();
@@ -434,7 +428,6 @@ export const NetworkManager = {
         }
       }, 300);
 
-      // 即座に位置送信を始動（ホスト側がこれを受信しても即座にスロット1として確定できる）
       this._startPositionBroadcasting();
       return true;
     } finally {
@@ -450,7 +443,7 @@ export const NetworkManager = {
     if (!userId || userId === String(this.myUser.user_id)) return;
 
     if (this.isHost) {
-      const guestName = data.name || 'ゲスト';
+      const guestName = (data.name && data.name !== 'ゲスト') ? data.name : (data.user_name || 'ゲスト');
       let targetSlot = this.slots.findIndex(s => s.userId && String(s.userId) === userId);
 
       if (targetSlot === -1) {
@@ -518,7 +511,8 @@ export const NetworkManager = {
           if (this.isHost) {
             const reqClientId = packet.clientId;
             const reqUserId = String(packet.userId || '');
-            const reqName = packet.name || 'ゲスト';
+            // ★【核心修正①】端末Bが送信してきた本名（packet.name）を優先採用
+            const reqName = (packet.name && packet.name !== 'ゲスト' && packet.name !== 'YOU') ? packet.name : 'ゲスト1';
 
             if (reqClientId && reqClientId !== this.clientId) {
               let targetSlot = this.slots.findIndex(s => s.clientId === reqClientId);
@@ -543,6 +537,7 @@ export const NetworkManager = {
                   name: reqName,
                   isAI: false
                 };
+                // ホスト画面のネームプレートを本名で即座に再描画
                 this._bindRemoteSlot(targetSlot, reqName);
               }
             }
@@ -727,7 +722,25 @@ export const NetworkManager = {
     targetChar.aiDirZ = 0;
     targetChar.targetBlock = null;
     targetChar.searchCooldown = 999999;
-    targetChar.name = playerName || (slotIndex === 0 ? 'norion' : (slotIndex === 1 ? 'ゲスト1' : 'ゲスト2'));
+    
+    // 有効な名前が渡ってきた場合は即座に採用
+    if (playerName && playerName !== 'YOU' && playerName !== 'null') {
+      targetChar.name = playerName;
+    } else if (!targetChar.name || targetChar.name === 'YOU') {
+      targetChar.name = (slotIndex === 0 ? 'norion' : (slotIndex === 1 ? 'ゲスト1' : 'ゲスト2'));
+    }
+
+    // ネームプレートの強制更新（「ゲスト」のまま固定化されるのを防ぐ）
+    if (targetChar.nameplateSprite) {
+      if (targetChar.nameplateSprite.material && targetChar.nameplateSprite.material.map) {
+        targetChar.nameplateSprite.material.map.dispose();
+      }
+      targetChar.nameplateSprite.material.dispose();
+      const newMesh = createNameplateMesh(targetChar.name, false);
+      if (newMesh.geometry) newMesh.geometry.dispose();
+      targetChar.nameplateSprite.material = newMesh.material;
+      targetChar.nameplateSprite.visible = true;
+    }
 
     // AIからゲスト交代時（Stage 0初期化）
     if (typeof resetCharacterToStageZero === 'function') {
@@ -766,7 +779,9 @@ export const NetworkManager = {
       if (targetChar.nameplateSprite.material && targetChar.nameplateSprite.material.map) {
         targetChar.nameplateSprite.material.map.dispose();
       }
+      targetChar.nameplateSprite.material.dispose();
       const newMesh = createNameplateMesh(targetChar.name, false);
+      if (newMesh.geometry) newMesh.geometry.dispose();
       targetChar.nameplateSprite.material = newMesh.material;
       targetChar.nameplateSprite.visible = true;
     }
@@ -800,6 +815,7 @@ export const NetworkManager = {
       }
       lastMyPos.copy(myChar.pos);
 
+      // 自端末の本名を確実にパケットに載せる
       const myName = (typeof window !== 'undefined' && window.GRAVITY_USER_NAME)
         ? String(window.GRAVITY_USER_NAME)
         : (this.myUser ? this.myUser.name : 'YOU');
@@ -867,9 +883,19 @@ export const NetworkManager = {
       if (packet.clientId) this.slots[packet.slot].clientId = packet.clientId;
     }
 
-    const resolvedName = packet.name || (packet.slot === 0 ? 'norion' : (packet.slot === 1 ? 'ゲスト1' : 'ゲスト2'));
+    // ★【核心修正②】相手から有効な名前（「のりおん」等）が届いた場合、仮名（「ゲスト」）を即座に破棄して本名に昇格
+    const packetName = (packet.name && packet.name !== 'YOU' && packet.name !== 'null') ? packet.name : null;
+    let resolvedName = packetName || targetChar.name;
+    if (!resolvedName || resolvedName === 'YOU') {
+      resolvedName = (packet.slot === 0 ? 'norion' : (packet.slot === 1 ? 'ゲスト1' : 'ゲスト2'));
+    }
 
-    if (targetChar.isAI || !targetChar.isRemote || (targetChar.name !== resolvedName && resolvedName !== 'YOU')) {
+    // ネームプレートの強制書き換え条件：
+    // AIだった場合、リモート化されていない場合、または現在の名前が「ゲスト」系で相手から本名が届いた場合
+    const isGenericGuestName = (targetChar.name === 'ゲスト' || targetChar.name === 'ゲスト1' || targetChar.name === 'ゲスト2');
+    const isUpgradedToRealName = isGenericGuestName && packetName && packetName !== targetChar.name;
+
+    if (targetChar.isAI || !targetChar.isRemote || targetChar.name !== resolvedName || isUpgradedToRealName) {
       targetChar.isRemote = true;
       targetChar.isAI = false;
       targetChar.name = resolvedName;
@@ -882,7 +908,9 @@ export const NetworkManager = {
         if (targetChar.nameplateSprite.material && targetChar.nameplateSprite.material.map) {
           targetChar.nameplateSprite.material.map.dispose();
         }
+        targetChar.nameplateSprite.material.dispose();
         const newMesh = createNameplateMesh(resolvedName, false);
+        if (newMesh.geometry) newMesh.geometry.dispose();
         targetChar.nameplateSprite.material = newMesh.material;
         targetChar.nameplateSprite.visible = true;
       }
@@ -986,7 +1014,6 @@ export const NetworkManager = {
     this.isSlotConfirmed = false;
     this._seedApplied = false;
 
-    // ★ 再入室時に確実にリスナーが登録されるようフラグリセット
     this._hasRegisteredListener = false;
 
     if (typeof window !== 'undefined' && window.UIController && typeof window.UIController.showLobby === 'function') {
