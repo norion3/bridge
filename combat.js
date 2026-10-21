@@ -2,7 +2,8 @@
 // ★ Phase 6 実装版（タックル判定のホスト完全一元化・スプリットブレイン根絶）：
 //   1. handleTackles: マルチプレイ時は「ホスト端末」のみが全キャラの接触を計算し、ゲスト端末はローカル判定を完全停止。
 //   2. applyRemoteKnockout: ゲストがホストからノックアウトを宣告された際、自キャラのスタック数も即座に減算し、ホスト側への上書きバグを防止。
-//   3. scatterBricks: ホストが裁定したタックル散乱と、ゲストが自爆した散乱パケットが競合せず正しく飛ぶようにブロードキャスト条件を最適化。
+// ★ Phase 9 実装版（ブロック消失・二重散乱対策の厳格化）：
+//   1. scatterBricks に forceBroadcast 引数を追加し、ホストがタックル裁定を下した際はゲストのブロック散乱も強制的にブロードキャストさせる。
 // ★ 単体プレイ（ソロ）時の当たり判定・アイテムスキル動作は100%維持
 
 import { TEAMS } from './constants.js';
@@ -141,8 +142,9 @@ if (typeof window !== 'undefined') {
  * @param {THREE.Scene} scene 
  * @param {Object} char 
  * @param {number} countToDrop 
+ * @param {boolean} forceBroadcast ★ Phase 9 追加
  */
-export function scatterBricks(scene, char, countToDrop) {
+export function scatterBricks(scene, char, countToDrop, forceBroadcast = false) {
   const count = Math.min(char.stackCount, countToDrop);
   const stage = STAGES[char.currentStage] || STAGES[0];
   const floorY = stage.y + 0.29;
@@ -212,11 +214,10 @@ export function scatterBricks(scene, char, countToDrop) {
     });
   }
 
-  // ★ Phase 6 変更: 散乱パケットの送信権限を最適化
-  // ホストは「タックル等全キャラの散乱」を、ゲストは「自キャラのゲート等による被弾散乱のみ」を送信する
+  // ★ Phase 9 変更: 強制ブロードキャストフラグを加味し、送信条件を厳格化
   const isMulti = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive);
   const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
-  const shouldBroadcast = isMulti && (isHost || char.isPlayer);
+  const shouldBroadcast = isMulti && (forceBroadcast || char.isPlayer || (isHost && char.isAI));
 
   if (shouldBroadcast && droppedBlocks.length > 0 && typeof window !== 'undefined' && window.AgentSDK) {
     try {
@@ -515,8 +516,13 @@ export function tackleKnockout(scene, winner, loser) {
   loser.stunTimer = 1.4;
   if (loser.isPlayer && soundRef) soundRef.playTackle();
 
+  // ★ Phase 9 修正: ホストによる裁定時は強制ブロードキャストフラグを立てる
+  const isMulti = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive);
+  const isHost = (isMulti && window.NetworkManager.isHost);
+  const forceBroadcast = (isMulti && isHost);
+
   const drops = Math.min(6, Math.max(2, Math.floor(loser.stackCount * 0.35)));
-  scatterBricks(scene, loser, drops);
+  scatterBricks(scene, loser, drops, forceBroadcast);
 
   const kx = loser.pos.x - winner.pos.x, kz = loser.pos.z - winner.pos.z;
   const mag = Math.hypot(kx, kz) || 1;
@@ -544,7 +550,6 @@ export function tackleKnockout(scene, winner, loser) {
   }
 
   // マルチプレイ時、被弾側端末へノックアウト（スタン＆吹き飛び）を通知
-  const isMulti = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive);
   if (isMulti && typeof window !== 'undefined' && window.AgentSDK) {
     const loserSlot = characters.indexOf(loser);
     if (loserSlot !== -1) {

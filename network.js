@@ -382,25 +382,21 @@ export const NetworkManager = {
 
       this.currentRoomId = safeRoomId;
 
+      // ★ 修正: 公式仕様に基づき、入室成功直後に受信リスナーを登録する
+      this.ensureMessageListener();
+
       this.isHost = false;
       this.isMultiplayerActive = true;
       this._seedApplied = false;
 
-      this.mySlot = 1;
+      this.mySlot = -1;
       this.isSlotConfirmed = false;
-      window.MY_PLAYER_SLOT = 1;
-      
-      if (typeof bindLocalPlayerSlot === 'function') {
-        bindLocalPlayerSlot(1);
-      } else if (typeof window.bindLocalPlayerSlot === 'function') {
-        window.bindLocalPlayerSlot(1);
-      }
 
       const myRealName = (typeof window !== 'undefined' && window.GRAVITY_USER_NAME)
         ? String(window.GRAVITY_USER_NAME)
         : this.myUser.name;
-        
-      updatePlayerName(myRealName);
+
+      this._bindRemoteSlot(0, 'Player');
 
       safeShowGameScreen();
 
@@ -680,6 +676,7 @@ export const NetworkManager = {
 
       const isHostDefaultSlot0 = (!s.clientId && this.isHost && s.slot === 0);
       
+      // ★ 修正2: ゲストのフォールバック判定。自分がゲストで、未確定で、AIでないスロット(>=1)が送られてきたら「自分」とみなす
       const isGuestFallback = (!this.isHost && !this.isSlotConfirmed && !s.isAI && s.slot >= 1);
 
       const isMyClient = isClientIdMatch || isUserIdMatch || isHostDefaultSlot0 || isGuestFallback;
