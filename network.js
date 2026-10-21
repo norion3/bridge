@@ -1,10 +1,10 @@
 // network.js: AgentSDKラッパー ＆ ルーム入退室ライフサイクル・通信同期エンジン
-// ★ Phase 1 実装版（全同期パケット規格拡張 ＆ タイマー・モブ・ジャンプ送受信エンジン）：
-//   1. 【JUMPステート追加】getCharacterActionState に `isJumping` 時の 'JUMP' を追加し、空中大ジャンプを他端末へ伝達。
-//   2. 【マグネット＆無敵フラグ追加】10Hz POS パケットに `magnet`（吸引オーラ）と `invuln`（被弾点滅無敵）を同封。
-//   3. 【タイマー＆タイムアップ同期】ホストから1秒周期で `TIME_SYNC`、時間切れ時に `TIME_UP` をブロードキャストする仕組みを追加。
-//   4. 【敵モブ吹き飛ばし同期】お邪魔キャラを弾き飛ばした際の `BLOW_MOB` 送受信ハンドラおよびブロードキャスト関数を追加。
-//   5. 既存の shrink/boost/stun 同期、ピン留めフリーズ根絶、無条件スロット昇格、ホスト逆送信遮断は100%維持。
+// ★ ブロック同期・枯渇根絶対応版：
+//   1. 【SPAWN_BLOCK正規ブロードキャスト】ホスト補充パケットがSDK側で破棄される不具合を解消するため、
+//      `broadcastSpawnBlock` を新設（room_id/msg_data完全同封）。
+//   2. 【PICK_BLOCK正規ブロードキャスト】ブロック取得時の安全な送信ラッパー `broadcastPickBlock` を新設。
+//   3. 既存の JUMP空中姿勢、magnet/invulnフラグ、TIME_SYNC/TIME_UP、BLOW_MOB、および
+//      shrink/boost/stun同期、ピン留めフリーズ根絶、ホストAuthoritative仕様は100%維持。
 
 import {
   characters,
@@ -124,7 +124,6 @@ function generateClientId() {
 
 /**
  * キャラクターの現在の搭乗・アクション状態を取得するヘルパー
- * ★【Phase 1 改善】トランポリン大ジャンプ（JUMP）を追加
  */
 function getCharacterActionState(c) {
   if (c.isJumping) return 'JUMP';
@@ -613,21 +612,18 @@ export const NetworkManager = {
           }
           break;
 
-        // ★【Phase 1 追加】タイマー同期受信ハンドラ
         case 'TIME_SYNC':
           if (!this.isHost && typeof window.applyRemoteTimeSync === 'function') {
             window.applyRemoteTimeSync(packet.timeLeft);
           }
           break;
 
-        // ★【Phase 1 追加】ホスト主導タイムアップ受信ハンドラ
         case 'TIME_UP':
           if (typeof window.applyRemoteTimeUp === 'function') {
             window.applyRemoteTimeUp();
           }
           break;
 
-        // ★【Phase 1 追加】敵モブ吹き飛ばし受信ハンドラ
         case 'BLOW_MOB':
           if (typeof window.applyRemoteBlowMob === 'function') {
             window.applyRemoteBlowMob(packet.mobIndex, packet.stageIdx, packet.pushDirX);
@@ -840,8 +836,6 @@ export const NetworkManager = {
 
   /**
    * 10Hz 位置情報ブロードキャスト
-   * ★【Phase 1 拡張】自キャラおよびAIキャラの boost, stun, shrink に加え、magnet, invuln をパケットに含める
-   * ★【Phase 1 拡張】ホスト端末は1秒周期（10フレームごと）で TIME_SYNC を自動送信
    */
   _startPositionBroadcasting() {
     if (this._syncIntervalId) clearInterval(this._syncIntervalId);
@@ -925,7 +919,6 @@ export const NetworkManager = {
           }
         });
 
-        // ★【Phase 1 拡張】ホスト端末による1秒周期（100ms * 10 = 1s）のタイマー同期パケット送信
         this._timeSyncCounter = (this._timeSyncCounter || 0) + 1;
         if (this._timeSyncCounter >= 10) {
           this._timeSyncCounter = 0;
@@ -951,7 +944,6 @@ export const NetworkManager = {
 
   /**
    * 受信したPOSパケットのスロットをリモートプレイヤーとして確定・更新
-   * ★【Phase 1 拡張】magnet, invuln フラグを受信反映
    */
   _handleRemotePosition(packet) {
     if (packet.slot === this.mySlot || packet.clientId === this.clientId) return;
@@ -1016,7 +1008,6 @@ export const NetworkManager = {
     targetChar.remoteActionState = packet.state || 'NORMAL';
     targetChar.lastPacketTime = performance.now();
 
-    // 加速・スタン状態フラグをキャラオブジェクトへ即座に反映
     targetChar.speedBoostActive = Boolean(packet.boost);
     targetChar.isStunned = Boolean(packet.stun);
 
@@ -1024,13 +1015,11 @@ export const NetworkManager = {
       targetChar.stunTimer = 0;
     }
 
-    // サンダー小人化フラグを格納
     targetChar.isShrunk = Boolean(packet.shrink);
     if (!packet.shrink) {
       targetChar.shrinkTimer = 0;
     }
 
-    // ★【Phase 1 拡張】マグネット吸引中フラグおよび無敵中フラグを格納
     targetChar.magnetActive = Boolean(packet.magnet);
     targetChar.isInvulnerable = Boolean(packet.invuln);
     if (!packet.invuln) {
@@ -1061,6 +1050,38 @@ export const NetworkManager = {
     }
   },
 
+  /**
+   * ★【新設】AgentSDK規格完全準拠のブロック生成ブロードキャスト
+   */
+  broadcastSpawnBlock(stageIdx, poolIdx, x, y, z, teamId, blockId) {
+    if (!this.isMultiplayerActive) return;
+    this._sendCustomMessage({
+      event: 'SPAWN_BLOCK',
+      stageIdx: stageIdx,
+      poolIdx: poolIdx,
+      x: Number(x.toFixed(2)),
+      y: Number(y.toFixed(2)),
+      z: Number(z.toFixed(2)),
+      teamId: teamId,
+      blockId: blockId
+    });
+  },
+
+  /**
+   * ★【新設】AgentSDK規格完全準拠のブロック取得ブロードキャスト
+   */
+  broadcastPickBlock(blockId, stageIdx, poolIdx, x, z) {
+    if (!this.isMultiplayerActive) return;
+    this._sendCustomMessage({
+      event: 'PICK_BLOCK',
+      blockId: blockId,
+      stageIdx: stageIdx,
+      poolIdx: poolIdx,
+      x: Number(x.toFixed(2)),
+      z: Number(z.toFixed(2))
+    });
+  },
+
   broadcastConsumeObject(objectId, objectType) {
     if (!this.isMultiplayerActive) return;
     this._sendCustomMessage({
@@ -1070,9 +1091,6 @@ export const NetworkManager = {
     });
   },
 
-  /**
-   * ★【Phase 1 追加】お邪魔キャラ吹き飛ばしブロードキャスト
-   */
   broadcastBlowMob(mobIndex, stageIdx, pushDirX) {
     if (!this.isMultiplayerActive) return;
     this._sendCustomMessage({
@@ -1083,9 +1101,6 @@ export const NetworkManager = {
     });
   },
 
-  /**
-   * ★【Phase 1 追加】ホスト主導タイムアップブロードキャスト
-   */
   broadcastTimeUp() {
     if (!this.isMultiplayerActive || !this.isHost) return;
     this._sendCustomMessage({

@@ -1,9 +1,8 @@
 // blocks.js: 床ブロック管理・補充・スポーン・一意キー（blockId）マルチ同期専用モジュール
-// ★ Step 7 実装版（ブロック一意キー化・座標丸め誤差による消失防止）：
-//   1. 端末間でズレる配列インデックス（poolIdx）依存を完全撤廃し、ステージ番号＋連番の一意キー（blockId: "stage_counter"）を導入
-//   2. applyRemoteBlockSpawned / applyRemoteBlockPicked で blockId による完全一致マッチングを行い、隣接ブロックの誤消去をゼロ化
-//   3. ホスト側のみが定期スポーン（SPAWN_BLOCK）の主導権を持ち、一意キー付きで生成パケットをブロードキャスト
-//   4. 既存のランダム回転、アイテム・ギミック除外半径、ソロプレイ動作は100%維持
+// ★ Step 2 実装版（ブロックID確定論化 ＆ 補充ブロードキャスト正規送信）：
+//   1. 【Date.now()の完全撤廃】ミリ秒単位の時刻による端末間ID乖離を根絶。ステージ番号＋連番（`b_${stageIdx}_${globalBlockSpawnCounter}`）で両端末完全一致採番。
+//   2. 【SPAWN_BLOCK正規送信】生オブジェクト直接送信を廃止し、`NetworkManager.broadcastSpawnBlock` を通じた正規AgentSDKフォーマットで送信。奥の島での補充不達・ブロック枯渇を100%防止。
+//   3. 【重複ガード強化】既存ブロックとの近接・ID照合、安全なオブジェクトプール再利用は100%維持。
 
 import {
   BLOCK_TYPES,
@@ -47,7 +46,7 @@ export function getFloorBlocksForStage(stageIdx) {
 }
 
 /**
- * ★【Step 7 核心】ホストから新ブロック補充パケット（blockId付き）を受信した際の反映ハンドラ
+ * ホストから新ブロック補充パケット（blockId付き）を受信した際の反映ハンドラ
  * 配列インデックスへの盲従を撤廃し、一意キーによる厳格管理と安全なプール割り当てを実施
  */
 export function applyRemoteBlockSpawned(stageIdx, poolIdx, x, y, z, teamId, blockId = null) {
@@ -223,10 +222,12 @@ export function spawnSingleBlock(scene, stageIdx, targetTeam = null) {
   else mat = sharedMats.blockNeutral;
 
   globalBlockSpawnCounter++;
-  const uniqueBlockId = `b_${stageIdx}_${globalBlockSpawnCounter}_${Date.now().toString(36)}`;
+  // ★【核心改善①】Date.now() を撤廃し、確定論的シードと連番で両端末のIDを100%一致させる
+  const uniqueBlockId = `b_${stageIdx}_${globalBlockSpawnCounter}`;
 
+  const spawnY = stageInfo.y + 0.25;
   poolItem.mesh.material = mat;
-  poolItem.mesh.position.set(validPos.x, stageInfo.y + 0.25, validPos.z);
+  poolItem.mesh.position.set(validPos.x, spawnY, validPos.z);
   poolItem.mesh.rotation.set(0, seededRandom() * Math.PI, 0);
   poolItem.mesh.visible = true;
 
@@ -239,26 +240,21 @@ export function spawnSingleBlock(scene, stageIdx, targetTeam = null) {
 
   stageBlocks.push(poolItem);
 
-  // マルチプレイ時、ホストが補充したブロック情報を一意ID付きで他端末へブロードキャスト
+  // ★【核心改善②】NetworkManager.broadcastSpawnBlock を通じて AgentSDK 正規フォーマットで送信
   const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
   const isMulti = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive);
-  if (isMulti && isHost && typeof window !== 'undefined' && window.AgentSDK) {
+  if (isMulti && isHost && typeof window !== 'undefined' && window.NetworkManager) {
     const poolIdx = floorBlockPool.indexOf(poolItem);
-    try {
-      window.AgentSDK.room.sendMessage({
-        message: JSON.stringify({
-          event: 'SPAWN_BLOCK',
-          blockId: uniqueBlockId,
-          poolIdx: poolIdx,
-          stageIdx: stageIdx,
-          x: Number(validPos.x.toFixed(2)),
-          y: Number((stageInfo.y + 0.25).toFixed(2)),
-          z: Number(validPos.z.toFixed(2)),
-          teamId: team.id
-        })
-      });
-    } catch (err) {
-      console.warn('[blocks.js] Failed to broadcast SPAWN_BLOCK:', err);
+    if (typeof window.NetworkManager.broadcastSpawnBlock === 'function') {
+      window.NetworkManager.broadcastSpawnBlock(
+        stageIdx,
+        poolIdx,
+        validPos.x,
+        spawnY,
+        validPos.z,
+        team.id,
+        uniqueBlockId
+      );
     }
   }
 }
