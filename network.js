@@ -1,15 +1,12 @@
 // network.js: AgentSDK連携 ＆ ルーム入退室ライフサイクル・マルチプレイ通信同期エンジン
-// ★ Phase 1 実装版（送信元実体直結 ＆ ゲスト座標送出保証 ＆ 実機必須プロパティ復元）：
-//   1. 【操作キャラ実体からの座標取得】
-//      `characters[this.mySlot]` の参照乖離によって初期位置（-4, 4）が送り続けられていた問題を根絶。
-//      ゲスト端末で実際にジョイスティック入力によって移動しているローカルプレイヤー（`player`）の
-//      現在座標（pos.x, pos.y, pos.z）、回転、スタック数をダイレクトに取得して送信パケットを生成。
-//   2. 【実機必須プロパティ完全復元】
-//      実機WebView（JSBridge）でパケット送出に不可欠な `room_id`, `roomId`, `msg_data` を
-//      `_sendCustomMessage` に完全同封し、ネイティブ層でのサイレント破棄を遮断。
-//   3. 【ゲストスロット確定保証】
-//      ゲスト端末が送信するパケットの slot を確実に `this.mySlot`（スロット1）として送出し、
-//      ホスト側が「スロット1（赤キャラ / のりおん）」の目標座標として100%受理できるように整備。
+// ★ ゲスト同期完全復旧版：
+//   1. 【userId判定の完全復元】_applyRoomMembersSync において、抜け落ちていた `s.userId` による
+//      人間プレイヤー確定判定を復元。ホスト側でゲストがCPUと誤認されて初期位置へ強制復帰される問題を根絶。
+//   2. 【操作キャラ実体からの座標取得】ゲスト端末で実際に移動している `player` 実体の
+//      現在座標（pos.x, pos.y, pos.z）、回転、スタック数をダイレクトに取得して送信。
+//   3. 【実機必須プロパティ担保】実機WebView（JSBridge）でパケット送出に不可欠な
+//      `room_id`, `roomId`, `msg_data` を `_sendCustomMessage` に完全同封。
+//   4. 【他ファイル互換性維持】blocks.js / systems.js が利用する各種ブロードキャスト関数を完全維持。
 
 import {
   player,
@@ -652,6 +649,11 @@ export const NetworkManager = {
     }
   },
 
+  /**
+   * ★【核心修正】s.userId による人間プレイヤー判定を完全復元
+   * s.clientId が null であっても、s.userId が存在していれば絶対に CPU（AI）へ格下げせず、
+   * ホスト側でゲスト（スロット1）を「リモート走者」として100%確実に維持・バインドする
+   */
   _applyRoomMembersSync(syncedSlots, seed, snapshot = null) {
     if (!Array.isArray(syncedSlots)) return;
     this.slots = syncedSlots;
@@ -700,10 +702,20 @@ export const NetworkManager = {
 
     syncedSlots.forEach((s) => {
       const isClientIdMatch = !!(s.clientId && s.clientId === this.clientId);
+
+      // ★ userId による自己判定も復元
+      const isUserIdMatch = !!(
+        s.userId &&
+        this.myUser &&
+        this.myUser.user_id &&
+        s.userId !== 'local_user' &&
+        String(s.userId) === String(this.myUser.user_id)
+      );
+
       const isHostDefaultSlot0 = (!s.clientId && this.isHost && s.slot === 0);
       const isGuestFallback = (!this.isHost && s.slot === this.mySlot);
 
-      const isMyClient = isClientIdMatch || isHostDefaultSlot0 || isGuestFallback;
+      const isMyClient = isClientIdMatch || isUserIdMatch || isHostDefaultSlot0 || isGuestFallback;
 
       if (isMyClient) {
         if (this.mySlot !== s.slot) {
@@ -724,7 +736,9 @@ export const NetworkManager = {
         return;
       }
 
-      if (!s.isAI && (s.clientId || (!this.isHost && s.slot === 0))) {
+      // ★【最重要修正】s.userId による人間スロット判定を復元！
+      // clientId が未格納（null）であっても、userId があれば確実に _bindRemoteSlot を維持し、CPU化を阻止
+      if (!s.isAI && (s.clientId || s.userId || (!this.isHost && s.slot === 0))) {
         this._bindRemoteSlot(s.slot, s.name);
       } else if (s.isAI) {
         this._restoreSlotToAI(s.slot);
@@ -835,8 +849,6 @@ export const NetworkManager = {
 
   /**
    * 10Hz 位置情報ブロードキャスト
-   * ★【Phase 1 核心改善】
-   * 操作端末で実際に動いているローカルプレイヤー実体（player）の最新座標・状態を直接抽出して送信
    */
   _startPositionBroadcasting() {
     if (this._syncIntervalId) clearInterval(this._syncIntervalId);
@@ -847,7 +859,7 @@ export const NetworkManager = {
     this._syncIntervalId = setInterval(() => {
       if (!this.isMultiplayerActive || !this.isSDKAvailable) return;
 
-      // ★ 画面上で実際にジョイスティック操作を受けて動いているキャラクター実体を特定
+      // 画面上で実際にジョイスティック操作を受けて動いているキャラクター実体を特定
       let myChar = null;
       if (typeof window !== 'undefined' && window.localPlayerInstance) {
         myChar = window.localPlayerInstance;
@@ -879,7 +891,6 @@ export const NetworkManager = {
 
       const posList = [];
 
-      // ★ 送信スロットは確実に自分の確定スロット番号（ホスト=0, ゲスト=1）で送信
       posList.push({
         slot: this.mySlot,
         clientId: this.clientId,
@@ -908,7 +919,8 @@ export const NetworkManager = {
           const charObj = characters[s.slot];
           if (!charObj) return;
 
-          const isHumanPlayer = charObj.isRemote || Boolean(charObj.targetNetPos) || !s.isAI;
+          // ★ 人間プレイヤー判定に s.userId も加味
+          const isHumanPlayer = charObj.isRemote || Boolean(charObj.targetNetPos) || !s.isAI || Boolean(s.userId);
           if (s.isAI && !isHumanPlayer) {
             posList.push({
               slot: s.slot,
