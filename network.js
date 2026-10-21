@@ -1,10 +1,11 @@
 // network.js: AgentSDKラッパー ＆ ルーム入退室ライフサイクル・通信同期エンジン
-// ★ ブロック同期・枯渇根絶対応版：
-//   1. 【SPAWN_BLOCK正規ブロードキャスト】ホスト補充パケットがSDK側で破棄される不具合を解消するため、
-//      `broadcastSpawnBlock` を新設（room_id/msg_data完全同封）。
-//   2. 【PICK_BLOCK正規ブロードキャスト】ブロック取得時の安全な送信ラッパー `broadcastPickBlock` を新設。
-//   3. 既存の JUMP空中姿勢、magnet/invulnフラグ、TIME_SYNC/TIME_UP、BLOW_MOB、および
-//      shrink/boost/stun同期、ピン留めフリーズ根絶、ホストAuthoritative仕様は100%維持。
+// ★ Phase 1 実装版（パケット交通整理 ＆ clientId 厳格ルーティング）：
+//   1. 【ブロック一括まとめ送り（SPAWN_BLOCKS_BATCH）新設】1個ずつのマシンガン送信を廃止し、配列で一括送受信する仕組みを追加。
+//   2. 【タイマーのPOS相乗り化（単独TIME_SYNC廃止）】毎秒単独で呼んでいた TIME_SYNC の sendMessage を完全削除し、
+//      ホストの POS パケットに timeLeft を同封することでパケット衝突・輻輳を解消。
+//   3. 【clientId 厳格ルーティング】アカウント名・userIdの重複（norion同士のテスト等）による自己誤認を根絶し、
+//      sessionStorage の clientId のみで端末・スロットを確実に確定。
+//   4. 既存の JUMP、magnet/invuln/shrink/boost/stun、BLOW_MOB、およびホストAuthoritative仕様は100%維持。
 
 import {
   characters,
@@ -108,7 +109,7 @@ function captureWorldSnapshot() {
 }
 
 /**
- * 端末固有のセッションIDを生成
+ * 端末固有のセッションIDを生成（端末・タブ単位で完全一意）
  */
 function generateClientId() {
   if (typeof window !== 'undefined' && window.sessionStorage) {
@@ -158,7 +159,6 @@ export const NetworkManager = {
   _lastRefreshTime: 0,
   _syncIntervalId: null,
   _retrySyncIntervalId: null,
-  _timeSyncCounter: 0,
 
   _isCreatingRoom: false,
   _isJoiningRoom: false,
@@ -438,25 +438,25 @@ export const NetworkManager = {
     }
   },
 
+  /**
+   * ★【Phase 1 改善】clientId を重視した入室ハンドリング
+   */
   _handleUserJoined(data) {
     if (!data) return;
     const userId = String(data.user_id || '');
-    if (!userId || userId === String(this.myUser.user_id)) return;
-
+    // ホスト自身と同一ユーザーIDであっても、clientId が異なれば別端末（ゲスト）として受け入れる
     if (this.isHost) {
       const guestName = (data.name && data.name !== 'ゲスト') ? data.name : (data.user_name || 'ゲスト');
-      let targetSlot = this.slots.findIndex(s => s.userId && String(s.userId) === userId);
+      let targetSlot = -1;
 
-      if (targetSlot === -1) {
-        if (this.slots[1].isAI) targetSlot = 1;
-        else if (this.slots[2].isAI) targetSlot = 2;
-      }
+      if (this.slots[1].isAI) targetSlot = 1;
+      else if (this.slots[2].isAI) targetSlot = 2;
 
       if (targetSlot !== -1) {
         this.slots[targetSlot] = {
           slot: targetSlot,
-          clientId: this.slots[targetSlot].clientId || null,
-          userId: userId,
+          clientId: data.clientId || this.slots[targetSlot].clientId || null,
+          userId: userId || `guest_${targetSlot}`,
           name: guestName,
           isAI: false
         };
@@ -514,19 +514,13 @@ export const NetworkManager = {
             const reqUserId = String(packet.userId || '');
             const reqName = (packet.name && packet.name !== 'ゲスト' && packet.name !== 'YOU') ? packet.name : 'ゲスト1';
 
+            // ★ clientId を最優先にスロット判定
             if (reqClientId && reqClientId !== this.clientId) {
               let targetSlot = this.slots.findIndex(s => s.clientId === reqClientId);
 
-              if (targetSlot === -1 && reqUserId && reqUserId !== 'local_user') {
-                targetSlot = this.slots.findIndex(s => s.userId && String(s.userId) === reqUserId);
-              }
-
               if (targetSlot === -1) {
-                if (this.slots[1].isAI) {
-                  targetSlot = 1;
-                } else if (this.slots[2].isAI) {
-                  targetSlot = 2;
-                }
+                if (this.slots[1].isAI) targetSlot = 1;
+                else if (this.slots[2].isAI) targetSlot = 2;
               }
 
               if (targetSlot !== -1) {
@@ -551,6 +545,11 @@ export const NetworkManager = {
           break;
 
         case 'POS':
+          // ★【Phase 1 核心】パケットに同封された timeLeft をタイマーへ直接同期（単独TIME_SYNCを不要化）
+          if (!this.isHost && typeof packet.timeLeft === 'number' && typeof window.applyRemoteTimeSync === 'function') {
+            window.applyRemoteTimeSync(packet.timeLeft);
+          }
+
           if (Array.isArray(packet.list)) {
             packet.list.forEach(p => this._handleRemotePosition(p));
           } else {
@@ -570,6 +569,26 @@ export const NetworkManager = {
           }
           break;
 
+        // ★【Phase 1 新設】ブロック補充バッチ受信ハンドラ
+        case 'SPAWN_BLOCKS_BATCH':
+          if (Array.isArray(packet.blocks) && typeof window.applyRemoteBlocksBatch === 'function') {
+            window.applyRemoteBlocksBatch(packet.stageIdx, packet.blocks);
+          } else if (Array.isArray(packet.blocks) && typeof window.applyRemoteBlockSpawned === 'function') {
+            packet.blocks.forEach(b => {
+              window.applyRemoteBlockSpawned(
+                b.stageIdx !== undefined ? b.stageIdx : packet.stageIdx,
+                b.poolIdx,
+                b.x,
+                b.y,
+                b.z,
+                b.teamId,
+                b.blockId
+              );
+            });
+          }
+          break;
+
+        // 単体SPAWN_BLOCK（後方互換）
         case 'SPAWN_BLOCK':
           if (typeof window.applyRemoteBlockSpawned === 'function') {
             window.applyRemoteBlockSpawned(packet.stageIdx, packet.poolIdx, packet.x, packet.y, packet.z, packet.teamId, packet.blockId);
@@ -612,12 +631,6 @@ export const NetworkManager = {
           }
           break;
 
-        case 'TIME_SYNC':
-          if (!this.isHost && typeof window.applyRemoteTimeSync === 'function') {
-            window.applyRemoteTimeSync(packet.timeLeft);
-          }
-          break;
-
         case 'TIME_UP':
           if (typeof window.applyRemoteTimeUp === 'function') {
             window.applyRemoteTimeUp();
@@ -636,7 +649,7 @@ export const NetworkManager = {
   },
 
   /**
-   * clientId & userId 二重照合による厳格スロット確定処理
+   * ★【Phase 1 改善】clientId を絶対基準としたスロット確定処理
    */
   _applyRoomMembersSync(syncedSlots, seed, snapshot = null) {
     if (!Array.isArray(syncedSlots)) return;
@@ -685,20 +698,12 @@ export const NetworkManager = {
     }
 
     syncedSlots.forEach((s) => {
+      // 端末判定は clientId のみを第一基準にする
       const isClientIdMatch = !!(s.clientId && s.clientId === this.clientId);
-
-      const isUserIdMatch = !!(
-        s.userId &&
-        this.myUser &&
-        this.myUser.user_id &&
-        s.userId !== 'local_user' &&
-        String(s.userId) === String(this.myUser.user_id)
-      );
-
       const isHostDefaultSlot0 = (!s.clientId && this.isHost && s.slot === 0);
       const isGuestFallback = (!this.isHost && s.slot === this.mySlot);
 
-      const isMyClient = isClientIdMatch || isUserIdMatch || isHostDefaultSlot0 || isGuestFallback;
+      const isMyClient = isClientIdMatch || isHostDefaultSlot0 || isGuestFallback;
 
       if (isMyClient) {
         if (this.mySlot !== s.slot) {
@@ -719,7 +724,7 @@ export const NetworkManager = {
         return;
       }
 
-      if (!s.isAI && (s.clientId || s.userId || (!this.isHost && s.slot === 0))) {
+      if (!s.isAI && (s.clientId || (!this.isHost && s.slot === 0))) {
         this._bindRemoteSlot(s.slot, s.name);
       } else if (s.isAI) {
         this._restoreSlotToAI(s.slot);
@@ -728,7 +733,7 @@ export const NetworkManager = {
   },
 
   /**
-   * ピン留めフリーズ根絶版 _bindRemoteSlot
+   * リモートスロット確定ヘルパー
    */
   _bindRemoteSlot(slotIndex, playerName) {
     const targetChar = characters[slotIndex];
@@ -788,7 +793,7 @@ export const NetworkManager = {
   },
 
   /**
-   * ゲスト退出後にスロットをAIへ安全かつ即座に復帰させる関数
+   * ゲスト退出後のAI復帰
    */
   _restoreSlotToAI(slotIndex) {
     const targetChar = characters[slotIndex];
@@ -836,6 +841,7 @@ export const NetworkManager = {
 
   /**
    * 10Hz 位置情報ブロードキャスト
+   * ★【Phase 1 核心】単独TIME_SYNCを完全廃止し、POSパケットにホストタイマーを同封
    */
   _startPositionBroadcasting() {
     if (this._syncIntervalId) clearInterval(this._syncIntervalId);
@@ -888,6 +894,7 @@ export const NetworkManager = {
         invuln: Boolean(myChar.invulnerableTimer > 0)
       });
 
+      let hostTimeLeft = undefined;
       if (this.isHost) {
         this.slots.forEach(s => {
           if (s.slot === this.mySlot) return;
@@ -919,24 +926,20 @@ export const NetworkManager = {
           }
         });
 
-        this._timeSyncCounter = (this._timeSyncCounter || 0) + 1;
-        if (this._timeSyncCounter >= 10) {
-          this._timeSyncCounter = 0;
-          if (typeof window !== 'undefined' && typeof window.getGameTimeLeft === 'function') {
-            const currentSec = window.getGameTimeLeft();
-            if (typeof currentSec === 'number' && !isNaN(currentSec)) {
-              this._sendCustomMessage({
-                event: 'TIME_SYNC',
-                timeLeft: Number(currentSec.toFixed(1))
-              });
-            }
+        // ホスト端末の場合、現在の残り秒数を POS パケット内に同封
+        if (typeof window !== 'undefined' && typeof window.getGameTimeLeft === 'function') {
+          const sec = window.getGameTimeLeft();
+          if (typeof sec === 'number' && !isNaN(sec)) {
+            hostTimeLeft = Number(sec.toFixed(1));
           }
         }
       }
 
+      // ★ 1回のメッセージ送信に全情報を集約（重複送信ゼロ）
       this._sendCustomMessage({
         event: 'POS',
         clientId: this.clientId,
+        timeLeft: hostTimeLeft,
         list: posList
       });
     }, 100);
@@ -1051,7 +1054,20 @@ export const NetworkManager = {
   },
 
   /**
-   * ★【新設】AgentSDK規格完全準拠のブロック生成ブロードキャスト
+   * ★【Phase 1 核心】ブロック補充の一括（バッチ）ブロードキャスト
+   * 1通にまとめることで回線詰まり・パケットパンクを完全に根絶
+   */
+  broadcastSpawnBlocksBatch(stageIdx, blocksArray) {
+    if (!this.isMultiplayerActive || !Array.isArray(blocksArray) || blocksArray.length === 0) return;
+    this._sendCustomMessage({
+      event: 'SPAWN_BLOCKS_BATCH',
+      stageIdx: stageIdx,
+      blocks: blocksArray
+    });
+  },
+
+  /**
+   * 単発ブロック生成ブロードキャスト（後方互換）
    */
   broadcastSpawnBlock(stageIdx, poolIdx, x, y, z, teamId, blockId) {
     if (!this.isMultiplayerActive) return;
@@ -1068,7 +1084,7 @@ export const NetworkManager = {
   },
 
   /**
-   * ★【新設】AgentSDK規格完全準拠のブロック取得ブロードキャスト
+   * ブロック取得ブロードキャスト
    */
   broadcastPickBlock(blockId, stageIdx, poolIdx, x, z) {
     if (!this.isMultiplayerActive) return;

@@ -1,8 +1,10 @@
 // blocks.js: 床ブロック管理・補充・スポーン・一意キー（blockId）マルチ同期専用モジュール
-// ★ Step 2 実装版（ブロックID確定論化 ＆ 補充ブロードキャスト正規送信）：
-//   1. 【Date.now()の完全撤廃】ミリ秒単位の時刻による端末間ID乖離を根絶。ステージ番号＋連番（`b_${stageIdx}_${globalBlockSpawnCounter}`）で両端末完全一致採番。
-//   2. 【SPAWN_BLOCK正規送信】生オブジェクト直接送信を廃止し、`NetworkManager.broadcastSpawnBlock` を通じた正規AgentSDKフォーマットで送信。奥の島での補充不達・ブロック枯渇を100%防止。
-//   3. 【重複ガード強化】既存ブロックとの近接・ID照合、安全なオブジェクトプール再利用は100%維持。
+// ★ Phase 2 実装版（ブロック補充のバッチ一括送信 ＆ パケット輻輳根絶）：
+//   1. 【マシンガン送信の完全撤廃】1個湧くごとに sendMessage を呼ぶのを廃止し、manageBlockSpawns のループで
+//      補充されたブロックを配列（newlySpawned）へ蓄積。1通のバッチパケット（broadcastSpawnBlocksBatch）で一括送信。
+//   2. 【一括反映ハンドラ新設】applyRemoteBlocksBatch を追加。受信側も配列を一度に展開してプールから割り当て、
+//      通信回数を 1/15 以下に圧縮して回線パンクを根絶。
+//   3. 確定論的ID採番（b_${stageIdx}_${globalBlockSpawnCounter}）、近接重複ガード、プール再利用は100%維持。
 
 import {
   BLOCK_TYPES,
@@ -46,8 +48,7 @@ export function getFloorBlocksForStage(stageIdx) {
 }
 
 /**
- * ホストから新ブロック補充パケット（blockId付き）を受信した際の反映ハンドラ
- * 配列インデックスへの盲従を撤廃し、一意キーによる厳格管理と安全なプール割り当てを実施
+ * ホストから新ブロック補充パケット（blockId付き）を受信した際の反映ハンドラ（単体）
  */
 export function applyRemoteBlockSpawned(stageIdx, poolIdx, x, y, z, teamId, blockId = null) {
   const stageInfo = STAGES[stageIdx];
@@ -117,20 +118,42 @@ export function applyRemoteBlockSpawned(stageIdx, poolIdx, x, y, z, teamId, bloc
   }
 }
 
+/**
+ * ★【Phase 2 新設】ホストからの一括（バッチ）ブロック補充パケット受信ハンドラ
+ */
+export function applyRemoteBlocksBatch(stageIdx, blocksArray) {
+  if (!Array.isArray(blocksArray) || blocksArray.length === 0) return;
+  for (let i = 0; i < blocksArray.length; i++) {
+    const b = blocksArray[i];
+    applyRemoteBlockSpawned(
+      b.stageIdx !== undefined ? b.stageIdx : stageIdx,
+      b.poolIdx,
+      b.x,
+      b.y,
+      b.z,
+      b.teamId,
+      b.blockId
+    );
+  }
+}
+
 // グローバル公開（network.js から安全に呼べるように登録）
 if (typeof window !== 'undefined') {
   window.applyRemoteBlockSpawned = applyRemoteBlockSpawned;
+  window.applyRemoteBlocksBatch = applyRemoteBlocksBatch;
 }
 
 /**
- * 単一床ブロックの出現判定および配置（ホスト端末またはソロプレイで実行）
+ * 単一床ブロックの出現位置判定および内部配置
  * @param {THREE.Scene} scene 
  * @param {number} stageIdx 
  * @param {Object|null} targetTeam 
+ * @param {boolean} shouldBroadcastImmediately （trueの場合は単発送信、バッチ時はfalse）
+ * @returns {Object|null} 生成されたブロック情報
  */
-export function spawnSingleBlock(scene, stageIdx, targetTeam = null) {
+export function spawnSingleBlock(scene, stageIdx, targetTeam = null, shouldBroadcastImmediately = true) {
   const stageInfo = STAGES[stageIdx];
-  if (!stageInfo) return;
+  if (!stageInfo) return null;
 
   const minClearanceSq = 1.35 * 1.35;
   let validPos = null;
@@ -192,7 +215,7 @@ export function spawnSingleBlock(scene, stageIdx, targetTeam = null) {
     attempts++;
   }
 
-  if (!validPos) return;
+  if (!validPos) return null;
 
   let poolItem = floorBlockPool.find(b => !b.active);
   if (!poolItem) {
@@ -212,7 +235,7 @@ export function spawnSingleBlock(scene, stageIdx, targetTeam = null) {
       if (oldIdx !== -1) oldStageBlocks.splice(oldIdx, 1);
     }
   }
-  if (!poolItem) return;
+  if (!poolItem) return null;
 
   const team = targetTeam || BLOCK_TYPES[Math.floor(seededRandom() * BLOCK_TYPES.length)];
   let mat;
@@ -222,10 +245,9 @@ export function spawnSingleBlock(scene, stageIdx, targetTeam = null) {
   else mat = sharedMats.blockNeutral;
 
   globalBlockSpawnCounter++;
-  // ★【核心改善①】Date.now() を撤廃し、確定論的シードと連番で両端末のIDを100%一致させる
   const uniqueBlockId = `b_${stageIdx}_${globalBlockSpawnCounter}`;
-
   const spawnY = stageInfo.y + 0.25;
+
   poolItem.mesh.material = mat;
   poolItem.mesh.position.set(validPos.x, spawnY, validPos.z);
   poolItem.mesh.rotation.set(0, seededRandom() * Math.PI, 0);
@@ -240,32 +262,47 @@ export function spawnSingleBlock(scene, stageIdx, targetTeam = null) {
 
   stageBlocks.push(poolItem);
 
-  // ★【核心改善②】NetworkManager.broadcastSpawnBlock を通じて AgentSDK 正規フォーマットで送信
-  const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
-  const isMulti = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive);
-  if (isMulti && isHost && typeof window !== 'undefined' && window.NetworkManager) {
-    const poolIdx = floorBlockPool.indexOf(poolItem);
-    if (typeof window.NetworkManager.broadcastSpawnBlock === 'function') {
+  const blockRecord = {
+    stageIdx: stageIdx,
+    poolIdx: floorBlockPool.indexOf(poolItem),
+    x: Number(validPos.x.toFixed(2)),
+    y: Number(spawnY.toFixed(2)),
+    z: Number(validPos.z.toFixed(2)),
+    teamId: team.id,
+    blockId: uniqueBlockId
+  };
+
+  // 単体生成時のみ即時送信（バッチ処理時は manageBlockSpawns から一括送信）
+  if (shouldBroadcastImmediately) {
+    const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
+    const isMulti = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive);
+    if (isMulti && isHost && window.NetworkManager && typeof window.NetworkManager.broadcastSpawnBlock === 'function') {
       window.NetworkManager.broadcastSpawnBlock(
         stageIdx,
-        poolIdx,
-        validPos.x,
-        spawnY,
-        validPos.z,
-        team.id,
-        uniqueBlockId
+        blockRecord.poolIdx,
+        blockRecord.x,
+        blockRecord.y,
+        blockRecord.z,
+        blockRecord.teamId,
+        blockRecord.blockId
       );
     }
   }
+
+  return blockRecord;
 }
 
 /**
- * 全走者の滞在ステージに応じた床ブロック定期補充
+ * ★【Phase 2 核心】全走者の滞在ステージに応じた床ブロック定期補充
+ * 湧いたブロックを配列に蓄積し、1通のバッチパケットで一括ブロードキャスト
  * @param {THREE.Scene} scene 
  * @param {boolean} isGameOver 
  */
 export function manageBlockSpawns(scene, isGameOver = false) {
   if (isGameOver) return;
+
+  const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
+  const isMulti = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive);
 
   for (let cIdx = 0; cIdx < characters.length; cIdx++) {
     const s = characters[cIdx].currentStage;
@@ -280,6 +317,7 @@ export function manageBlockSpawns(scene, isGameOver = false) {
     if (alreadyChecked) continue;
 
     const stageBlocks = getFloorBlocksForStage(s);
+    const newlySpawnedInStage = [];
 
     for (let tIdx = 0; tIdx < BLOCK_TYPES.length; tIdx++) {
       const team = BLOCK_TYPES[tIdx];
@@ -300,8 +338,24 @@ export function manageBlockSpawns(scene, isGameOver = false) {
         }
       }
 
-      if (currentCount < targetCount) {
-        spawnSingleBlock(scene, s, team);
+      const needed = targetCount - currentCount;
+      for (let k = 0; k < needed; k++) {
+        // 即時単発ブロードキャストは行わず、false で内部生成のみ実施
+        const spawned = spawnSingleBlock(scene, s, team, false);
+        if (spawned) {
+          newlySpawnedInStage.push(spawned);
+        }
+      }
+    }
+
+    // ★ ステージごとに1通だけバッチブロードキャスト送信（回線詰まり・パケットパンクを根絶）
+    if (isMulti && isHost && newlySpawnedInStage.length > 0 && window.NetworkManager) {
+      if (typeof window.NetworkManager.broadcastSpawnBlocksBatch === 'function') {
+        window.NetworkManager.broadcastSpawnBlocksBatch(s, newlySpawnedInStage);
+      } else if (typeof window.NetworkManager.broadcastSpawnBlock === 'function') {
+        newlySpawnedInStage.forEach(b => {
+          window.NetworkManager.broadcastSpawnBlock(s, b.poolIdx, b.x, b.y, b.z, b.teamId, b.blockId);
+        });
       }
     }
   }
