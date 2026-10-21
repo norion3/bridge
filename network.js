@@ -1,10 +1,10 @@
 // network.js: AgentSDKラッパー ＆ ルーム入退室ライフサイクル・通信同期エンジン
-// ★ Step A 実装版（小人化ステート同期 ＆ スタン解除フェイルセーフ）：
-//   1. 【送信側拡張】10Hz POS パケットに `shrink`（サンダー小人化フラグ: shrinkTimer > 0）を同封。
-//   2. 【受信側反映】_handleRemotePosition で受信した `shrink` を `targetChar.isShrunk` へ格納。
-//   3. 【スタン解除同期】受信パケットで `packet.stun === false` の場合、相手の `targetChar.stunTimer` を 0 クリアし、
-//      端末Aでスタン解除されたのに端末Bで永久にプルプル震え続けるバグを完全防止。
-//   4. 既存の boost/stun 同期、ピン留めフリーズ根絶、無条件スロット昇格、ホスト逆送信遮断は100%維持。
+// ★ Phase 1 実装版（全同期パケット規格拡張 ＆ タイマー・モブ・ジャンプ送受信エンジン）：
+//   1. 【JUMPステート追加】getCharacterActionState に `isJumping` 時の 'JUMP' を追加し、空中大ジャンプを他端末へ伝達。
+//   2. 【マグネット＆無敵フラグ追加】10Hz POS パケットに `magnet`（吸引オーラ）と `invuln`（被弾点滅無敵）を同封。
+//   3. 【タイマー＆タイムアップ同期】ホストから1秒周期で `TIME_SYNC`、時間切れ時に `TIME_UP` をブロードキャストする仕組みを追加。
+//   4. 【敵モブ吹き飛ばし同期】お邪魔キャラを弾き飛ばした際の `BLOW_MOB` 送受信ハンドラおよびブロードキャスト関数を追加。
+//   5. 既存の shrink/boost/stun 同期、ピン留めフリーズ根絶、無条件スロット昇格、ホスト逆送信遮断は100%維持。
 
 import {
   characters,
@@ -123,9 +123,11 @@ function generateClientId() {
 }
 
 /**
- * キャラクターの現在の搭乗状態を取得するヘルパー
+ * キャラクターの現在の搭乗・アクション状態を取得するヘルパー
+ * ★【Phase 1 改善】トランポリン大ジャンプ（JUMP）を追加
  */
 function getCharacterActionState(c) {
+  if (c.isJumping) return 'JUMP';
   if (c.onSkydive) return 'SKYDIVE';
   if (c.onElevator) return 'ELEVATOR';
   if (c.onTrapdoor || c.onFreefall) return 'TRAPDOOR';
@@ -157,6 +159,7 @@ export const NetworkManager = {
   _lastRefreshTime: 0,
   _syncIntervalId: null,
   _retrySyncIntervalId: null,
+  _timeSyncCounter: 0,
 
   _isCreatingRoom: false,
   _isJoiningRoom: false,
@@ -609,6 +612,27 @@ export const NetworkManager = {
             window.applyRemoteFireSkill(packet.skillType, packet.shooterSlot, packet.targetSlot);
           }
           break;
+
+        // ★【Phase 1 追加】タイマー同期受信ハンドラ
+        case 'TIME_SYNC':
+          if (!this.isHost && typeof window.applyRemoteTimeSync === 'function') {
+            window.applyRemoteTimeSync(packet.timeLeft);
+          }
+          break;
+
+        // ★【Phase 1 追加】ホスト主導タイムアップ受信ハンドラ
+        case 'TIME_UP':
+          if (typeof window.applyRemoteTimeUp === 'function') {
+            window.applyRemoteTimeUp();
+          }
+          break;
+
+        // ★【Phase 1 追加】敵モブ吹き飛ばし受信ハンドラ
+        case 'BLOW_MOB':
+          if (typeof window.applyRemoteBlowMob === 'function') {
+            window.applyRemoteBlowMob(packet.mobIndex, packet.stageIdx, packet.pushDirX);
+          }
+          break;
       }
     } catch (e) {
       console.warn('[NetworkManager] Failed to parse message:', e);
@@ -816,7 +840,8 @@ export const NetworkManager = {
 
   /**
    * 10Hz 位置情報ブロードキャスト
-   * ★【Step A 拡張】自キャラおよびAIキャラの boost, stun に加え、shrink（小人化フラグ）をパケットに含める
+   * ★【Phase 1 拡張】自キャラおよびAIキャラの boost, stun, shrink に加え、magnet, invuln をパケットに含める
+   * ★【Phase 1 拡張】ホスト端末は1秒周期（10フレームごと）で TIME_SYNC を自動送信
    */
   _startPositionBroadcasting() {
     if (this._syncIntervalId) clearInterval(this._syncIntervalId);
@@ -864,7 +889,9 @@ export const NetworkManager = {
         state: getCharacterActionState(myChar),
         boost: Boolean(myChar.speedBoostActive),
         stun: Boolean(myChar.stunTimer > 0),
-        shrink: Boolean(myChar.shrinkTimer > 0)
+        shrink: Boolean(myChar.shrinkTimer > 0),
+        magnet: Boolean(myChar.magnetActive),
+        invuln: Boolean(myChar.invulnerableTimer > 0)
       });
 
       if (this.isHost) {
@@ -891,10 +918,27 @@ export const NetworkManager = {
               state: getCharacterActionState(charObj),
               boost: Boolean(charObj.speedBoostActive),
               stun: Boolean(charObj.stunTimer > 0),
-              shrink: Boolean(charObj.shrinkTimer > 0)
+              shrink: Boolean(charObj.shrinkTimer > 0),
+              magnet: Boolean(charObj.magnetActive),
+              invuln: Boolean(charObj.invulnerableTimer > 0)
             });
           }
         });
+
+        // ★【Phase 1 拡張】ホスト端末による1秒周期（100ms * 10 = 1s）のタイマー同期パケット送信
+        this._timeSyncCounter = (this._timeSyncCounter || 0) + 1;
+        if (this._timeSyncCounter >= 10) {
+          this._timeSyncCounter = 0;
+          if (typeof window !== 'undefined' && typeof window.getGameTimeLeft === 'function') {
+            const currentSec = window.getGameTimeLeft();
+            if (typeof currentSec === 'number' && !isNaN(currentSec)) {
+              this._sendCustomMessage({
+                event: 'TIME_SYNC',
+                timeLeft: Number(currentSec.toFixed(1))
+              });
+            }
+          }
+        }
       }
 
       this._sendCustomMessage({
@@ -907,7 +951,7 @@ export const NetworkManager = {
 
   /**
    * 受信したPOSパケットのスロットをリモートプレイヤーとして確定・更新
-   * ★【Step A 拡張】相手の boost, stun, shrink を targetChar に格納し、stun解除時のタイマークリアも同期
+   * ★【Phase 1 拡張】magnet, invuln フラグを受信反映
    */
   _handleRemotePosition(packet) {
     if (packet.slot === this.mySlot || packet.clientId === this.clientId) return;
@@ -976,16 +1020,21 @@ export const NetworkManager = {
     targetChar.speedBoostActive = Boolean(packet.boost);
     targetChar.isStunned = Boolean(packet.stun);
 
-    // ★【Step A 核心改善】相手側でスタンが終了した（packet.stun === false）場合は、
-    // ローカルに残存している stunTimer を直ちにクリアして永久震えループを断ち切る
     if (!packet.stun) {
       targetChar.stunTimer = 0;
     }
 
-    // ★【Step A 核心改善】サンダー小人化フラグを格納
+    // サンダー小人化フラグを格納
     targetChar.isShrunk = Boolean(packet.shrink);
     if (!packet.shrink) {
       targetChar.shrinkTimer = 0;
+    }
+
+    // ★【Phase 1 拡張】マグネット吸引中フラグおよび無敵中フラグを格納
+    targetChar.magnetActive = Boolean(packet.magnet);
+    targetChar.isInvulnerable = Boolean(packet.invuln);
+    if (!packet.invuln) {
+      targetChar.invulnerableTimer = 0;
     }
 
     if (targetChar.stackCount !== packet.stack) {
@@ -1018,6 +1067,29 @@ export const NetworkManager = {
       event: 'CONSUME_OBJECT',
       objectId: objectId,
       objectType: objectType
+    });
+  },
+
+  /**
+   * ★【Phase 1 追加】お邪魔キャラ吹き飛ばしブロードキャスト
+   */
+  broadcastBlowMob(mobIndex, stageIdx, pushDirX) {
+    if (!this.isMultiplayerActive) return;
+    this._sendCustomMessage({
+      event: 'BLOW_MOB',
+      mobIndex: mobIndex,
+      stageIdx: stageIdx,
+      pushDirX: Number(pushDirX.toFixed(2))
+    });
+  },
+
+  /**
+   * ★【Phase 1 追加】ホスト主導タイムアップブロードキャスト
+   */
+  broadcastTimeUp() {
+    if (!this.isMultiplayerActive || !this.isHost) return;
+    this._sendCustomMessage({
+      event: 'TIME_UP'
     });
   },
 

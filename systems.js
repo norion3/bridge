@@ -1,11 +1,10 @@
 // systems.js: 物理移動判定・スカイウォーク歩行開放・ハッチ進入同期・リュック収納アニメーション連動・シームレス風音連携・スカイダイブ＆スライダーボーナス回収・合流島安全着地完全整合・お邪魔キャラ衝突判定・下層島誤ワープ完全防止・階段/床ブロック取得リアルタイム同期
-// ★ Step 8 実装版（階段設置とスタック減算タイミングの整合 ＆ ブロック一意キー取得同期）：
-//   1. 階段設置パケット（BUILD_PLANK）の送信と手持ちスタックの減算タイミングを整合させ、直後のPOS受信による二重減算・マイナス化を根絶
-//   2. applyRemoteBlockPicked に blockId 照合を新設し、Step 7 の一意キーによる完全一致消去を実現（近接ブロック誤消去をゼロ化）
-//   3. コア移動物理、ギミック進入判定、障害物衝突判定、ソロプレイ時の動作は100%維持
-// ★ Phase 3 実装:
-//   - アイテムおよびゲート取得時の一意識別ID（itemId, gateId）を用いた CONSUME_OBJECT ブロードキャスト処理を追加
-//   - 他端末からの CONSUME_OBJECT 受信時に該当オブジェクトを強制消去する applyRemoteObjectConsumed ハンドラを追加
+// ★ Phase 3 実装版（お邪魔キャラ吹き飛ばし完全同期 ＆ スプリットブレイン根絶）：
+//   1. 【敵モブ吹き飛ばしブロードキャスト】スピードダッシュで敵モブを跳ね飛ばした際、`broadcastBlowMob` を通じて全端末へ通知。
+//   2. 【リモート吹き飛ばし受取反映】`applyRemoteBlowMob` を新設し、相手が跳ね飛ばした敵モブを自画面でも同時に海へ吹っ飛ばして退場。
+//      「片方の画面では消えたのに、もう片方の画面では敵が残っていて見えない敵に被弾する」事故を100%防止。
+//   3. 既存の階段設置（BUILD_PLANK）、ブロック取得/散乱（PICK_BLOCK/SCATTER_BLOCKS）、アイテム・ゲート消費（CONSUME_OBJECT）、
+//      ギミック物理・カメラ連動は100%維持。
 
 import {
   TRAMPOLINE_TIERS,
@@ -118,8 +117,6 @@ export function applyRemotePlankBuilt(stageIdx, laneIdx, plankIdx, teamId) {
     onBridge.solidMesh.instanceColor.needsUpdate = true;
   }
 
-  // ★【Step 8 改善】他走者（リモート端末）の設置反映時：相手の stackCount が正の値の場合のみ安全に -1 減算
-  // すでに相手端末の POS パケットで先行反映されている場合のアンダーフロー（マイナス化）を防止
   const builderChar = characters.find(c => !c.isPlayer && c.team && c.team.id === teamId);
   if (builderChar && builderChar.stackCount > 0) {
     removeBrickFromCharacter(builderChar);
@@ -128,7 +125,6 @@ export function applyRemotePlankBuilt(stageIdx, laneIdx, plankIdx, teamId) {
 
 /**
  * リモートプレイヤーまたはホスト側AIが床ブロックを拾った際の受信ハンドラ
- * ★【Step 8 改善】blockId による完全一致マッチングを最優先とし、近接ブロックの誤消去を防止
  */
 export function applyRemoteBlockPicked(stageIdx, poolIdx, x, z, blockId = null) {
   const stageBlocks = getFloorBlocksForStage(stageIdx);
@@ -139,7 +135,7 @@ export function applyRemoteBlockPicked(stageIdx, poolIdx, x, z, blockId = null) 
     targetBlock = stageBlocks.find(b => b.active && b.blockId === blockId);
   }
 
-  // 2. blockId で見つからない、または旧パケットの場合は座標マッチング（距離 1.0m 以内）
+  // 2. blockId で見つからない場合は座標マッチング（距離 1.0m 以内）
   if (!targetBlock && x !== undefined && z !== undefined) {
     let minDistSq = 1.0 * 1.0;
     for (let i = 0; i < stageBlocks.length; i++) {
@@ -164,7 +160,6 @@ export function applyRemoteBlockPicked(stageIdx, poolIdx, x, z, blockId = null) 
     }
   }
 
-  // 該当ブロックを安全に消去
   if (targetBlock) {
     targetBlock.active = false;
     targetBlock.mesh.visible = false;
@@ -177,7 +172,7 @@ export function applyRemoteBlockPicked(stageIdx, poolIdx, x, z, blockId = null) 
 }
 
 /**
- * ★ Phase 3 追加: 相手端末で消費されたアイテム・ゲートの強制消去ハンドラ
+ * 相手端末で消費されたアイテム・ゲートの強制消去ハンドラ
  */
 export function applyRemoteObjectConsumed(objectId, objectType) {
   if (!objectId || !objectType) return;
@@ -203,11 +198,39 @@ export function applyRemoteObjectConsumed(objectId, objectType) {
   }
 }
 
+/**
+ * ★【Phase 3 新設】他端末で敵モブが吹き飛ばされた際の受信ハンドラ
+ */
+export function applyRemoteBlowMob(mobIndex, stageIdx, pushDirX = 1.0) {
+  let targetMob = null;
+
+  // 1. インデックスによる直接探索
+  if (mobIndex !== undefined && mobIndex >= 0 && mobIndex < obstacleMobs.length) {
+    const m = obstacleMobs[mobIndex];
+    if (m && m.active && !m.blownAway && m.stageIdx === stageIdx) {
+      targetMob = m;
+    }
+  }
+
+  // 2. ステージ番号によるフォールバック探索
+  if (!targetMob) {
+    targetMob = obstacleMobs.find(m => m.active && !m.blownAway && m.stageIdx === stageIdx);
+  }
+
+  if (targetMob) {
+    targetMob.blownAway = true;
+    const dirX = (typeof pushDirX === 'number' && !isNaN(pushDirX)) ? pushDirX : 1.0;
+    targetMob.blowVelocity.set(dirX * 12.0, 16.0, -18.0);
+    triggerLandingShockwave(targetMob.currentX, targetMob.baseY + 0.2, targetMob.baseZ, 2.5, 0xf97316);
+  }
+}
+
 // グローバル公開（network.js から安全に呼べるように登録）
 if (typeof window !== 'undefined') {
   window.applyRemotePlankBuilt = applyRemotePlankBuilt;
   window.applyRemoteBlockPicked = applyRemoteBlockPicked;
   window.applyRemoteObjectConsumed = applyRemoteObjectConsumed;
+  window.applyRemoteBlowMob = applyRemoteBlowMob;
 }
 
 export function checkGateCollisions(scene, char) {
@@ -224,7 +247,6 @@ export function checkGateCollisions(scene, char) {
       disposeHierarchy(gate.meshGroup);
       scene.remove(gate.meshGroup);
 
-      // ★ Phase 3 追加: ゲート消費のブロードキャスト
       if (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive && gate.gateId) {
         window.NetworkManager.broadcastConsumeObject(gate.gateId, 'gate');
       }
@@ -257,7 +279,10 @@ export function checkGateCollisions(scene, char) {
   }
 }
 
-// お邪魔キャラとの衝突・吹き飛ばし判定
+/**
+ * お邪魔キャラとの衝突・吹き飛ばし判定
+ * ★【Phase 3 拡張】ダッシュ体当たり時の吹き飛ばしイベントを他端末へブロードキャスト
+ */
 export function checkObstacleMobCollisions(scene, char) {
   if (char.invulnerableTimer > 0) return;
 
@@ -277,6 +302,14 @@ export function checkObstacleMobCollisions(scene, char) {
 
         triggerLandingShockwave(mob.currentX, char.pos.y + 0.2, mob.baseZ, 2.5, 0xf97316);
         if (char.isPlayer && soundRef) soundRef.playTackle();
+
+        // ★【Phase 3 核心】敵モブ吹き飛ばしのブロードキャスト
+        const isMulti = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive);
+        const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
+        const shouldBroadcast = isMulti && (char.isPlayer || (isHost && char.isAI));
+        if (shouldBroadcast && window.NetworkManager && typeof window.NetworkManager.broadcastBlowMob === 'function') {
+          window.NetworkManager.broadcastBlowMob(i, mob.stageIdx, pushDirX);
+        }
 
         scatterBricks(scene, char, 0);
         break;
@@ -611,7 +644,6 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
 
             if (currentP.teamId !== char.team.id) {
               if (char.stackCount > 0) {
-                // ★【Step 8 改善】ローカルのスタック減算を先に実行し、直後のパケットと厳密に整合
                 removeBrickFromCharacter(char, updateHUDRef);
                 currentP.teamId = char.team.id;
 
@@ -637,7 +669,6 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
                   }
                 }
 
-                // 自操作キャラ または ホスト端末のAIが階段を架けた時、他端末へ即時ブロードキャスト
                 const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
                 const shouldBroadcastPlank = char.isPlayer || (isHost && char.isAI);
 
@@ -694,7 +725,7 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
     }
   }
 
-  // 7. 島内滞在判定（現在ステージ最優先 ＆ 高度差 ±3.5m ガードで下層島誤ワープ完全防止）
+  // 7. 島内滞在判定
   let onStage = null;
 
   const curStage = STAGES[char.currentStage];
@@ -1136,7 +1167,6 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
           }
           const removedItem = floorItems.splice(i, 1)[0];
 
-          // ★ Phase 3 追加: アイテム消費のブロードキャスト
           const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
           const shouldBroadcastPick = char.isPlayer || (isHost && char.isAI);
           if (shouldBroadcastPick && typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive) {

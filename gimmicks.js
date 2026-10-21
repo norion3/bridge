@@ -1,12 +1,9 @@
 // gimmicks.js: 特殊アトラクション搭乗中の物理挙動・姿勢制御・ボーナス回収・着地処理モジュール（完全分離レイヤー）
-// ★ Step 10 実装版（リモートキャラクターの姿勢適用ヘルパーの公開 ＆ ボーナス回収の一意同期保護）：
-//   1. applyRemoteGimmickVisuals(char, state, timeSec) を新設し、POSパケットの状態ビット（SKYDIVE, ELEVATOR, TRAPDOOR, ZIPLINE）に応じたメッシュ表示・手足ポーズの連動を提供
-//   2. ローカル搭乗中の物理演算、ソロプレイ動作は100%維持
-// ★ Phase 4 実装:
-//   - アトラクション上のボーナス白ブロック取得時に CONSUME_OBJECT パケットをブロードキャスト
-//   - 他端末からのボーナス消費を受信し、対象の白ブロックを消去する applyRemoteBonusConsumed を追加
-// ★ Step 7-2 修正:
-//   - network.js 側で明示的な振り分けが実装されたため、ロード順序による先祖返りを引き起こす systems.js 関数のモンキーパッチを完全撤去
+// ★ Phase 4 実装版（ドロップタワー・ハッチ開放視覚同期 ＆ JUMP/アトラクション外観完全整合）：
+//   1. 【ハッチ開放連動】リモート走者が `TRAPDOOR` 状態になった際、該当ステージの強化ガラスハッチ（doorLeftPivot, doorRightPivot）を開放。
+//      相手が閉じている床をすり抜けて落下する違和感を解消し、着地・復帰時にはハッチを自動で閉鎖。
+//   2. 【JUMP状態の付帯物クリア】大ジャンプ（`JUMP`）時にトロリーやエレベーターカゴの非表示、荷物パッキングを正常化。
+//   3. 既存のボーナス消費同期（applyRemoteBonusConsumed）、滑空・落下・エレベーター・ジップライン・S字スライダー物理は100%維持。
 
 import {
   LANES,
@@ -20,6 +17,7 @@ import {
 } from './materials.js';
 import { 
   STAGES,
+  bridgesByStage,
   skydiveBonusBlocks,
   ziplineBonusBlocks,
   curvedSlideBonusBlocks,
@@ -35,12 +33,27 @@ import {
 import { triggerLandingShockwave } from './particles.js';
 
 /**
- * ★【Step 10 新設】リモート走者（他端末またはホストAI）のアトラクション状態ビットに応じた外観・メッシュ連動
+ * ★【Phase 4 拡張】リモート走者（他端末またはホストAI）のアトラクション状態ビットに応じた外観・メッシュ連動
  */
 export function applyRemoteGimmickVisuals(char, state, timeSec) {
   if (!char || !char.meshObj) return;
 
   const mo = char.meshObj;
+
+  // ★【Phase 4 核心】TRAPDOOR終了時のハッチ自動閉鎖判定
+  if (char._lastRemoteActionState === 'TRAPDOOR' && state !== 'TRAPDOOR') {
+    for (let sIdx = Math.max(0, char.currentStage - 1); sIdx <= char.currentStage + 1; sIdx++) {
+      const stageBridges = bridgesByStage.get(sIdx) || [];
+      const trapB = stageBridges.find(b => b.isTrapdoor || b.isFreefall);
+      if (trapB && trapB.doorLeftPivot && trapB.doorRightPivot) {
+        trapB.isHatchOpen = false;
+        trapB.hatchOpenProgress = 0;
+        trapB.doorLeftPivot.rotation.z = 0;
+        trapB.doorRightPivot.rotation.z = 0;
+      }
+    }
+  }
+  char._lastRemoteActionState = state;
 
   if (state === 'SKYDIVE') {
     if (mo.trolleyGroup) mo.trolleyGroup.visible = false;
@@ -52,6 +65,18 @@ export function applyRemoteGimmickVisuals(char, state, timeSec) {
     if (mo.elevatorGroup) mo.elevatorGroup.visible = false;
     packCharacterLuggage(char, 1.0);
     applyTrapdoorPose(char, 0, timeSec);
+
+    // ★【Phase 4 核心】リモート走者がドロップタワーに落下した際、該当ステージのハッチ扉を開放
+    for (let sIdx = Math.max(0, char.currentStage - 1); sIdx <= char.currentStage + 1; sIdx++) {
+      const stageBridges = bridgesByStage.get(sIdx) || [];
+      const trapB = stageBridges.find(b => b.isTrapdoor || b.isFreefall);
+      if (trapB && trapB.doorLeftPivot && trapB.doorRightPivot) {
+        trapB.isHatchOpen = true;
+        const maxOpenAngle = Math.PI * 0.53;
+        trapB.doorLeftPivot.rotation.z = maxOpenAngle;
+        trapB.doorRightPivot.rotation.z = -maxOpenAngle;
+      }
+    }
   } else if (state === 'ELEVATOR') {
     if (mo.elevatorGroup) mo.elevatorGroup.visible = true;
     if (mo.trolleyGroup) mo.trolleyGroup.visible = false;
@@ -88,6 +113,10 @@ export function applyRemoteGimmickVisuals(char, state, timeSec) {
     mo.body.position.y = 0.50;
     mo.head.position.y = 1.15;
     mo.root.rotation.x = 0.22;
+  } else if (state === 'JUMP') {
+    if (mo.trolleyGroup) mo.trolleyGroup.visible = false;
+    if (mo.elevatorGroup) mo.elevatorGroup.visible = false;
+    packCharacterLuggage(char, 0);
   } else {
     // NORMAL
     if (mo.trolleyGroup && mo.trolleyGroup.visible) mo.trolleyGroup.visible = false;
@@ -116,7 +145,6 @@ export function updateSkydiveMovement(scene, char, dirX, dt, soundRef, updateHUD
             soundRef.playCollect(1.2 + blk.t * 0.8);
           }
 
-          // ★ Phase 4 追加: ボーナスブロック取得のブロードキャスト
           const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
           const shouldBroadcastPick = char.isPlayer || (isHost && char.isAI);
           if (shouldBroadcastPick && typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive) {
@@ -382,7 +410,6 @@ export function updateZiplineMovement(scene, char, dt, soundRef, updateHUDRef) {
             soundRef.playCollect(1.25 + blk.t * 0.65);
           }
 
-          // ★ Phase 4 追加: ボーナスブロック取得のブロードキャスト
           const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
           const shouldBroadcastPick = char.isPlayer || (isHost && char.isAI);
           if (shouldBroadcastPick && typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive) {
@@ -529,7 +556,6 @@ export function updateCurvedSlideMovement(scene, char, dirX, dt, soundRef, updat
               soundRef.playCollect(1.2 + blk.t * 0.6);
             }
 
-            // ★ Phase 4 追加: ボーナスブロック取得のブロードキャスト
             const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
             const shouldBroadcastPick = char.isPlayer || (isHost && char.isAI);
             if (shouldBroadcastPick && typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive) {
@@ -561,7 +587,7 @@ export function updateCurvedSlideMovement(scene, char, dirX, dt, soundRef, updat
 }
 
 /**
- * ★ Phase 4 追加: 他端末で消費されたボーナスブロックの強制消去ハンドラ
+ * 他端末で消費されたボーナスブロックの強制消去ハンドラ
  */
 export function applyRemoteBonusConsumed(objectId) {
   if (!objectId) return;
@@ -586,7 +612,6 @@ export function applyRemoteBonusConsumed(objectId) {
   }
 }
 
-// systems.js で定義済みの applyRemoteObjectConsumed をフックして bonus も処理可能にする
 if (typeof window !== 'undefined') {
   window.applyRemoteBonusConsumed = applyRemoteBonusConsumed;
 }

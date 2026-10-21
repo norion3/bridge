@@ -1,10 +1,10 @@
 // main.js: ゲーム全体の起動指揮・Three.js初期化・メインループ・入力・HUD制御
-// ★ Step B 実装版（リモート走者のサンダー小人化スケール連動 ＆ スタン揺れの永久ループ解消）：
-//   1. 【小人化スケール同期】相手が `isShrunk`（または `shrinkTimer > 0`）の時、リモート走者のメッシュ全体を
-//      ローカル同様に 0.42 倍へ即座に縮小。サンダー効果終了時は 1.0 倍へスムーズに復帰。
-//   2. 【スタン永久ループ根絶】リモート走者ループ内でも `c.stunTimer -= dt` を毎フレーム確実に減算し、
-//      相手端末でスタン解除された際にローカル画面上でもプルプル震えが完全に停止するよう修正。
-//   3. 既存のスピードオーラ・ダッシュ煙演出、AIによるゲスト座標上書き遮断、速度予測Lerp補間は100%維持。
+// ★ Phase 2 完全実装版（リモート描画 ＆ ゲームタイマー完全同期）：
+//   1. 【JUMP空中大ジャンプ連動】相手が `remState === 'JUMP'` の時、ローカル同様の宙返り回転と手足オープン姿勢を描画。
+//   2. 【マグネット紫オーラ同期】相手が `c.magnetActive` の時、足元の紫吸引オーラ（c.meshObj.magnetAura）を点灯・パルス拡縮。
+//   3. 【無敵時間キャラ点滅】相手が `c.isInvulnerable` の時、メッシュをチラチラ高速点滅させて無敵状態を完全可視化。
+//   4. 【タイマー＆タイムアップ同期】ホストの残り秒数による定期補正、およびホストからの TIME_UP 受信による両画面同時リザルト表示を完全保証。
+//   5. 既存のサンダー小人化スケール、スピードオーラ・煙、スタン揺れ、AI思考遮断、Lerp速度予測補間は100%維持。
 
 import { mountAllUI } from './dom.js';
 
@@ -73,6 +73,39 @@ let isGameOver = false;
 let gameStarted = false;
 let placedPlankCount = 0;
 let lastDisplayedSec = -1;
+
+/**
+ * ★【Phase 2 追加】ホストから送信されたゲーム残り時間を受け取って補正するハンドラ
+ */
+export function applyRemoteTimeSync(remoteTimeLeft) {
+  if (typeof remoteTimeLeft === 'number' && !isNaN(remoteTimeLeft)) {
+    // ズレが0.7秒以上ある場合のみスムーズに補正
+    if (Math.abs(timeLeft - remoteTimeLeft) > 0.7) {
+      timeLeft = remoteTimeLeft;
+      updateTimerHUD(true);
+    }
+  }
+}
+
+/**
+ * ★【Phase 2 追加】ホストからタイムアップ宣告を受信した際のハンドラ
+ */
+export function applyRemoteTimeUp() {
+  if (!isGameOver) {
+    timeLeft = 0;
+    updateTimerHUD(true);
+    onTimeUp();
+  }
+}
+
+/**
+ * ★【Phase 2 追加】network.js から現在の残り秒数を取得するためのゲッター
+ */
+if (typeof window !== 'undefined') {
+  window.getGameTimeLeft = () => timeLeft;
+  window.applyRemoteTimeSync = applyRemoteTimeSync;
+  window.applyRemoteTimeUp = applyRemoteTimeUp;
+}
 
 /**
  * 外部（network.js / dom.js）からゲームループを確実に始動させる安全関数
@@ -172,6 +205,14 @@ export function updateTimerHUD(force = false) {
 export function onTimeUp() {
   if (isGameOver) return;
   isGameOver = true;
+
+  // ホスト端末の場合、ゲスト全員へタイムアップを通知
+  if (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive && window.NetworkManager.isHost) {
+    if (typeof window.NetworkManager.broadcastTimeUp === 'function') {
+      window.NetworkManager.broadcastTimeUp();
+    }
+  }
+
   sound.playVictory();
   const rankEl = document.getElementById('modal-rank');
   if (rankEl) rankEl.innerText = placedPlankCount + ' 段';
@@ -480,7 +521,7 @@ export function animate(currentTime) {
         const prevX = c.pos.x;
         const prevZ = c.pos.z;
 
-        // ★【Step B 核心①】リモート走者のローカル stunTimer の毎フレーム減算
+        // リモート走者のローカル stunTimer の毎フレーム減算
         if (c.stunTimer > 0) {
           c.stunTimer -= dt;
           if (c.stunTimer <= 0) {
@@ -489,7 +530,7 @@ export function animate(currentTime) {
           }
         }
 
-        // ★【Step B 核心②】リモート走者の小人化タイマー減算 ＆ メッシュスケール連動
+        // リモート走者の小人化タイマー減算 ＆ メッシュスケール連動
         if (c.shrinkTimer > 0) {
           c.shrinkTimer -= dt;
           if (c.shrinkTimer <= 0) {
@@ -500,6 +541,21 @@ export function animate(currentTime) {
         const isRemoteShrunk = Boolean(c.isShrunk || (c.shrinkTimer && c.shrinkTimer > 0));
         const targetScale = isRemoteShrunk ? 0.42 : 1.0;
         c.meshObj.root.scale.set(targetScale, targetScale, targetScale);
+
+        // ★【Phase 2 改善①】無敵時間中のキャラクター点滅同期
+        if (c.invulnerableTimer > 0) {
+          c.invulnerableTimer -= dt;
+          if (c.invulnerableTimer <= 0) {
+            c.invulnerableTimer = 0;
+            c.isInvulnerable = false;
+          }
+        }
+        const isInvuln = Boolean(c.isInvulnerable || (c.invulnerableTimer && c.invulnerableTimer > 0));
+        if (isInvuln) {
+          c.meshObj.root.visible = (Math.floor(currentTime / 90) % 2 === 0);
+        } else {
+          c.meshObj.root.visible = true;
+        }
 
         const lerpFactor = Math.min(1.0, dt * 14.0);
 
@@ -551,7 +607,20 @@ export function animate(currentTime) {
           }
         }
 
-        // ★【Step B 核心③】スタンやられ姿勢の同期（解除時の完全ニュートラル復帰）
+        // ★【Phase 2 改善②】マグネット吸引オーラ（紫リング）の同期
+        if (c.meshObj.magnetAura) {
+          if (c.magnetActive) {
+            c.meshObj.magnetAura.visible = true;
+            const pulseT = (currentTime * 0.0032) % 1.0;
+            const inwardScale = 2.6 * (1.0 - pulseT) + 0.35;
+            c.meshObj.magnetAura.scale.set(inwardScale, inwardScale, inwardScale);
+            c.meshObj.magnetAura.material.opacity = pulseT * 0.85;
+          } else {
+            c.meshObj.magnetAura.visible = false;
+          }
+        }
+
+        // スタンやられ姿勢の同期（解除時の完全ニュートラル復帰）
         const isRemoteStunned = Boolean(c.isStunned || (c.stunTimer && c.stunTimer > 0));
 
         if (isRemoteStunned) {
@@ -562,11 +631,24 @@ export function animate(currentTime) {
           c.meshObj.rightLeg.rotation.x = 0;
           c.meshObj.leftArm.rotation.x = 0;
           c.meshObj.rightArm.rotation.x = 0;
+        } else if (remState === 'JUMP') {
+          // ★【Phase 2 改善③】トランポリン大ジャンプ時の空中宙返り回転と手足オープン姿勢
+          c.meshObj.root.rotation.z = 0;
+          c.meshObj.root.rotation.x += dt * -12.5; // 空中前方回転
+          c.meshObj.leftArm.rotation.z = -0.75;
+          c.meshObj.rightArm.rotation.z = 0.75;
+          c.meshObj.leftLeg.rotation.z = -0.30;
+          c.meshObj.rightLeg.rotation.z = 0.30;
         } else {
           c.meshObj.root.rotation.z = 0;
           c.meshObj.root.rotation.x = (c.speedBoostActive && remState === 'NORMAL') ? 0.20 : 0;
 
           if (remState === 'NORMAL') {
+            c.meshObj.leftArm.rotation.z = 0;
+            c.meshObj.rightArm.rotation.z = 0;
+            c.meshObj.leftLeg.rotation.z = 0;
+            c.meshObj.rightLeg.rotation.z = 0;
+
             if (stepDist > 0.008) {
               const walkSpeedMult = c.speedBoostActive ? 1.75 : 1.0;
               c.walkCycle = (c.walkCycle || 0) + stepDist * 5.5 * walkSpeedMult;
@@ -623,10 +705,18 @@ export function animate(currentTime) {
     }
     if (maxStage >= STAGES.length - 3) extendCourse(scene);
 
-    timeLeft -= dt;
-    if (timeLeft <= 0) {
-      timeLeft = 0;
-      onTimeUp();
+    // ★【Phase 2 改善④】タイマー減算とタイムアップのホスト主導化
+    if (!isGuest) {
+      timeLeft -= dt;
+      if (timeLeft <= 0) {
+        timeLeft = 0;
+        onTimeUp();
+      }
+    } else {
+      // ゲスト端末はローカルでも微減算しつつ、ホストからの TIME_SYNC で定期補正
+      if (timeLeft > 0) {
+        timeLeft -= dt;
+      }
     }
     updateTimerHUD();
 
