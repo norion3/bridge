@@ -1,11 +1,12 @@
 // network.js: AgentSDKラッパー ＆ ルーム入退室ライフサイクル・通信同期エンジン
-// ★ ゲスト本名同期 ＆ ネームプレート強制上書き 完全修正版：
-//   1. 【最重要修正】端末Bから届く REQUEST_ROOM_SYNC および POS パケット内の本名（「のりおん」等）を検知した瞬間、
-//      ホスト側のスロット配列および 3D ネームプレート（targetChar.nameplateSprite）を即座に本名テクスチャへ強制書き換え。
-//   2. 【名前固定化防止】SDK初期イベント（aitools_game_joinroom）の「ゲスト」という仮名で固まる現象を根絶。
-//   3. 【通信リンク・二重作成防止】createRoom 完了直後の受信リスナー開通、ゲスト即時赤スロットバインド、
-//      touchend 後の擬似 click キャンセル、exitRoom のフラグリセットは 100% 維持。
-//   4. 既存の全パケット仕様（POS、BUILD_PLANK、KNOCKOUT、_sendCustomMessage形式等）は100%維持。
+// ★ Phase 2 完全修正版（ゲスト退出後のAI復帰迷走ゼロ化 ＆ 本名同期完全両立）：
+//   1. 【Phase 2核心】_restoreSlotToAI() を大幅強化：
+//      - ゲスト退出時にスタック回避タイマー（unstuckTimer, stuckCheckTimer, lastPosCheck）を完全クリア。
+//      - ゲスト操作時の残存慣性（netVelocity = { x: 0, z: 0 }）を消去し、引っ張り合いを防止。
+//      - 存在しないブロックや古い目標（targetBlock, elevatorChoice, forkBranchChoice）を完全消去。
+//      - 最寄りブロックの即座索敵（searchCooldown = 0）を直ちに走らせ、迷走時間0秒で自律走行へ移行。
+//   2. ゲスト本名の即時検知・ネームプレート強制再描画は100%維持。
+//   3. createRoom直後のリスナー開通、ゲスト即時赤スロットバインド、二重作成防止ロジックも完全維持。
 
 import {
   characters,
@@ -511,7 +512,6 @@ export const NetworkManager = {
           if (this.isHost) {
             const reqClientId = packet.clientId;
             const reqUserId = String(packet.userId || '');
-            // ★【核心修正①】端末Bが送信してきた本名（packet.name）を優先採用
             const reqName = (packet.name && packet.name !== 'ゲスト' && packet.name !== 'YOU') ? packet.name : 'ゲスト1';
 
             if (reqClientId && reqClientId !== this.clientId) {
@@ -537,7 +537,6 @@ export const NetworkManager = {
                   name: reqName,
                   isAI: false
                 };
-                // ホスト画面のネームプレートを本名で即座に再描画
                 this._bindRemoteSlot(targetSlot, reqName);
               }
             }
@@ -723,14 +722,12 @@ export const NetworkManager = {
     targetChar.targetBlock = null;
     targetChar.searchCooldown = 999999;
     
-    // 有効な名前が渡ってきた場合は即座に採用
     if (playerName && playerName !== 'YOU' && playerName !== 'null') {
       targetChar.name = playerName;
     } else if (!targetChar.name || targetChar.name === 'YOU') {
       targetChar.name = (slotIndex === 0 ? 'norion' : (slotIndex === 1 ? 'ゲスト1' : 'ゲスト2'));
     }
 
-    // ネームプレートの強制更新（「ゲスト」のまま固定化されるのを防ぐ）
     if (targetChar.nameplateSprite) {
       if (targetChar.nameplateSprite.material && targetChar.nameplateSprite.material.map) {
         targetChar.nameplateSprite.material.map.dispose();
@@ -742,7 +739,6 @@ export const NetworkManager = {
       targetChar.nameplateSprite.visible = true;
     }
 
-    // AIからゲスト交代時（Stage 0初期化）
     if (typeof resetCharacterToStageZero === 'function') {
       resetCharacterToStageZero(targetChar, targetChar.name, false);
     } else if (typeof window.resetCharacterToStageZero === 'function') {
@@ -762,19 +758,49 @@ export const NetworkManager = {
     }
   },
 
+  /**
+   * ★【Phase 2 完全強化版】ゲスト退出後にスロットをAIへ安全かつ即座に復帰させる関数
+   * ゲスト操作時の残存慣性・スタックタイマー・ゾンビターゲットを完全消去し、迷走時間を0秒化
+   */
   _restoreSlotToAI(slotIndex) {
     const targetChar = characters[slotIndex];
     if (!targetChar) return;
 
+    // 1. スロット権限をAI自律思考へ復帰
     targetChar.isPlayer = false;
     targetChar.isAI = true;
     targetChar.isRemote = false;
     targetChar.aiState = 'COLLECT';
-    targetChar.searchCooldown = 0;
     targetChar.name = (slotIndex === 1) ? 'CPU 1' : 'CPU 2';
 
+    // ★【Phase 2 核心①】残存慣性・ネットワーク補間を完全ニュートラル化
+    targetChar.netVelocity = { x: 0, z: 0 };
+    targetChar.remoteActionState = 'NORMAL';
+    if (targetChar.targetNetPos) {
+      targetChar.targetNetPos.copy(targetChar.pos);
+    }
+
+    // ★【Phase 2 核心②】AIスタック回避タイマーの完全クリア（急激なバック走や横飛びを防止）
+    targetChar.unstuckTimer = 0;
+    targetChar.stuckCheckTimer = 0;
+    targetChar.lastPosCheck = null;
+    targetChar.unstuckDirX = 0;
+    targetChar.unstuckDirZ = 0;
+
+    // ★【Phase 2 核心③】ターゲット・進行ベクトルの完全リフレッシュ（迷走旋回を根絶）
+    targetChar.targetBlock = null;
+    targetChar.aiDirX = 0;
+    targetChar.aiDirZ = -1;
+    targetChar.elevatorChoice = undefined;
+    targetChar.forkBranchChoice = undefined;
+    targetChar.botSlideOffsetTarget = 0;
+    // 復帰初フレームで即座に新しい最寄りブロックを索敵させる
+    targetChar.searchCooldown = (targetChar.team && targetChar.team.id === 'red') ? 0 : 0.06;
+
+    // 2. 状態・スタック表示の整合
     refreshCharacterStackVisuals(targetChar);
 
+    // 3. ネームプレートを「CPU名」へ確実に更新
     if (targetChar.nameplateSprite) {
       if (targetChar.nameplateSprite.material && targetChar.nameplateSprite.material.map) {
         targetChar.nameplateSprite.material.map.dispose();
@@ -815,7 +841,6 @@ export const NetworkManager = {
       }
       lastMyPos.copy(myChar.pos);
 
-      // 自端末の本名を確実にパケットに載せる
       const myName = (typeof window !== 'undefined' && window.GRAVITY_USER_NAME)
         ? String(window.GRAVITY_USER_NAME)
         : (this.myUser ? this.myUser.name : 'YOU');
@@ -883,15 +908,12 @@ export const NetworkManager = {
       if (packet.clientId) this.slots[packet.slot].clientId = packet.clientId;
     }
 
-    // ★【核心修正②】相手から有効な名前（「のりおん」等）が届いた場合、仮名（「ゲスト」）を即座に破棄して本名に昇格
     const packetName = (packet.name && packet.name !== 'YOU' && packet.name !== 'null') ? packet.name : null;
     let resolvedName = packetName || targetChar.name;
     if (!resolvedName || resolvedName === 'YOU') {
       resolvedName = (packet.slot === 0 ? 'norion' : (packet.slot === 1 ? 'ゲスト1' : 'ゲスト2'));
     }
 
-    // ネームプレートの強制書き換え条件：
-    // AIだった場合、リモート化されていない場合、または現在の名前が「ゲスト」系で相手から本名が届いた場合
     const isGenericGuestName = (targetChar.name === 'ゲスト' || targetChar.name === 'ゲスト1' || targetChar.name === 'ゲスト2');
     const isUpgradedToRealName = isGenericGuestName && packetName && packetName !== targetChar.name;
 

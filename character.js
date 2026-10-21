@@ -1,7 +1,10 @@
 // 3Dキャラクター外観構築・手足メッシュ・スタックプール・トロリー・ホバー展望リフト・スカイダイブ＆トラップドア姿勢管理・足元手前側（カメラ方向）フロスト投影ネームバッジ
-// ★ Phase 1 実装版（合流時Stage 0初期化の基盤整備 ＆ 自他ネームプレート境界保護）：
-//   1. resetCharacterToStageZero() を新設：先行していたキャラの座標・ステージ番号・所持ブロック・ギミック姿勢を一括でStage 0初期状態へリセット
-//   2. bindLocalPlayerSlot での自端末ネーム特定フォールバックと他スロットへの名前混入遮断を維持・二重安全化
+// ★ Phase 1 完全修正版（交代時スタック誤爆・慣性衝突・数秒間の迷走を完全根絶）：
+//   1. resetCharacterToStageZero() を強化：
+//      - AIのスタック誤爆原因（unstuckTimer, stuckCheckTimer, lastPosCheck）を完全リセット。
+//      - ネットワーク補間用の速度ベクトル（netVelocity）を { x: 0, z: 0 } にリセットし、交代直後の引っ張り合い（ジッター）を遮断。
+//      - 過去のターゲット（targetBlock, elevatorChoice, forkBranchChoice）を完全消去。
+//   2. bindLocalPlayerSlot での自端末ネーム特定フォールバックと他スロットへの名前混入遮断を維持。
 
 import {
   TEAMS,
@@ -121,8 +124,8 @@ export function updatePlayerName(newName) {
 }
 
 /**
- * ★【Phase 1 新設】先行していたキャラを Stage 0 スタート地点へ安全に初期化する関数
- * 奥の島へ進んでいたキャラの座標・ステージ番号・所持ブロック・ギミック搭乗状態を一括でStage 0初期状態へリセット
+ * ★【Phase 1 強化版】先行していたキャラを Stage 0 スタート地点へ安全に初期化する関数
+ * 座標・ステージ番号・所持ブロックだけでなく、AIのスタック回避タイマーや移動慣性を完全消去して暴走を根絶
  */
 export function resetCharacterToStageZero(char, nameText = null, isLocal = false) {
   if (!char) return;
@@ -150,6 +153,11 @@ export function resetCharacterToStageZero(char, nameText = null, isLocal = false
   char.targetNetPos.copy(char.pos);
   char.targetNetRotY = Math.PI;
 
+  // ★【Phase 1 核心】ネットワーク移動慣性の完全リセット（直前AIの慣性引きずり遮断）
+  char.netVelocity = { x: 0, z: 0 };
+  char.lastPacketTime = performance.now();
+  char.remoteActionState = 'NORMAL';
+
   // 2. 内部進行状態のリセット
   char.currentStage = 0;
   char.stackCount = 0;
@@ -166,6 +174,20 @@ export function resetCharacterToStageZero(char, nameText = null, isLocal = false
   char.magnetActive = false;
   char.magnetTimer = 0;
   char.isGhostStacked = false;
+
+  // ★【Phase 1 核心】AIスタック回避タイマー・ゾンビターゲットの完全ニュートラル化
+  char.unstuckTimer = 0;
+  char.stuckCheckTimer = 0;
+  char.lastPosCheck = null;
+  char.unstuckDirX = 0;
+  char.unstuckDirZ = 0;
+  char.targetBlock = null;
+  char.aiDirX = 0;
+  char.aiDirZ = -1;
+  char.searchCooldown = (char.team && char.team.id === 'red') ? 0 : 0.06;
+  char.elevatorChoice = undefined;
+  char.forkBranchChoice = undefined;
+  char.botSlideOffsetTarget = 0;
 
   // 3. ギミック搭乗フラグの完全解除
   char.onSlide = false;
@@ -258,6 +280,11 @@ export function bindLocalPlayerSlot(slotIndex) {
     c.onSkydive = false;
     c.onTrapdoor = false;
     c.onFreefall = false;
+
+    // AI・スタックタイマーをクリア
+    c.unstuckTimer = 0;
+    c.stuckCheckTimer = 0;
+    c.lastPosCheck = null;
 
     if (idx === targetSlot) {
       // 自操作キャラ化
@@ -988,6 +1015,11 @@ export function resetCharacters(STAGES) {
 
     if (c.meshObj.footAura) c.meshObj.footAura.visible = false;
     if (c.meshObj.magnetAura) c.meshObj.magnetAura.visible = false;
+
+    // AI・スタックタイマーのクリア
+    c.unstuckTimer = 0;
+    c.stuckCheckTimer = 0;
+    c.lastPosCheck = null;
 
     if (!c.isPlayer) {
       c.botSlideOffsetTarget = 0;
