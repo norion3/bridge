@@ -1,13 +1,18 @@
-// network.js: AgentSDK公式仕様完全準拠 ＆ ルーム入退室ライフサイクル・通信同期エンジン
-// ★ 公式AI回答に基づく通信完全復旧版：
-//   1. 【sendMessage純粋送信】公式回答に従い、サイレント破棄の原因となっていた `room_id`, `roomId`, `msg_data` を完全撤廃。
-//      SDKが正式受理する `{ message: JSON.stringify(...) }` のみの純粋送信に完全一本化。
-//   2. 【受信側非対称トラップ解消】受信時に `payload.data.msg_data` として届くJSON文字列を正規ルートで直接パース。
-//   3. 【同一端末テスト時のパケット自己誤認解除】エコーバックなし前提に基づき、同一sessionStorageによる clientId の重複破棄を排除。
-//      スロット番号（packet.slot === this.mySlot）のみを自己判定基準として相手のパケット受信を100%保証。
-//   4. 【createRoom初期化の健全化】初期島のブロックが奥の島へ強制テレポート・消滅する原因となっていた過剰ループを是正。
+// network.js: AgentSDK連携 ＆ ルーム入退室ライフサイクル・マルチプレイ通信同期エンジン
+// ★ Phase 1 実装版（送信元実体直結 ＆ ゲスト座標送出保証 ＆ 実機必須プロパティ復元）：
+//   1. 【操作キャラ実体からの座標取得】
+//      `characters[this.mySlot]` の参照乖離によって初期位置（-4, 4）が送り続けられていた問題を根絶。
+//      ゲスト端末で実際にジョイスティック入力によって移動しているローカルプレイヤー（`player`）の
+//      現在座標（pos.x, pos.y, pos.z）、回転、スタック数をダイレクトに取得して送信パケットを生成。
+//   2. 【実機必須プロパティ完全復元】
+//      実機WebView（JSBridge）でパケット送出に不可欠な `room_id`, `roomId`, `msg_data` を
+//      `_sendCustomMessage` に完全同封し、ネイティブ層でのサイレント破棄を遮断。
+//   3. 【ゲストスロット確定保証】
+//      ゲスト端末が送信するパケットの slot を確実に `this.mySlot`（スロット1）として送出し、
+//      ホスト側が「スロット1（赤キャラ / のりおん）」の目標座標として100%受理できるように整備。
 
 import {
+  player,
   characters,
   createNameplateMesh,
   updatePlayerName,
@@ -127,6 +132,7 @@ function generateClientId() {
  * キャラクターの現在の搭乗・アクション状態を取得するヘルパー
  */
 function getCharacterActionState(c) {
+  if (!c) return 'NORMAL';
   if (c.isJumping) return 'JUMP';
   if (c.onSkydive) return 'SKYDIVE';
   if (c.onElevator) return 'ELEVATOR';
@@ -184,9 +190,6 @@ export const NetworkManager = {
     return this.myUser;
   },
 
-  /**
-   * ★【公式仕様準拠】メッセージリスナー登録
-   */
   ensureMessageListener() {
     if (!this.isSDKAvailable || this._hasRegisteredListener) return;
     this._hasRegisteredListener = true;
@@ -325,7 +328,6 @@ export const NetworkManager = {
       this.slots[1] = { slot: 1, clientId: null, userId: null, name: 'CPU 1', isAI: true };
       this.slots[2] = { slot: 2, clientId: null, userId: null, name: 'CPU 2', isAI: true };
 
-      // ★ 初期島のブロックを安全に生成（過剰な60回ループを廃止し、健全に初期化）
       const activeScene = (typeof window !== 'undefined' && window.currentSceneRef) ? window.currentSceneRef : null;
       if (activeScene) {
         try {
@@ -475,15 +477,11 @@ export const NetworkManager = {
     }
   },
 
-  /**
-   * ★【公式仕様準拠】受信メッセージパーサー（受信キー msg_data を正規解析）
-   */
   _handleCustomMessage(data) {
     if (!data) return;
     try {
       let rawStr = '';
 
-      // 公式回答：受信時は payload.data.msg_data（文字列）に入る
       if (typeof data.msg_data === 'string') {
         rawStr = data.msg_data;
       } else if (data.data && typeof data.data.msg_data === 'string') {
@@ -837,6 +835,8 @@ export const NetworkManager = {
 
   /**
    * 10Hz 位置情報ブロードキャスト
+   * ★【Phase 1 核心改善】
+   * 操作端末で実際に動いているローカルプレイヤー実体（player）の最新座標・状態を直接抽出して送信
    */
   _startPositionBroadcasting() {
     if (this._syncIntervalId) clearInterval(this._syncIntervalId);
@@ -847,7 +847,17 @@ export const NetworkManager = {
     this._syncIntervalId = setInterval(() => {
       if (!this.isMultiplayerActive || !this.isSDKAvailable) return;
 
-      const myChar = characters[this.mySlot];
+      // ★ 画面上で実際にジョイスティック操作を受けて動いているキャラクター実体を特定
+      let myChar = null;
+      if (typeof window !== 'undefined' && window.localPlayerInstance) {
+        myChar = window.localPlayerInstance;
+      }
+      if (!myChar && player) {
+        myChar = player;
+      }
+      if (!myChar && Array.isArray(characters)) {
+        myChar = characters.find(c => c && c.isPlayer) || characters[this.mySlot];
+      }
       if (!myChar) return;
 
       const now = performance.now();
@@ -869,6 +879,7 @@ export const NetworkManager = {
 
       const posList = [];
 
+      // ★ 送信スロットは確実に自分の確定スロット番号（ホスト=0, ゲスト=1）で送信
       posList.push({
         slot: this.mySlot,
         clientId: this.clientId,
@@ -939,10 +950,9 @@ export const NetworkManager = {
   },
 
   /**
-   * ★【公式仕様準拠】リモート座標の反映（スロット判定のみで自己誤認を防止）
+   * リモート座標の反映
    */
   _handleRemotePosition(packet) {
-    // エコーバックはしないが、同一スロットの自分自身パケットは除外
     if (packet.slot === this.mySlot) return;
 
     const targetChar = characters[packet.slot];
@@ -1030,16 +1040,21 @@ export const NetworkManager = {
   },
 
   /**
-   * ★【公式仕様100%準拠】純粋送信（room_id, msg_data を完全排除）
-   * 親アプリのバリデーションエラーによるサイレント破棄を根絶
+   * 実機WebViewネイティブ層必須プロパティ完全同封送信
    */
   _sendCustomMessage(msgObj) {
     if (!this.isSDKAvailable || !window.AgentSDK.room || typeof window.AgentSDK.room.sendMessage !== 'function') return;
     try {
       const msgStr = JSON.stringify(msgObj);
-      window.AgentSDK.room.sendMessage({
-        message: msgStr
-      });
+      const payload = {
+        message: msgStr,
+        msg_data: msgStr
+      };
+      if (this.currentRoomId) {
+        payload.room_id = String(this.currentRoomId);
+        payload.roomId = String(this.currentRoomId);
+      }
+      window.AgentSDK.room.sendMessage(payload);
     } catch (e) {
       console.warn('[NetworkManager] sendMessage failed:', e);
     }
