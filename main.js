@@ -1,8 +1,10 @@
 // main.js: ゲーム全体の起動指揮・Three.js初期化・メインループ・入力・HUD制御
-// ★ Phase 1 修正版（ホスト側でのAIによるゲスト座標上書きを完全遮断）：
-//   1. shouldRunAI の判定ロジックを強化し、targetNetPos を保持しているスロットやリモート判定スロットに対する updateAICharacter の誤爆を100%防止
-//   2. リモート走者パケット受信時の補間処理（Lerp）への確実な進入を保証
-//   3. 10Hz移動補間の速度予測平滑化 ＆ アトラクション姿勢連動、ソロプレイ・ホストAuthoritative仕様は完全維持
+// ★ Step 2 実装版（リモート走者のスピード演出 ＆ スタン姿勢の完全同期）：
+//   1. 【スピード演出同期】相手が `speedBoostActive` の時、リモート走者の足元オーラ（footAura）を点灯・パルス拡縮し、
+//      移動量（stepDist）に応じて足元から煙（spawnPuffCloud）と加速ステップリング（spawnSpeedStepRing）を噴射。
+//   2. 【スタン姿勢同期】相手が `isStunned` の時、歩行アニメーションを直ちに停止し、ローカル同様のプルプル震え姿勢
+//      （Z軸振動・前傾）を描画。ぶつかり（タックル）時のやられアクションが両画面で完全に一致。
+//   3. Phase 1 で確立した「AIによるゲスト座標上書き遮断」および速度予測Lerp補間は100%維持。
 
 import { mountAllUI } from './dom.js';
 
@@ -508,19 +510,61 @@ export function animate(currentTime) {
         applyRemoteGimmickVisuals(c, remState, timeSec);
 
         const stepDist = Math.hypot(c.pos.x - prevX, c.pos.z - prevZ);
-        if (remState === 'NORMAL') {
-          if (stepDist > 0.008) {
-            c.walkCycle = (c.walkCycle || 0) + stepDist * 5.5;
-            const swing = Math.sin(c.walkCycle) * 0.45;
-            c.meshObj.leftLeg.rotation.x = swing;
-            c.meshObj.rightLeg.rotation.x = -swing;
-            c.meshObj.leftArm.rotation.x = -swing * 0.8;
-            c.meshObj.rightArm.rotation.x = swing * 0.8;
+
+        // ★【Step 2 改善①】スピードブースト演出の同期（オーラ点灯 ＆ 煙パーティクル）
+        if (c.meshObj.footAura) {
+          if (c.speedBoostActive) {
+            c.meshObj.footAura.visible = true;
+            const auraPulse = 1.0 + Math.sin(currentTime * 0.008) * 0.12;
+            c.meshObj.footAura.scale.set(auraPulse, auraPulse, auraPulse);
           } else {
-            c.meshObj.leftLeg.rotation.x = 0;
-            c.meshObj.rightLeg.rotation.x = 0;
-            c.meshObj.leftArm.rotation.x = 0;
-            c.meshObj.rightArm.rotation.x = 0;
+            c.meshObj.footAura.visible = false;
+          }
+        }
+
+        if (c.speedBoostActive && remState === 'NORMAL' && stepDist > 0.015) {
+          c.puffTimer = (c.puffTimer || 0) + dt;
+          if (c.puffTimer > 0.085) {
+            c.puffTimer = 0;
+            const backDist = 0.45;
+            const rotY = (c.targetNetRotY !== undefined) ? c.targetNetRotY : c.meshObj.root.rotation.y;
+            const puffX = c.pos.x - Math.sin(rotY) * backDist;
+            const puffZ = c.pos.z - Math.cos(rotY) * backDist;
+            spawnPuffCloud(puffX, c.pos.y, puffZ);
+            spawnSpeedStepRing(c.pos.x, c.pos.y, c.pos.z);
+          }
+        }
+
+        // ★【Step 2 改善②】スタンやられ姿勢の同期（プルプル震え・歩行停止）
+        const isRemoteStunned = Boolean(c.isStunned || (c.stunTimer && c.stunTimer > 0));
+
+        if (isRemoteStunned) {
+          // 歩行を完全に止め、ローカル同様のやられ振動と前傾を適用
+          c.meshObj.root.rotation.z = Math.sin(currentTime * 0.02) * 0.4;
+          c.meshObj.root.rotation.x = 0;
+          c.meshObj.leftLeg.rotation.x = 0;
+          c.meshObj.rightLeg.rotation.x = 0;
+          c.meshObj.leftArm.rotation.x = 0;
+          c.meshObj.rightArm.rotation.x = 0;
+        } else {
+          c.meshObj.root.rotation.z = 0;
+          c.meshObj.root.rotation.x = (c.speedBoostActive && remState === 'NORMAL') ? 0.20 : 0;
+
+          if (remState === 'NORMAL') {
+            if (stepDist > 0.008) {
+              const walkSpeedMult = c.speedBoostActive ? 1.75 : 1.0;
+              c.walkCycle = (c.walkCycle || 0) + stepDist * 5.5 * walkSpeedMult;
+              const swing = Math.sin(c.walkCycle) * 0.75;
+              c.meshObj.leftLeg.rotation.x = swing;
+              c.meshObj.rightLeg.rotation.x = -swing;
+              c.meshObj.leftArm.rotation.x = -swing * 0.8;
+              c.meshObj.rightArm.rotation.x = swing * 0.8;
+            } else {
+              c.meshObj.leftLeg.rotation.x = 0;
+              c.meshObj.rightLeg.rotation.x = 0;
+              c.meshObj.leftArm.rotation.x = 0;
+              c.meshObj.rightArm.rotation.x = 0;
+            }
           }
         }
       } else if (!c.targetNetPos) {

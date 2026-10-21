@@ -1,10 +1,10 @@
 // combat.js: タックル衝突・ノックアウト・攻撃スキル・ブロック散乱専用モジュール
-// ★ Phase 6 実装版（タックル判定のホスト完全一元化・スプリットブレイン根絶）：
-//   1. handleTackles: マルチプレイ時は「ホスト端末」のみが全キャラの接触を計算し、ゲスト端末はローカル判定を完全停止。
-//   2. applyRemoteKnockout: ゲストがホストからノックアウトを宣告された際、自キャラのスタック数も即座に減算し、ホスト側への上書きバグを防止。
-// ★ Phase 9 実装版（ブロック消失・二重散乱対策の厳格化）：
-//   1. scatterBricks に forceBroadcast 引数を追加し、ホストがタックル裁定を下した際はゲストのブロック散乱も強制的にブロードキャストさせる。
-// ★ 単体プレイ（ソロ）時の当たり判定・アイテムスキル動作は100%維持
+// ★ Step 3 実装版（タックル吹き飛び物理のホスト完全一元化 ＆ 座標競合・ジッター根絶）：
+//   1. 【ホスト確定座標の算出】ホスト端末で吹き飛ばし後の最終着地座標（finalX, finalZ）を島内クランプまで含めて単独計算。
+//   2. 【KNOCKOUTパケット拡張】算出した確定着地座標（targetX, targetZ）をパケットに同封。
+//   3. 【二重加算・押し引きの根絶】applyRemoteKnockout で受信した確定座標をダイレクトに採用。
+//      ゲスト独自のローカル相対加算（pos += push）によるズレや、通信ラグによるLerpの引っ張り合い（カクつき）を根絶。
+//   4. 【慣性ニュートラル化】被弾時に netVelocity をゼロクリアし、タックル直後に直前の歩行慣性で引き戻される現象を防止。
 
 import { TEAMS } from './constants.js';
 import {
@@ -92,17 +92,22 @@ export function applyRemoteScatterBlocks(stageIdx, blocks) {
 }
 
 /**
- * リモートからノックアウト被弾通知を受信した際のリアクションハンドラ
+ * ★【Step 3 核心改善】リモートからノックアウト被弾通知を受信した際のリアクションハンドラ
+ * ホストが確定した最終座標（targetX, targetZ）を直接適用し、両端末のズレを完全解消
  */
-export function applyRemoteKnockout(loserSlot, pushX, pushZ) {
+export function applyRemoteKnockout(loserSlot, pushX, pushZ, targetX = null, targetZ = null) {
   const loserChar = characters[loserSlot];
   if (!loserChar) return;
 
   loserChar.stunTimer = 1.4;
-  if (loserChar.isPlayer && soundRef) soundRef.playTackle();
+  loserChar.isStunned = true;
 
-  // ★ Phase 6 追加: ホスト権限でノックアウトされた場合、ゲストは自画面のスタック数も減算する
-  // (散乱ブロックの生成自体はホストからの SCATTER_BLOCKS に委ねるため、ここでは手持ちの個数減算のみ行う)
+  // 直前の歩行慣性を完全クリアし、直前のベクトルで引き戻されるのを遮断
+  loserChar.netVelocity = { x: 0, z: 0 };
+
+  if (soundRef) soundRef.playTackle();
+
+  // ホスト権限でノックアウトされた場合、ゲスト側でも手持ちスタックを減算
   if (loserChar.isPlayer) {
     const drops = Math.min(6, Math.max(2, Math.floor(loserChar.stackCount * 0.35)));
     for (let i = 0; i < drops; i++) {
@@ -110,25 +115,42 @@ export function applyRemoteKnockout(loserSlot, pushX, pushZ) {
     }
   }
 
-  const stage = STAGES[loserChar.currentStage];
-  if (stage) {
-    const centerX = stage.x || 0.0;
-    const nextX = loserChar.pos.x + pushX;
-    const nextZ = loserChar.pos.z + pushZ;
-    const distToCenter = Math.hypot(nextX - centerX, nextZ - stage.z);
-    if (distToCenter > stage.r) {
-      const normX = (nextX - centerX) / distToCenter;
-      const normZ = (nextZ - stage.z) / distToCenter;
-      loserChar.pos.x = centerX + normX * (stage.r - 0.5);
-      loserChar.pos.z = stage.z + normZ * (stage.r - 0.5);
-    } else {
-      loserChar.pos.x = nextX;
-      loserChar.pos.z = nextZ;
-    }
+  // ★ ホストから確定着地座標が送られてきている場合はそれを優先採用
+  if (targetX !== null && targetZ !== null && !isNaN(targetX) && !isNaN(targetZ)) {
+    loserChar.pos.x = targetX;
+    loserChar.pos.z = targetZ;
   } else {
-    loserChar.pos.x += pushX;
-    loserChar.pos.z += pushZ;
+    // 送信元が旧バージョンの場合のフォールバック計算
+    const stage = STAGES[loserChar.currentStage];
+    if (stage) {
+      const centerX = stage.x || 0.0;
+      const nextX = loserChar.pos.x + pushX;
+      const nextZ = loserChar.pos.z + pushZ;
+      const distToCenter = Math.hypot(nextX - centerX, nextZ - stage.z);
+      if (distToCenter > stage.r) {
+        const normX = (nextX - centerX) / distToCenter;
+        const normZ = (nextZ - stage.z) / distToCenter;
+        loserChar.pos.x = centerX + normX * (stage.r - 0.5);
+        loserChar.pos.z = stage.z + normZ * (stage.r - 0.5);
+      } else {
+        loserChar.pos.x = nextX;
+        loserChar.pos.z = nextZ;
+      }
+    } else {
+      loserChar.pos.x += pushX;
+      loserChar.pos.z += pushZ;
+    }
   }
+
+  if (loserChar.meshObj && loserChar.meshObj.root) {
+    loserChar.meshObj.root.position.copy(loserChar.pos);
+  }
+  if (loserChar.targetNetPos) {
+    loserChar.targetNetPos.copy(loserChar.pos);
+  }
+
+  // 被弾衝撃波エフェクトの表示
+  triggerLandingShockwave(loserChar.pos.x, loserChar.pos.y + 0.1, loserChar.pos.z, 2.0, 0xef4444);
 }
 
 // グローバル公開（network.js から安全に呼べるように登録）
@@ -142,7 +164,7 @@ if (typeof window !== 'undefined') {
  * @param {THREE.Scene} scene 
  * @param {Object} char 
  * @param {number} countToDrop 
- * @param {boolean} forceBroadcast ★ Phase 9 追加
+ * @param {boolean} forceBroadcast
  */
 export function scatterBricks(scene, char, countToDrop, forceBroadcast = false) {
   const count = Math.min(char.stackCount, countToDrop);
@@ -214,7 +236,6 @@ export function scatterBricks(scene, char, countToDrop, forceBroadcast = false) 
     });
   }
 
-  // ★ Phase 9 変更: 強制ブロードキャストフラグを加味し、送信条件を厳格化
   const isMulti = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive);
   const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
   const shouldBroadcast = isMulti && (forceBroadcast || char.isPlayer || (isHost && char.isAI));
@@ -245,7 +266,6 @@ export function fireHomingCrystal(char, forcedTarget = undefined, isRemote = fal
 
   let selectedTarget = forcedTarget;
 
-  // ローカル発動時はターゲットを探索し、通信パケットをブロードキャストする
   if (!isRemote && forcedTarget === undefined) {
     let bestForwardTarget = null, minForwardDist = 999999;
     let bestRearTarget = null, minRearDist = 999999;
@@ -367,7 +387,6 @@ export function fireThunderStrike(scene, userChar, forcedTarget = undefined, isR
 
   let target = forcedTarget;
 
-  // ローカル発動時はターゲットを探索し、通信パケットをブロードキャストする
   if (!isRemote && forcedTarget === undefined) {
     let minZ = 999999;
     characters.forEach(c => {
@@ -456,14 +475,13 @@ export function fireThunderStrike(scene, userChar, forcedTarget = undefined, isR
 
 /**
  * キャラクター同士のタックル衝突判定
- * ★ Phase 6 核心: マルチプレイ時は「ホスト端末」のみが判定を実行・確定し、ゲストはローカル計算を完全停止する
+ * ★ マルチプレイ時は「ホスト端末」のみが判定を実行・確定し、ゲストはローカル計算を完全停止
  * @param {THREE.Scene} scene 
  */
 export function handleTackles(scene) {
   const isMulti = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive);
   const isHost = (isMulti && window.NetworkManager.isHost);
 
-  // ★ Phase 6 追加: マルチプレイにおいて、ゲスト端末はローカルでの当たり判定を一切行わず、ホストからの通知のみを待つ
   if (isMulti && !isHost) {
     return;
   }
@@ -497,7 +515,6 @@ export function handleTackles(scene) {
         }
 
         if (winner && loser) {
-          // ホスト（またはソロプレイ）なので無条件で確定
           tackleKnockout(scene, winner, loser);
         }
       }
@@ -506,7 +523,8 @@ export function handleTackles(scene) {
 }
 
 /**
- * タックル敗者のノックアウト・所持ブロック放出
+ * ★【Step 3 核心改善】タックル敗者のノックアウト・所持ブロック放出
+ * 吹き飛ばし後の最終座標（finalX, finalZ）をホスト側で一意計算し、KNOCKOUTパケットに targetX, targetZ として同封
  * @param {THREE.Scene} scene 
  * @param {Object} winner 
  * @param {Object} loser 
@@ -514,9 +532,13 @@ export function handleTackles(scene) {
 export function tackleKnockout(scene, winner, loser) {
   if (loser.stunTimer > 0 || loser.invulnerableTimer > 0) return;
   loser.stunTimer = 1.4;
-  if (loser.isPlayer && soundRef) soundRef.playTackle();
+  loser.isStunned = true;
 
-  // ★ Phase 9 修正: ホストによる裁定時は強制ブロードキャストフラグを立てる
+  // 残存慣性をクリア
+  loser.netVelocity = { x: 0, z: 0 };
+
+  if (soundRef) soundRef.playTackle();
+
   const isMulti = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive);
   const isHost = (isMulti && window.NetworkManager.isHost);
   const forceBroadcast = (isMulti && isHost);
@@ -529,27 +551,35 @@ export function tackleKnockout(scene, winner, loser) {
   const pushX = (kx / mag) * 2.0;
   const pushZ = (kz / mag) * 2.0;
 
+  let finalX = loser.pos.x + pushX;
+  let finalZ = loser.pos.z + pushZ;
+
   const stage = STAGES[loser.currentStage];
   if (stage) {
     const centerX = stage.x || 0.0;
-    const nextX = loser.pos.x + pushX;
-    const nextZ = loser.pos.z + pushZ;
-    const distToCenter = Math.hypot(nextX - centerX, nextZ - stage.z);
+    const distToCenter = Math.hypot(finalX - centerX, finalZ - stage.z);
     if (distToCenter > stage.r) {
-      const normX = (nextX - centerX) / distToCenter;
-      const normZ = (nextZ - stage.z) / distToCenter;
-      loser.pos.x = centerX + normX * (stage.r - 0.5);
-      loser.pos.z = stage.z + normZ * (stage.r - 0.5);
-    } else {
-      loser.pos.x = nextX;
-      loser.pos.z = nextZ;
+      const normX = (finalX - centerX) / distToCenter;
+      const normZ = (finalZ - stage.z) / distToCenter;
+      finalX = centerX + normX * (stage.r - 0.5);
+      finalZ = stage.z + normZ * (stage.r - 0.5);
     }
-  } else {
-    loser.pos.x += pushX;
-    loser.pos.z += pushZ;
   }
 
-  // マルチプレイ時、被弾側端末へノックアウト（スタン＆吹き飛び）を通知
+  // ホスト端末側の座標を確定
+  loser.pos.x = finalX;
+  loser.pos.z = finalZ;
+  if (loser.meshObj && loser.meshObj.root) {
+    loser.meshObj.root.position.copy(loser.pos);
+  }
+  if (loser.targetNetPos) {
+    loser.targetNetPos.set(finalX, loser.pos.y, finalZ);
+  }
+
+  // 被弾衝撃波エフェクトの表示
+  triggerLandingShockwave(finalX, loser.pos.y + 0.1, finalZ, 2.0, 0xef4444);
+
+  // マルチプレイ時、被弾側端末へノックアウト（スタン＆ホスト確定着地座標）を通知
   if (isMulti && typeof window !== 'undefined' && window.AgentSDK) {
     const loserSlot = characters.indexOf(loser);
     if (loserSlot !== -1) {
@@ -559,7 +589,9 @@ export function tackleKnockout(scene, winner, loser) {
             event: 'KNOCKOUT',
             loserSlot: loserSlot,
             pushX: Number(pushX.toFixed(2)),
-            pushZ: Number(pushZ.toFixed(2))
+            pushZ: Number(pushZ.toFixed(2)),
+            targetX: Number(finalX.toFixed(2)),
+            targetZ: Number(finalZ.toFixed(2))
           })
         });
       } catch (err) {
