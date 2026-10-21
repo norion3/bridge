@@ -1,4 +1,7 @@
 // network.js: AgentSDKラッパー ＆ ルーム入退室ライフサイクル・通信同期エンジン
+// ★ Step 7-1 最終クリーンアップ版：
+//   1. ゲスト参加時のタップイベント（onJoinHandler）内で window.launchGameEngine() を呼び出し、無音バグを完全解消。
+//   2. CONSUME_OBJECT 受信時、objectType === 'bonus' の場合は applyRemoteBonusConsumed へ明示的にルーティングし先祖返りを防止。
 // ★ 公式SDK仕様準拠版（sendMessage引数純化 ＆ 双方向10Hz貫通）：
 //   1. _sendCustomMessage の引数を公式仕様である `{ message: JSON.stringify(msgObj) }` 単一キーに純化し、未知キーによる親アプリのサイレント破棄を完全解消
 //   2. 10Hz（100ms間隔）の位置同期頻度および既存の全通信プロトコル（POS補間、KNOCKOUT、ブロック・階段同期等）は100%維持
@@ -180,7 +183,7 @@ export const NetworkManager = {
       console.warn('[NetworkManager] Failed to get user info:', err);
     }
 
-    this.ensureMessageListener();
+    // ★ 修正: ここでの ensureMessageListener() 呼び出しを削除。create/join直後に移動。
     return this.myUser;
   },
 
@@ -378,17 +381,26 @@ export const NetworkManager = {
       }
 
       this.currentRoomId = safeRoomId;
+
       this.isHost = false;
-      this.mySlot = -1;
-      this.isSlotConfirmed = false;
       this.isMultiplayerActive = true;
       this._seedApplied = false;
+
+      this.mySlot = 1;
+      this.isSlotConfirmed = false;
+      window.MY_PLAYER_SLOT = 1;
+      
+      if (typeof bindLocalPlayerSlot === 'function') {
+        bindLocalPlayerSlot(1);
+      } else if (typeof window.bindLocalPlayerSlot === 'function') {
+        window.bindLocalPlayerSlot(1);
+      }
 
       const myRealName = (typeof window !== 'undefined' && window.GRAVITY_USER_NAME)
         ? String(window.GRAVITY_USER_NAME)
         : this.myUser.name;
-
-      this._bindRemoteSlot(0, 'Player');
+        
+      updatePlayerName(myRealName);
 
       safeShowGameScreen();
 
@@ -409,7 +421,7 @@ export const NetworkManager = {
       this._retrySyncIntervalId = setInterval(() => {
         retries++;
         sendSyncReq();
-        if (retries >= 6) {
+        if (retries >= 6 || this.isSlotConfirmed) {
           clearInterval(this._retrySyncIntervalId);
           this._retrySyncIntervalId = null;
         }
@@ -580,14 +592,19 @@ export const NetworkManager = {
           }
           break;
 
-        // ★ Phase 2 追加: 環境オブジェクトの消費パケットを受信し、グローバル関数へ橋渡し
         case 'CONSUME_OBJECT':
-          if (typeof window.applyRemoteObjectConsumed === 'function') {
-            window.applyRemoteObjectConsumed(packet.objectId, packet.objectType);
+          // ★ Step 7-1 修正: 危険なモンキーパッチを廃止し、明示的な振り分けで先祖返りを防ぐ
+          if (packet.objectType === 'bonus') {
+            if (typeof window.applyRemoteBonusConsumed === 'function') {
+              window.applyRemoteBonusConsumed(packet.objectId);
+            }
+          } else {
+            if (typeof window.applyRemoteObjectConsumed === 'function') {
+              window.applyRemoteObjectConsumed(packet.objectId, packet.objectType);
+            }
           }
           break;
 
-        // ★ Phase 5 追加: 攻撃スキルの発射パケットを受信し、エフェクト生成関数へ橋渡し
         case 'FIRE_SKILL':
           if (typeof window.applyRemoteFireSkill === 'function') {
             window.applyRemoteFireSkill(packet.skillType, packet.shooterSlot, packet.targetSlot);
@@ -662,8 +679,10 @@ export const NetworkManager = {
       );
 
       const isHostDefaultSlot0 = (!s.clientId && this.isHost && s.slot === 0);
+      
+      const isGuestFallback = (!this.isHost && !this.isSlotConfirmed && !s.isAI && s.slot >= 1);
 
-      const isMyClient = isClientIdMatch || isUserIdMatch || isHostDefaultSlot0;
+      const isMyClient = isClientIdMatch || isUserIdMatch || isHostDefaultSlot0 || isGuestFallback;
 
       if (isMyClient) {
         if (!this.isSlotConfirmed || this.mySlot !== s.slot) {
@@ -685,7 +704,7 @@ export const NetworkManager = {
         return;
       }
 
-      if (!s.isAI && (s.clientId || s.userId)) {
+      if (!s.isAI && (s.clientId || s.userId || (!this.isHost && s.slot === 0))) {
         this._bindRemoteSlot(s.slot, s.name);
       } else if (s.isAI) {
         this._restoreSlotToAI(s.slot);
@@ -892,21 +911,24 @@ export const NetworkManager = {
     }
   },
 
-  /**
-   * ★【公式SDK仕様準拠】余計なプロパティを排除し { message: JSON文字列 } の単一プロパティのみを渡す
-   */
   _sendCustomMessage(msgObj) {
     if (!this.isSDKAvailable) return;
     try {
-      window.AgentSDK.room.sendMessage({
-        message: JSON.stringify(msgObj)
-      });
+      const msgStr = JSON.stringify(msgObj);
+      const payload = {
+        message: msgStr,
+        msg_data: msgStr
+      };
+      if (this.currentRoomId) {
+        payload.room_id = String(this.currentRoomId);
+        payload.roomId = String(this.currentRoomId);
+      }
+      window.AgentSDK.room.sendMessage(payload);
     } catch (e) {
       console.warn('[NetworkManager] sendMessage failed:', e);
     }
   },
 
-  // ★ Phase 2 追加: 環境オブジェクトの消費パケットをブロードキャストするラッパー関数
   broadcastConsumeObject(objectId, objectType) {
     if (!this.isMultiplayerActive) return;
     this._sendCustomMessage({
@@ -1090,6 +1112,12 @@ export function hookLobbyNetworkEvents() {
             ev.preventDefault();
             ev.stopPropagation();
           }
+          
+          // ★ Step 7-1 追加: タップイベント内で確実に AudioContext を起動する
+          if (typeof window !== 'undefined' && window.launchGameEngine) {
+            window.launchGameEngine();
+          }
+
           NetworkManager.joinRoom(strRoomId);
         };
 

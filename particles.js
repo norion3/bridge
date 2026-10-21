@@ -9,7 +9,8 @@ import {
   attackRingGeo,
   attackTrailSphereGeo,
   blockGeometry,
-  targetReticleGeo
+  targetReticleGeo,
+  lightningPillarGeo
 } from './materials.js';
 
 export const PUFF_POOL_SIZE = 24;
@@ -23,6 +24,7 @@ export const FLOOR_BLOCK_POOL_SIZE = 400;
 // ★ サンダー専用有弾道プール規格（高輝度イエロー雷球・二重放電リング・18連トレイル・黄色照準レティクル）
 export const THUNDER_PROJECTILE_POOL_SIZE = 2;
 export const NUM_TRAILS_PER_THUNDER = 18;
+export const LIGHTNING_PILLAR_POOL_SIZE = 4; // ★ Phase 7 追加: 雷柱プール
 
 export const puffCloudPool = [];
 export const speedStepRingPool = [];
@@ -31,6 +33,7 @@ export const projectilePool = [];
 export const thunderProjectilePool = [];
 export const drainBlockPool = [];
 export const floorBlockPool = [];
+export const lightningPillarPool = []; // ★ Phase 7 追加
 
 // 既存コードとの後方互換用（空配列として安全に保持し、描画負荷と視覚ノイズをゼロ化）
 export const windStreakPool = [];
@@ -261,6 +264,21 @@ export function initParticlePools(scene) {
     }
   }
 
+  // ★ Phase 7 追加: 雷の柱の事前生成（GCスパイク防止）
+  if (lightningPillarPool.length === 0) {
+    for (let i = 0; i < LIGHTNING_PILLAR_POOL_SIZE; i++) {
+      const mesh = new THREE.Mesh(lightningPillarGeo, sharedMats.lightningBolt);
+      mesh.visible = false;
+      scene.add(mesh);
+      lightningPillarPool.push({
+        mesh: mesh,
+        active: false,
+        life: 0,
+        maxLife: 0.13
+      });
+    }
+  }
+
   if (drainBlockPool.length === 0) {
     for (let d = 0; d < DRAIN_POOL_SIZE; d++) {
       const drainMesh = new THREE.Mesh(blockGeometry, sharedMats.blockBlue);
@@ -330,6 +348,11 @@ export function resetParticlePools() {
     for (let j = 0; j < tp.trailSpheres.length; j++) {
       tp.trailSpheres[j].mesh.visible = false;
     }
+  }
+  // ★ Phase 7 追加: 雷柱プールのリセット
+  for (let i = 0; i < lightningPillarPool.length; i++) {
+    lightningPillarPool[i].active = false;
+    lightningPillarPool[i].mesh.visible = false;
   }
   for (let i = 0; i < drainBlockPool.length; i++) {
     const d = drainBlockPool[i];

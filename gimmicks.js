@@ -5,6 +5,8 @@
 // ★ Phase 4 実装:
 //   - アトラクション上のボーナス白ブロック取得時に CONSUME_OBJECT パケットをブロードキャスト
 //   - 他端末からのボーナス消費を受信し、対象の白ブロックを消去する applyRemoteBonusConsumed を追加
+// ★ Step 7-2 修正:
+//   - network.js 側で明示的な振り分けが実装されたため、ロード順序による先祖返りを引き起こす systems.js 関数のモンキーパッチを完全撤去
 
 import {
   LANES,
@@ -587,13 +589,4 @@ export function applyRemoteBonusConsumed(objectId) {
 // systems.js で定義済みの applyRemoteObjectConsumed をフックして bonus も処理可能にする
 if (typeof window !== 'undefined') {
   window.applyRemoteBonusConsumed = applyRemoteBonusConsumed;
-  
-  const _originalApplyRemoteObjectConsumed = window.applyRemoteObjectConsumed;
-  window.applyRemoteObjectConsumed = function(objectId, objectType) {
-    if (objectType === 'bonus') {
-      if (window.applyRemoteBonusConsumed) window.applyRemoteBonusConsumed(objectId);
-    } else {
-      if (_originalApplyRemoteObjectConsumed) _originalApplyRemoteObjectConsumed(objectId, objectType);
-    }
-  };
 }
