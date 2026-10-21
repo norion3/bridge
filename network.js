@@ -1,11 +1,13 @@
 // network.js: AgentSDK連携 ＆ ルーム入退室ライフサイクル・マルチプレイ通信同期エンジン
-// ★ ゲスト同期完全復旧版：
-//   1. 【userId判定の完全復元】_applyRoomMembersSync において、抜け落ちていた `s.userId` による
-//      人間プレイヤー確定判定を復元。ホスト側でゲストがCPUと誤認されて初期位置へ強制復帰される問題を根絶。
-//   2. 【操作キャラ実体からの座標取得】ゲスト端末で実際に移動している `player` 実体の
-//      現在座標（pos.x, pos.y, pos.z）、回転、スタック数をダイレクトに取得して送信。
-//   3. 【実機必須プロパティ担保】実機WebView（JSBridge）でパケット送出に不可欠な
-//      `room_id`, `roomId`, `msg_data` を `_sendCustomMessage` に完全同封。
+// ★ スロット二重割当・格下げバグ根絶版：
+//   1. 【REQUEST_ROOM_SYNCのスロット特定保護】
+//      入室通知でスロット1（赤）に仮登録されたゲストが、直後のREQUEST_ROOM_SYNC時にclientId未格納を理由に
+//      「未登録」と誤認され、スロット2（黄色）へ押し出される二重登録バグを根絶。
+//      clientIdだけでなくuserIdでも既存スロットを照合し、スロット1（赤）に正しくclientIdを紐付けて固定。
+//   2. 【入室重複ガード】
+//      _handleUserJoined においても、すでに登録済みのuserIdであればスロットを新規消費せず既存スロットを維持。
+//   3. 【操作キャラ実体からの座標取得 ＆ 実機必須プロパティ担保】
+//      実際に移動している player 実体の現在座標送信、および実機必須の room_id, roomId, msg_data 同封を完全維持。
 //   4. 【他ファイル互換性維持】blocks.js / systems.js が利用する各種ブロードキャスト関数を完全維持。
 
 import {
@@ -449,10 +451,17 @@ export const NetworkManager = {
     const userId = String(data.user_id || '');
     if (this.isHost) {
       const guestName = (data.name && data.name !== 'ゲスト') ? data.name : (data.user_name || 'ゲスト');
+      
+      // ★ 既存スロットに既に同一 userId が存在する場合はそのスロットを採用
       let targetSlot = -1;
+      if (userId) {
+        targetSlot = this.slots.findIndex(s => s.userId && String(s.userId) === userId);
+      }
 
-      if (this.slots[1].isAI) targetSlot = 1;
-      else if (this.slots[2].isAI) targetSlot = 2;
+      if (targetSlot === -1) {
+        if (this.slots[1].isAI) targetSlot = 1;
+        else if (this.slots[2].isAI) targetSlot = 2;
+      }
 
       if (targetSlot !== -1) {
         this.slots[targetSlot] = {
@@ -520,13 +529,21 @@ export const NetworkManager = {
             const reqName = (packet.name && packet.name !== 'ゲスト' && packet.name !== 'YOU') ? packet.name : 'ゲスト1';
 
             if (reqClientId && reqClientId !== this.clientId) {
+              // 1. clientId で既存スロットを特定
               let targetSlot = this.slots.findIndex(s => s.clientId === reqClientId);
 
+              // 2. ★【最重要修正】clientId で見つからなくても、直前の _handleUserJoined で登録された userId で照合！
+              if (targetSlot === -1 && reqUserId && reqUserId !== 'local_user') {
+                targetSlot = this.slots.findIndex(s => s.userId && String(s.userId) === reqUserId);
+              }
+
+              // 3. どちらでも見つからない新規の場合のみ、空いている最小スロット（スロット1最優先）を割り当て
               if (targetSlot === -1) {
                 if (this.slots[1].isAI) targetSlot = 1;
                 else if (this.slots[2].isAI) targetSlot = 2;
               }
 
+              // 4. スロット1（赤）を維持したまま clientId と正式情報を正しく紐付け
               if (targetSlot !== -1) {
                 this.slots[targetSlot] = {
                   slot: targetSlot,
@@ -650,9 +667,7 @@ export const NetworkManager = {
   },
 
   /**
-   * ★【核心修正】s.userId による人間プレイヤー判定を完全復元
-   * s.clientId が null であっても、s.userId が存在していれば絶対に CPU（AI）へ格下げせず、
-   * ホスト側でゲスト（スロット1）を「リモート走者」として100%確実に維持・バインドする
+   * s.userId による人間プレイヤー判定を完全復元
    */
   _applyRoomMembersSync(syncedSlots, seed, snapshot = null) {
     if (!Array.isArray(syncedSlots)) return;
@@ -703,7 +718,6 @@ export const NetworkManager = {
     syncedSlots.forEach((s) => {
       const isClientIdMatch = !!(s.clientId && s.clientId === this.clientId);
 
-      // ★ userId による自己判定も復元
       const isUserIdMatch = !!(
         s.userId &&
         this.myUser &&
@@ -736,7 +750,6 @@ export const NetworkManager = {
         return;
       }
 
-      // ★【最重要修正】s.userId による人間スロット判定を復元！
       // clientId が未格納（null）であっても、userId があれば確実に _bindRemoteSlot を維持し、CPU化を阻止
       if (!s.isAI && (s.clientId || s.userId || (!this.isHost && s.slot === 0))) {
         this._bindRemoteSlot(s.slot, s.name);
@@ -919,7 +932,6 @@ export const NetworkManager = {
           const charObj = characters[s.slot];
           if (!charObj) return;
 
-          // ★ 人間プレイヤー判定に s.userId も加味
           const isHumanPlayer = charObj.isRemote || Boolean(charObj.targetNetPos) || !s.isAI || Boolean(s.userId);
           if (s.isAI && !isHumanPlayer) {
             posList.push({
