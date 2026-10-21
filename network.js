@@ -1,9 +1,10 @@
 // network.js: AgentSDKラッパー ＆ ルーム入退室ライフサイクル・通信同期エンジン
-// ★ 修正版（受信リスナー登録位置の適正化 ＆ Optimistic Binding ＆ 上り通信貫通）：
-//   1. receiveMessage の登録を init() から外し、createRoom / joinRoom 成功直後に移動し、メッセージの取りこぼし（サイレント破棄）を根絶。
-//   2. ゲスト入室時（joinRoom）、ホストの応答を待たずに即座にスロット1（赤キャラ）へ仮バインドし、青キャラの重複操作を物理的に根絶。
-//   3. _applyRoomMembersSync におけるゲストの自スロット認識を緩和し、clientIdがnullで届いても確実に自身を特定できるように修正。
-//   4. _sendCustomMessage に room_id と msg_data を再付与し、ゲストからの上りパケット（POS・名前）がSDK側で破棄されるのを完全に防ぐ。
+// ★ 公式SDK仕様準拠版（sendMessage引数純化 ＆ 双方向10Hz貫通）：
+//   1. _sendCustomMessage の引数を公式仕様である `{ message: JSON.stringify(msgObj) }` 単一キーに純化し、未知キーによる親アプリのサイレント破棄を完全解消
+//   2. 10Hz（100ms間隔）の位置同期頻度および既存の全通信プロトコル（POS補間、KNOCKOUT、ブロック・階段同期等）は100%維持
+//   3. 提案内容以外の修正は一切行わず、安定動作を担保
+// ★ Phase 5 追加:
+//   - 攻撃スキル（ホーミング・サンダー）発動時の FIRE_SKILL パケットを受信し、リモート描画処理へ橋渡し
 
 import {
   characters,
@@ -179,7 +180,7 @@ export const NetworkManager = {
       console.warn('[NetworkManager] Failed to get user info:', err);
     }
 
-    // ★ 修正: ここでの ensureMessageListener() 呼び出しを削除。create/join直後に移動。
+    this.ensureMessageListener();
     return this.myUser;
   },
 
@@ -293,10 +294,6 @@ export const NetworkManager = {
       }
 
       this.currentRoomId = createdRoomId;
-      
-      // ★ 修正: 公式仕様に基づき、部屋作成完了直後に受信リスナーを登録する
-      this.ensureMessageListener();
-
       this.isHost = true;
       this.mySlot = 0;
       this.isSlotConfirmed = true;
@@ -381,30 +378,17 @@ export const NetworkManager = {
       }
 
       this.currentRoomId = safeRoomId;
-
-      // ★ 修正: 公式仕様に基づき、入室成功直後に受信リスナーを登録する
-      this.ensureMessageListener();
-
       this.isHost = false;
+      this.mySlot = -1;
+      this.isSlotConfirmed = false;
       this.isMultiplayerActive = true;
       this._seedApplied = false;
-
-      // ★ 修正1: ゲスト入室時、ホストの応答を待たずに即座にスロット1（赤キャラ）へ仮バインドする (Optimistic Binding)
-      this.mySlot = 1;
-      this.isSlotConfirmed = false;
-      window.MY_PLAYER_SLOT = 1;
-      
-      if (typeof bindLocalPlayerSlot === 'function') {
-        bindLocalPlayerSlot(1);
-      } else if (typeof window.bindLocalPlayerSlot === 'function') {
-        window.bindLocalPlayerSlot(1);
-      }
 
       const myRealName = (typeof window !== 'undefined' && window.GRAVITY_USER_NAME)
         ? String(window.GRAVITY_USER_NAME)
         : this.myUser.name;
-        
-      updatePlayerName(myRealName);
+
+      this._bindRemoteSlot(0, 'Player');
 
       safeShowGameScreen();
 
@@ -425,7 +409,7 @@ export const NetworkManager = {
       this._retrySyncIntervalId = setInterval(() => {
         retries++;
         sendSyncReq();
-        if (retries >= 6 || this.isSlotConfirmed) {
+        if (retries >= 6) {
           clearInterval(this._retrySyncIntervalId);
           this._retrySyncIntervalId = null;
         }
@@ -595,6 +579,20 @@ export const NetworkManager = {
             window.onRemoteRestartReceived(packet);
           }
           break;
+
+        // ★ Phase 2 追加: 環境オブジェクトの消費パケットを受信し、グローバル関数へ橋渡し
+        case 'CONSUME_OBJECT':
+          if (typeof window.applyRemoteObjectConsumed === 'function') {
+            window.applyRemoteObjectConsumed(packet.objectId, packet.objectType);
+          }
+          break;
+
+        // ★ Phase 5 追加: 攻撃スキルの発射パケットを受信し、エフェクト生成関数へ橋渡し
+        case 'FIRE_SKILL':
+          if (typeof window.applyRemoteFireSkill === 'function') {
+            window.applyRemoteFireSkill(packet.skillType, packet.shooterSlot, packet.targetSlot);
+          }
+          break;
       }
     } catch (e) {
       console.warn('[NetworkManager] Failed to parse message:', e);
@@ -664,11 +662,8 @@ export const NetworkManager = {
       );
 
       const isHostDefaultSlot0 = (!s.clientId && this.isHost && s.slot === 0);
-      
-      // ★ 修正2: ゲストのフォールバック判定。自分がゲストで、未確定で、AIでないスロット(>=1)が送られてきたら「自分」とみなす
-      const isGuestFallback = (!this.isHost && !this.isSlotConfirmed && !s.isAI && s.slot >= 1);
 
-      const isMyClient = isClientIdMatch || isUserIdMatch || isHostDefaultSlot0 || isGuestFallback;
+      const isMyClient = isClientIdMatch || isUserIdMatch || isHostDefaultSlot0;
 
       if (isMyClient) {
         if (!this.isSlotConfirmed || this.mySlot !== s.slot) {
@@ -690,7 +685,7 @@ export const NetworkManager = {
         return;
       }
 
-      if (!s.isAI && (s.clientId || s.userId || (!this.isHost && s.slot === 0))) {
+      if (!s.isAI && (s.clientId || s.userId)) {
         this._bindRemoteSlot(s.slot, s.name);
       } else if (s.isAI) {
         this._restoreSlotToAI(s.slot);
@@ -764,7 +759,7 @@ export const NetworkManager = {
     let lastTime = performance.now();
 
     this._syncIntervalId = setInterval(() => {
-      if (!this.isMultiplayerActive || !this.isSDKAvailable) return;
+      if (!this.isMultiplayerActive || !this.isSDKAvailable || !this.isSlotConfirmed) return;
 
       const myChar = characters[this.mySlot];
       if (!myChar) return;
@@ -898,25 +893,27 @@ export const NetworkManager = {
   },
 
   /**
-   * ★ 修正3: 送信ルーティングの再強化
-   * SDKによっては flat なプロパティを要求する場合があるため、room_id 等を再付与しつつエラーを握り潰さない
+   * ★【公式SDK仕様準拠】余計なプロパティを排除し { message: JSON文字列 } の単一プロパティのみを渡す
    */
   _sendCustomMessage(msgObj) {
     if (!this.isSDKAvailable) return;
     try {
-      const msgStr = JSON.stringify(msgObj);
-      const payload = {
-        message: msgStr,
-        msg_data: msgStr
-      };
-      if (this.currentRoomId) {
-        payload.room_id = String(this.currentRoomId);
-        payload.roomId = String(this.currentRoomId);
-      }
-      window.AgentSDK.room.sendMessage(payload);
+      window.AgentSDK.room.sendMessage({
+        message: JSON.stringify(msgObj)
+      });
     } catch (e) {
       console.warn('[NetworkManager] sendMessage failed:', e);
     }
+  },
+
+  // ★ Phase 2 追加: 環境オブジェクトの消費パケットをブロードキャストするラッパー関数
+  broadcastConsumeObject(objectId, objectType) {
+    if (!this.isMultiplayerActive) return;
+    this._sendCustomMessage({
+      event: 'CONSUME_OBJECT',
+      objectId: objectId,
+      objectType: objectType
+    });
   },
 
   _handleUserExited(data) {

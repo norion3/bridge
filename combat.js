@@ -1,10 +1,9 @@
 // combat.js: タックル衝突・ノックアウト・攻撃スキル・ブロック散乱専用モジュール
-// ★ Step 9 実装版（タックル判定の一方向化・無限増殖防止）：
-//   1. handleTackles の接触判定確定権限を一元化：
-//      - マルチプレイ時は「勝者側端末」または「ホスト端末（AI勝者時）」のみがノックアウトと散乱を確定・発信
-//      - 敗者側端末での重複判定を遮断し、双方判定による「ブロック倍増・無限増殖」「二重散乱パケット合戦」を根絶
-//   2. KNOCKOUT イベントを新設し、被弾側端末でのスタン・吹き飛ばしリアクションを安全にトリガー
-//   3. 単体プレイ（ソロ）時の当たり判定・アイテムスキル動作は100%維持
+// ★ Phase 6 実装版（タックル判定のホスト完全一元化・スプリットブレイン根絶）：
+//   1. handleTackles: マルチプレイ時は「ホスト端末」のみが全キャラの接触を計算し、ゲスト端末はローカル判定を完全停止。
+//   2. applyRemoteKnockout: ゲストがホストからノックアウトを宣告された際、自キャラのスタック数も即座に減算し、ホスト側への上書きバグを防止。
+//   3. scatterBricks: ホストが裁定したタックル散乱と、ゲストが自爆した散乱パケットが競合せず正しく飛ぶようにブロードキャスト条件を最適化。
+// ★ 単体プレイ（ソロ）時の当たり判定・アイテムスキル動作は100%維持
 
 import { TEAMS } from './constants.js';
 import {
@@ -100,6 +99,15 @@ export function applyRemoteKnockout(loserSlot, pushX, pushZ) {
 
   loserChar.stunTimer = 1.4;
   if (loserChar.isPlayer && soundRef) soundRef.playTackle();
+
+  // ★ Phase 6 追加: ホスト権限でノックアウトされた場合、ゲストは自画面のスタック数も減算する
+  // (散乱ブロックの生成自体はホストからの SCATTER_BLOCKS に委ねるため、ここでは手持ちの個数減算のみ行う)
+  if (loserChar.isPlayer) {
+    const drops = Math.min(6, Math.max(2, Math.floor(loserChar.stackCount * 0.35)));
+    for (let i = 0; i < drops; i++) {
+      removeBrickFromCharacter(loserChar, updateHUDRef);
+    }
+  }
 
   const stage = STAGES[loserChar.currentStage];
   if (stage) {
@@ -204,10 +212,11 @@ export function scatterBricks(scene, char, countToDrop) {
     });
   }
 
-  // マルチプレイ時、判定権限を持つ端末のみが散乱情報をブロードキャスト
+  // ★ Phase 6 変更: 散乱パケットの送信権限を最適化
+  // ホストは「タックル等全キャラの散乱」を、ゲストは「自キャラのゲート等による被弾散乱のみ」を送信する
   const isMulti = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive);
   const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
-  const shouldBroadcast = isMulti && (char.isPlayer || (isHost && char.isAI));
+  const shouldBroadcast = isMulti && (isHost || char.isPlayer);
 
   if (shouldBroadcast && droppedBlocks.length > 0 && typeof window !== 'undefined' && window.AgentSDK) {
     try {
@@ -227,35 +236,66 @@ export function scatterBricks(scene, char, countToDrop) {
 /**
  * ホーミングクリスタル発射スキル
  * @param {Object} char 
+ * @param {Object} forcedTarget (optional)
+ * @param {boolean} isRemote (optional)
  */
-export function fireHomingCrystal(char) {
+export function fireHomingCrystal(char, forcedTarget = undefined, isRemote = false) {
   if (soundRef) soundRef.playAttackShoot();
 
-  let bestForwardTarget = null, minForwardDist = 999999;
-  let bestRearTarget = null, minRearDist = 999999;
+  let selectedTarget = forcedTarget;
 
-  characters.forEach(c => {
-    if (c === char) return;
-    const dz = char.pos.z - c.pos.z;
-    const totalDistSq = (char.pos.x - c.pos.x) ** 2 + (char.pos.z - c.pos.z) ** 2;
+  // ローカル発動時はターゲットを探索し、通信パケットをブロードキャストする
+  if (!isRemote && forcedTarget === undefined) {
+    let bestForwardTarget = null, minForwardDist = 999999;
+    let bestRearTarget = null, minRearDist = 999999;
 
-    if (dz > 0.5) {
-      if (totalDistSq < minForwardDist) {
-        minForwardDist = totalDistSq;
-        bestForwardTarget = c;
+    characters.forEach(c => {
+      if (c === char) return;
+      const dz = char.pos.z - c.pos.z;
+      const totalDistSq = (char.pos.x - c.pos.x) ** 2 + (char.pos.z - c.pos.z) ** 2;
+
+      if (dz > 0.5) {
+        if (totalDistSq < minForwardDist) {
+          minForwardDist = totalDistSq;
+          bestForwardTarget = c;
+        }
+      } else if (dz < -0.5) {
+        if (totalDistSq < minRearDist) {
+          minRearDist = totalDistSq;
+          bestRearTarget = c;
+        }
       }
-    } else if (dz < -0.5) {
-      if (totalDistSq < minRearDist) {
-        minRearDist = totalDistSq;
-        bestRearTarget = c;
+    });
+
+    selectedTarget = bestForwardTarget || bestRearTarget;
+
+    const isMulti = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive);
+    const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
+    const shouldBroadcast = isMulti && (char.isPlayer || (isHost && char.isAI));
+
+    if (shouldBroadcast && typeof window !== 'undefined' && window.AgentSDK) {
+      const shooterSlot = characters.indexOf(char);
+      const targetSlot = selectedTarget ? characters.indexOf(selectedTarget) : -1;
+      if (shooterSlot !== -1) {
+        try {
+          window.AgentSDK.room.sendMessage({
+            message: JSON.stringify({
+              event: 'FIRE_SKILL',
+              skillType: 'homing',
+              shooterSlot: shooterSlot,
+              targetSlot: targetSlot
+            })
+          });
+        } catch (err) {
+          console.warn('[combat.js] Failed to broadcast FIRE_SKILL:', err);
+        }
       }
     }
-  });
+  }
 
-  const selectedTarget = bestForwardTarget || bestRearTarget;
   let isRearShot = false;
-
   const targetPosVec = _tempVec3A;
+  
   if (selectedTarget) {
     targetPosVec.copy(selectedTarget.pos);
     isRearShot = (char.pos.z < selectedTarget.pos.z);
@@ -309,7 +349,7 @@ export function fireHomingCrystal(char) {
     item.material.opacity = lifeFade * 0.95;
   }
 
-  if (char.isPlayer) {
+  if (char.isPlayer && !isRemote) {
     setAttackCamTimer(1.4);
   }
 }
@@ -318,19 +358,48 @@ export function fireHomingCrystal(char) {
  * サンダー落雷発射スキル
  * @param {THREE.Scene} scene 
  * @param {Object} userChar 
+ * @param {Object} forcedTarget (optional)
+ * @param {boolean} isRemote (optional)
  */
-export function fireThunderStrike(scene, userChar) {
+export function fireThunderStrike(scene, userChar, forcedTarget = undefined, isRemote = false) {
   if (soundRef && soundRef.playAttackShoot) soundRef.playAttackShoot();
 
-  let target = null;
-  let minZ = 999999;
-  characters.forEach(c => {
-    if (c === userChar) return;
-    if (c.pos.z < minZ) {
-      minZ = c.pos.z;
-      target = c;
+  let target = forcedTarget;
+
+  // ローカル発動時はターゲットを探索し、通信パケットをブロードキャストする
+  if (!isRemote && forcedTarget === undefined) {
+    let minZ = 999999;
+    characters.forEach(c => {
+      if (c === userChar) return;
+      if (c.pos.z < minZ) {
+        minZ = c.pos.z;
+        target = c;
+      }
+    });
+
+    const isMulti = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive);
+    const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
+    const shouldBroadcast = isMulti && (userChar.isPlayer || (isHost && userChar.isAI));
+
+    if (shouldBroadcast && typeof window !== 'undefined' && window.AgentSDK) {
+      const shooterSlot = characters.indexOf(userChar);
+      const targetSlot = target ? characters.indexOf(target) : -1;
+      if (shooterSlot !== -1) {
+        try {
+          window.AgentSDK.room.sendMessage({
+            message: JSON.stringify({
+              event: 'FIRE_SKILL',
+              skillType: 'thunder',
+              shooterSlot: shooterSlot,
+              targetSlot: targetSlot
+            })
+          });
+        } catch (err) {
+          console.warn('[combat.js] Failed to broadcast FIRE_SKILL:', err);
+        }
+      }
     }
-  });
+  }
 
   if (!target) return;
 
@@ -379,19 +448,24 @@ export function fireThunderStrike(scene, userChar) {
 
   triggerLandingShockwave(userChar.pos.x, userChar.pos.y + 0.1, userChar.pos.z, 2.2, 0xfacc15);
 
-  if (userChar.isPlayer) {
+  if (userChar.isPlayer && !isRemote) {
     setAttackCamTimer(1.4);
   }
 }
 
 /**
  * キャラクター同士のタックル衝突判定
- * ★【Step 9 核心】判定確定権限の一元化（勝者側端末 または ホスト端末のみが確定実行）
+ * ★ Phase 6 核心: マルチプレイ時は「ホスト端末」のみが判定を実行・確定し、ゲストはローカル計算を完全停止する
  * @param {THREE.Scene} scene 
  */
 export function handleTackles(scene) {
   const isMulti = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive);
   const isHost = (isMulti && window.NetworkManager.isHost);
+
+  // ★ Phase 6 追加: マルチプレイにおいて、ゲスト端末はローカルでの当たり判定を一切行わず、ホストからの通知のみを待つ
+  if (isMulti && !isHost) {
+    return;
+  }
 
   for (let i = 0; i < characters.length; i++) {
     for (let j = i + 1; j < characters.length; j++) {
@@ -422,11 +496,8 @@ export function handleTackles(scene) {
         }
 
         if (winner && loser) {
-          // マルチプレイ時は「勝者が自操作キャラ」または「ホスト端末でAIが勝者」の場合のみ判定確定権限を持つ
-          const hasAuthority = !isMulti || winner.isPlayer || (isHost && winner.isAI);
-          if (hasAuthority) {
-            tackleKnockout(scene, winner, loser);
-          }
+          // ホスト（またはソロプレイ）なので無条件で確定
+          tackleKnockout(scene, winner, loser);
         }
       }
     }
@@ -435,7 +506,6 @@ export function handleTackles(scene) {
 
 /**
  * タックル敗者のノックアウト・所持ブロック放出
- * ★【Step 9 改善】被弾側へ KNOCKOUT イベントを通知し、散乱ブロックの二重生成を完全防止
  * @param {THREE.Scene} scene 
  * @param {Object} winner 
  * @param {Object} loser 
@@ -492,4 +562,27 @@ export function tackleKnockout(scene, winner, loser) {
       }
     }
   }
+}
+
+/**
+ * 他端末からの攻撃スキル発射を受信し、視覚エフェクトを生成するハンドラ
+ */
+export function applyRemoteFireSkill(skillType, shooterSlot, targetSlot) {
+  const shooter = characters[shooterSlot];
+  const target = targetSlot >= 0 ? characters[targetSlot] : null;
+  if (!shooter) return;
+
+  const activeScene = (typeof window !== 'undefined' && window.currentSceneRef) ? window.currentSceneRef : null;
+
+  if (skillType === 'homing') {
+    fireHomingCrystal(shooter, target, true);
+  } else if (skillType === 'thunder') {
+    if (activeScene) {
+      fireThunderStrike(activeScene, shooter, target, true);
+    }
+  }
+}
+
+if (typeof window !== 'undefined') {
+  window.applyRemoteFireSkill = applyRemoteFireSkill;
 }

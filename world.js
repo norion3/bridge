@@ -231,7 +231,8 @@ export function spawnItem(scene, stageIdx, type = 'speed') {
     pos: itemGroup.position,
     active: true,
     stageIdx: stageIdx,
-    baseY: stageInfo.y
+    baseY: stageInfo.y,
+    itemId: `item_${stageIdx}_${Math.round(validPos.x * 100)}_${Math.round(validPos.z * 100)}`
   });
 }
 
@@ -286,7 +287,10 @@ export function spawnGatesOnIsland(scene, stageIdx, islandZ, islandY, islandX = 
   }
 
   createModifierGate(scene, stageIdx, islandX - 3.2, gateZ, islandY, p.left.op, p.left.val, p.left.label);
+  modifierGates[modifierGates.length - 1].gateId = `gate_${stageIdx}_${Math.round((islandX - 3.2) * 100)}_${Math.round(gateZ * 100)}`;
+
   createModifierGate(scene, stageIdx, islandX + 3.2, gateZ, islandY, p.right.op, p.right.val, p.right.label);
+  modifierGates[modifierGates.length - 1].gateId = `gate_${stageIdx}_${Math.round((islandX + 3.2) * 100)}_${Math.round(gateZ * 100)}`;
 }
 
 function getForkThemeGates(themeRole) {
@@ -465,7 +469,8 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
         baseY: bY,
         si: si,
         collected: false,
-        stageIdx: stageIdx
+        stageIdx: stageIdx,
+        bonusId: `bonus_skydive_${stageIdx}_${Math.round(t * 10000)}`
       };
       skydiveBridge.bonusBlocks.push(bonusData);
       skydiveBonusBlocks.push(bonusData);
@@ -618,7 +623,8 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
         baseY: bPos.y,
         zi: zi,
         collected: false,
-        stageIdx: stageIdx
+        stageIdx: stageIdx,
+        bonusId: `bonus_zipline_${stageIdx}_${Math.round(t * 10000)}`
       };
       ziplineBridge.bonusBlocks.push(bonusData);
       ziplineBonusBlocks.push(bonusData);
@@ -754,7 +760,8 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
         t: t,
         offset: offsetVal,
         collected: false,
-        stageIdx: stageIdx
+        stageIdx: stageIdx,
+        bonusId: `bonus_curvedslide_${stageIdx}_${Math.round(t * 10000)}`
       };
       curvedBridge.bonusBlocks.push(bonusData);
       curvedSlideBonusBlocks.push(bonusData);
@@ -858,7 +865,8 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
           baseY: bY,
           sbi: sbi,
           collected: false,
-          stageIdx: stageIdx
+          stageIdx: stageIdx,
+          bonusId: `bonus_slide_${stageIdx}_${laneIdx}_${Math.round(prog * 10000)}`
         };
         bridge.bonusBlocks.push(bonusData);
         slideBonusBlocks.push(bonusData);
@@ -1066,7 +1074,9 @@ export function extendCourseForkPatternB(scene) {
     const tmp = leftGates[0]; leftGates[0] = leftGates[1]; leftGates[1] = tmp;
   }
   createModifierGate(scene, leftStageIdx, leftMidX - 2.8, leftMidZ - 0.8, leftMidY, leftGates[0].op, leftGates[0].val, leftGates[0].label);
+  modifierGates[modifierGates.length - 1].gateId = `gate_${leftStageIdx}_${Math.round((leftMidX - 2.8) * 100)}_${Math.round((leftMidZ - 0.8) * 100)}`;
   createModifierGate(scene, leftStageIdx, leftMidX + 2.8, leftMidZ - 0.8, leftMidY, leftGates[1].op, leftGates[1].val, leftGates[1].label);
+  modifierGates[modifierGates.length - 1].gateId = `gate_${leftStageIdx}_${Math.round((leftMidX + 2.8) * 100)}_${Math.round((leftMidZ - 0.8) * 100)}`;
 
   if (leftTheme.itemType) {
     spawnItem(scene, leftStageIdx, leftTheme.itemType);
@@ -1101,7 +1111,9 @@ export function extendCourseForkPatternB(scene) {
     const tmp = rightGates[0]; rightGates[0] = rightGates[1]; rightGates[1] = tmp;
   }
   createModifierGate(scene, rightStageIdx, rightMidX - 2.8, rightMidZ - 0.8, rightMidY, rightGates[0].op, rightGates[0].val, rightGates[0].label);
+  modifierGates[modifierGates.length - 1].gateId = `gate_${rightStageIdx}_${Math.round((rightMidX - 2.8) * 100)}_${Math.round((rightMidZ - 0.8) * 100)}`;
   createModifierGate(scene, rightStageIdx, rightMidX + 2.8, rightMidZ - 0.8, rightMidY, rightGates[1].op, rightGates[1].val, rightGates[1].label);
+  modifierGates[modifierGates.length - 1].gateId = `gate_${rightStageIdx}_${Math.round((rightMidX + 2.8) * 100)}_${Math.round((rightMidZ - 0.8) * 100)}`;
 
   if (rightTheme.itemType) {
     spawnItem(scene, rightStageIdx, rightTheme.itemType);

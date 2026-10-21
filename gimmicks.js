@@ -2,6 +2,9 @@
 // ★ Step 10 実装版（リモートキャラクターの姿勢適用ヘルパーの公開 ＆ ボーナス回収の一意同期保護）：
 //   1. applyRemoteGimmickVisuals(char, state, timeSec) を新設し、POSパケットの状態ビット（SKYDIVE, ELEVATOR, TRAPDOOR, ZIPLINE）に応じたメッシュ表示・手足ポーズの連動を提供
 //   2. ローカル搭乗中の物理演算、ソロプレイ動作は100%維持
+// ★ Phase 4 実装:
+//   - アトラクション上のボーナス白ブロック取得時に CONSUME_OBJECT パケットをブロードキャスト
+//   - 他端末からのボーナス消費を受信し、対象の白ブロックを消去する applyRemoteBonusConsumed を追加
 
 import {
   LANES,
@@ -13,7 +16,13 @@ import {
   _tempVec3A,
   _tempVec3C
 } from './materials.js';
-import { STAGES } from './world.js';
+import { 
+  STAGES,
+  skydiveBonusBlocks,
+  ziplineBonusBlocks,
+  curvedSlideBonusBlocks,
+  slideBonusBlocks
+} from './world.js';
 import {
   addBrickToCharacter,
   applySkydivePose,
@@ -103,6 +112,15 @@ export function updateSkydiveMovement(scene, char, dirX, dt, soundRef, updateHUD
           addBrickToCharacter(char, char.team, 1, soundRef, updateHUDRef);
           if (char.isPlayer && soundRef) {
             soundRef.playCollect(1.2 + blk.t * 0.8);
+          }
+
+          // ★ Phase 4 追加: ボーナスブロック取得のブロードキャスト
+          const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
+          const shouldBroadcastPick = char.isPlayer || (isHost && char.isAI);
+          if (shouldBroadcastPick && typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive) {
+            if (blk.bonusId) {
+              window.NetworkManager.broadcastConsumeObject(blk.bonusId, 'bonus');
+            }
           }
         }
       }
@@ -361,6 +379,15 @@ export function updateZiplineMovement(scene, char, dt, soundRef, updateHUDRef) {
           if (char.isPlayer && soundRef) {
             soundRef.playCollect(1.25 + blk.t * 0.65);
           }
+
+          // ★ Phase 4 追加: ボーナスブロック取得のブロードキャスト
+          const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
+          const shouldBroadcastPick = char.isPlayer || (isHost && char.isAI);
+          if (shouldBroadcastPick && typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive) {
+            if (blk.bonusId) {
+              window.NetworkManager.broadcastConsumeObject(blk.bonusId, 'bonus');
+            }
+          }
         }
       }
     }
@@ -499,6 +526,15 @@ export function updateCurvedSlideMovement(scene, char, dirX, dt, soundRef, updat
             if (char.isPlayer && soundRef) {
               soundRef.playCollect(1.2 + blk.t * 0.6);
             }
+
+            // ★ Phase 4 追加: ボーナスブロック取得のブロードキャスト
+            const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
+            const shouldBroadcastPick = char.isPlayer || (isHost && char.isAI);
+            if (shouldBroadcastPick && typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive) {
+              if (blk.bonusId) {
+                window.NetworkManager.broadcastConsumeObject(blk.bonusId, 'bonus');
+              }
+            }
           }
         }
       }
@@ -520,4 +556,44 @@ export function updateCurvedSlideMovement(scene, char, dirX, dt, soundRef, updat
   }
 
   char.meshObj.root.position.copy(char.pos);
+}
+
+/**
+ * ★ Phase 4 追加: 他端末で消費されたボーナスブロックの強制消去ハンドラ
+ */
+export function applyRemoteBonusConsumed(objectId) {
+  if (!objectId) return;
+  const arrays = [skydiveBonusBlocks, ziplineBonusBlocks, curvedSlideBonusBlocks, slideBonusBlocks];
+  for (let i = 0; i < arrays.length; i++) {
+    const arr = arrays[i];
+    if (!arr) continue;
+    const idx = arr.findIndex(b => b.bonusId === objectId);
+    if (idx !== -1) {
+      const blk = arr[idx];
+      if (!blk.collected) {
+        blk.collected = true;
+        if (blk.mesh) {
+          blk.mesh.visible = false;
+          if (blk.mesh.parent) {
+            blk.mesh.parent.remove(blk.mesh);
+          }
+        }
+      }
+      break;
+    }
+  }
+}
+
+// systems.js で定義済みの applyRemoteObjectConsumed をフックして bonus も処理可能にする
+if (typeof window !== 'undefined') {
+  window.applyRemoteBonusConsumed = applyRemoteBonusConsumed;
+  
+  const _originalApplyRemoteObjectConsumed = window.applyRemoteObjectConsumed;
+  window.applyRemoteObjectConsumed = function(objectId, objectType) {
+    if (objectType === 'bonus') {
+      if (window.applyRemoteBonusConsumed) window.applyRemoteBonusConsumed(objectId);
+    } else {
+      if (_originalApplyRemoteObjectConsumed) _originalApplyRemoteObjectConsumed(objectId, objectType);
+    }
+  };
 }
