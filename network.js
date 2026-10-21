@@ -1,13 +1,11 @@
 // network.js: AgentSDKラッパー ＆ ルーム入退室ライフサイクル・通信同期エンジン
-// ★ Step 7-1 最終クリーンアップ版：
-//   1. ゲスト参加時のタップイベント（onJoinHandler）内で window.launchGameEngine() を呼び出し、無音バグを完全解消。
-//   2. CONSUME_OBJECT 受信時、objectType === 'bonus' の場合は applyRemoteBonusConsumed へ明示的にルーティングし先祖返りを防止。
-// ★ 公式SDK仕様準拠版（sendMessage引数純化 ＆ 双方向10Hz貫通）：
-//   1. _sendCustomMessage の引数を公式仕様である `{ message: JSON.stringify(msgObj) }` 単一キーに純化し、未知キーによる親アプリのサイレント破棄を完全解消
-//   2. 10Hz（100ms間隔）の位置同期頻度および既存の全通信プロトコル（POS補間、KNOCKOUT、ブロック・階段同期等）は100%維持
-//   3. 提案内容以外の修正は一切行わず、安定動作を担保
-// ★ Phase 5 追加:
-//   - 攻撃スキル（ホーミング・サンダー）発動時の FIRE_SKILL パケットを受信し、リモート描画処理へ橋渡し
+// ★ 通信リンク確立 ＆ ルーム二重作成防止 完全修正版：
+//   1. 【最重要修正】createRoom 完了直後に this.ensureMessageListener() を配置し、ホスト端末の受信を完全開通。
+//   2. 【最重要修正】ゲスト入室時（joinRoom）、即座にスロット1（赤キャラ）へ暫定バインド＆名前反映し、norion青のまま固まる現象を根絶。
+//   3. 【最重要修正】ゲストの位置ブロードキャストを即座に始動し、ホスト側がパケットを受信した瞬間にもゲストとして自動確定。
+//   4. 【二重作成防止】createRoom の最先頭で即座にロックをかけ、touchend 処理時に後続の click イベントを完全キャンセル。
+//   5. 【再入室保証】exitRoom 時に _hasRegisteredListener をリセットし、再入室時の通信デッドロックを防止。
+//   6. 既存の全パケット仕様（POS、BUILD_PLANK、KNOCKOUT、_sendCustomMessage形式等）は100%維持。
 
 import {
   characters,
@@ -182,8 +180,6 @@ export const NetworkManager = {
     } catch (err) {
       console.warn('[NetworkManager] Failed to get user info:', err);
     }
-
-    // ★ 修正: ここでの ensureMessageListener() 呼び出しを削除。create/join直後に移動。
     return this.myUser;
   },
 
@@ -251,6 +247,7 @@ export const NetworkManager = {
   },
 
   async createRoom(isPrivate = false) {
+    // ★ 即時ロック：多重呼び出しを関数の同期実行段階で完全遮断
     if (this._isCreatingRoom || this._isJoiningRoom) {
       console.warn('[NetworkManager] Room transaction is already in progress.');
       return null;
@@ -297,6 +294,10 @@ export const NetworkManager = {
       }
 
       this.currentRoomId = createdRoomId;
+
+      // ★【最重要修正】ホスト作成直後に確実に受信リスナーを開通（端末Aの耳を開ける）
+      this.ensureMessageListener();
+
       this.isHost = true;
       this.mySlot = 0;
       this.isSlotConfirmed = true;
@@ -339,7 +340,7 @@ export const NetworkManager = {
     } finally {
       setTimeout(() => {
         this._isCreatingRoom = false;
-      }, 500);
+      }, 800);
     }
   },
 
@@ -381,22 +382,31 @@ export const NetworkManager = {
       }
 
       this.currentRoomId = safeRoomId;
-
-      // ★ 修正: 公式仕様に基づき、入室成功直後に受信リスナーを登録する
       this.ensureMessageListener();
 
       this.isHost = false;
       this.isMultiplayerActive = true;
       this._seedApplied = false;
 
-      this.mySlot = -1;
-      this.isSlotConfirmed = false;
+      // ★【最重要修正】ゲスト入室時に即座にスロット1（赤キャラ）へ暫定バインド
+      // これにより、ホストの応答を待たずに端末Bは自分を「赤キャラ・自分の名前」として操作開始でき、norion青固まりを完全解消
+      this.mySlot = 1;
+      this.isSlotConfirmed = true;
+      window.MY_PLAYER_SLOT = 1;
 
       const myRealName = (typeof window !== 'undefined' && window.GRAVITY_USER_NAME)
         ? String(window.GRAVITY_USER_NAME)
         : this.myUser.name;
 
-      this._bindRemoteSlot(0, 'Player');
+      if (typeof bindLocalPlayerSlot === 'function') {
+        bindLocalPlayerSlot(1);
+      } else if (typeof window.bindLocalPlayerSlot === 'function') {
+        window.bindLocalPlayerSlot(1);
+      }
+      updatePlayerName(myRealName);
+
+      // スロット0（ホスト）をリモート走者としてバインド
+      this._bindRemoteSlot(0, 'norion');
 
       safeShowGameScreen();
 
@@ -408,7 +418,8 @@ export const NetworkManager = {
           event: 'REQUEST_ROOM_SYNC',
           clientId: this.clientId,
           userId: this.myUser.user_id,
-          name: myRealName
+          name: myRealName,
+          suggestedSlot: 1
         });
       };
 
@@ -417,18 +428,19 @@ export const NetworkManager = {
       this._retrySyncIntervalId = setInterval(() => {
         retries++;
         sendSyncReq();
-        if (retries >= 6 || this.isSlotConfirmed) {
+        if (retries >= 6) {
           clearInterval(this._retrySyncIntervalId);
           this._retrySyncIntervalId = null;
         }
       }, 300);
 
+      // 即座に位置送信を始動（ホスト側がこれを受信しても即座にスロット1として確定できる）
       this._startPositionBroadcasting();
       return true;
     } finally {
       setTimeout(() => {
         this._isJoiningRoom = false;
-      }, 500);
+      }, 800);
     }
   },
 
@@ -589,7 +601,6 @@ export const NetworkManager = {
           break;
 
         case 'CONSUME_OBJECT':
-          // ★ Step 7-1 修正: 危険なモンキーパッチを廃止し、明示的な振り分けで先祖返りを防ぐ
           if (packet.objectType === 'bonus') {
             if (typeof window.applyRemoteBonusConsumed === 'function') {
               window.applyRemoteBonusConsumed(packet.objectId);
@@ -643,8 +654,6 @@ export const NetworkManager = {
               window.applyRemoteBlockSpawned(b.stageIdx, b.poolIdx, b.x, b.y, b.z, b.teamId, b.blockId);
             }
           });
-        } else {
-          for (let i = 0; i < 60; i++) manageBlockSpawns(activeScene, false);
         }
 
         if (snapshot && Array.isArray(snapshot.planks)) {
@@ -675,16 +684,13 @@ export const NetworkManager = {
       );
 
       const isHostDefaultSlot0 = (!s.clientId && this.isHost && s.slot === 0);
-      
-      // ★ 修正2: ゲストのフォールバック判定。自分がゲストで、未確定で、AIでないスロット(>=1)が送られてきたら「自分」とみなす
-      const isGuestFallback = (!this.isHost && !this.isSlotConfirmed && !s.isAI && s.slot >= 1);
+      const isGuestFallback = (!this.isHost && s.slot === this.mySlot);
 
       const isMyClient = isClientIdMatch || isUserIdMatch || isHostDefaultSlot0 || isGuestFallback;
 
       if (isMyClient) {
-        if (!this.isSlotConfirmed || this.mySlot !== s.slot) {
+        if (this.mySlot !== s.slot) {
           this.mySlot = s.slot;
-          this.isSlotConfirmed = true;
           window.MY_PLAYER_SLOT = s.slot;
 
           if (typeof bindLocalPlayerSlot === 'function') {
@@ -723,6 +729,7 @@ export const NetworkManager = {
     targetChar.searchCooldown = 999999;
     targetChar.name = playerName || (slotIndex === 0 ? 'norion' : (slotIndex === 1 ? 'ゲスト1' : 'ゲスト2'));
 
+    // AIからゲスト交代時（Stage 0初期化）
     if (typeof resetCharacterToStageZero === 'function') {
       resetCharacterToStageZero(targetChar, targetChar.name, false);
     } else if (typeof window.resetCharacterToStageZero === 'function') {
@@ -775,7 +782,7 @@ export const NetworkManager = {
     let lastTime = performance.now();
 
     this._syncIntervalId = setInterval(() => {
-      if (!this.isMultiplayerActive || !this.isSDKAvailable || !this.isSlotConfirmed) return;
+      if (!this.isMultiplayerActive || !this.isSDKAvailable) return;
 
       const myChar = characters[this.mySlot];
       if (!myChar) return;
@@ -979,6 +986,9 @@ export const NetworkManager = {
     this.isSlotConfirmed = false;
     this._seedApplied = false;
 
+    // ★ 再入室時に確実にリスナーが登録されるようフラグリセット
+    this._hasRegisteredListener = false;
+
     if (typeof window !== 'undefined' && window.UIController && typeof window.UIController.showLobby === 'function') {
       window.UIController.showLobby();
     }
@@ -1000,20 +1010,15 @@ export function hookLobbyNetworkEvents() {
     btnCreatePublic._hasNetHook = true;
 
     const onCreateHandler = (e) => {
-      const now = Date.now();
-      if (now - lastCreateActionTime < 600) {
-        if (e) {
-          e.preventDefault();
-          e.stopPropagation();
-        }
-        return;
-      }
-      lastCreateActionTime = now;
-
       if (e) {
         e.preventDefault();
         e.stopPropagation();
       }
+      const now = Date.now();
+      if (now - lastCreateActionTime < 1000) {
+        return;
+      }
+      lastCreateActionTime = now;
       NetworkManager.createRoom(false);
     };
 
@@ -1026,20 +1031,15 @@ export function hookLobbyNetworkEvents() {
     btnCreatePrivate._hasNetHook = true;
 
     const onCreatePrivateHandler = (e) => {
-      const now = Date.now();
-      if (now - lastCreateActionTime < 600) {
-        if (e) {
-          e.preventDefault();
-          e.stopPropagation();
-        }
-        return;
-      }
-      lastCreateActionTime = now;
-
       if (e) {
         e.preventDefault();
         e.stopPropagation();
       }
+      const now = Date.now();
+      if (now - lastCreateActionTime < 1000) {
+        return;
+      }
+      lastCreateActionTime = now;
       NetworkManager.createRoom(true);
     };
 
@@ -1053,20 +1053,16 @@ export function hookLobbyNetworkEvents() {
 
     let lastRefreshActionTime = 0;
     const onRefreshHandler = async (e) => {
-      const now = Date.now();
-      if (now - lastRefreshActionTime < 800) {
-        if (e) {
-          e.preventDefault();
-          e.stopPropagation();
-        }
-        return;
-      }
-      lastRefreshActionTime = now;
-
       if (e) {
         e.preventDefault();
         e.stopPropagation();
       }
+      const now = Date.now();
+      if (now - lastRefreshActionTime < 1000) {
+        return;
+      }
+      lastRefreshActionTime = now;
+
       btnRefresh.textContent = '更新中...';
       const rooms = await NetworkManager.getPublicRooms();
       btnRefresh.textContent = '更新';
@@ -1095,22 +1091,16 @@ export function hookLobbyNetworkEvents() {
 
         let lastJoinTime = 0;
         const onJoinHandler = (ev) => {
-          const jNow = Date.now();
-          if (jNow - lastJoinTime < 800) {
-            if (ev) {
-              ev.preventDefault();
-              ev.stopPropagation();
-            }
-            return;
-          }
-          lastJoinTime = jNow;
-
           if (ev) {
             ev.preventDefault();
             ev.stopPropagation();
           }
-          
-          // ★ Step 7-1 追加: タップイベント内で確実に AudioContext を起動する
+          const jNow = Date.now();
+          if (jNow - lastJoinTime < 1000) {
+            return;
+          }
+          lastJoinTime = jNow;
+
           if (typeof window !== 'undefined' && window.launchGameEngine) {
             window.launchGameEngine();
           }
