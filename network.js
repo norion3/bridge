@@ -1,12 +1,10 @@
 // network.js: AgentSDKラッパー ＆ ルーム入退室ライフサイクル・通信同期エンジン
-// ★ Phase 2 完全修正版（ゲスト退出後のAI復帰迷走ゼロ化 ＆ 本名同期完全両立）：
-//   1. 【Phase 2核心】_restoreSlotToAI() を大幅強化：
-//      - ゲスト退出時にスタック回避タイマー（unstuckTimer, stuckCheckTimer, lastPosCheck）を完全クリア。
-//      - ゲスト操作時の残存慣性（netVelocity = { x: 0, z: 0 }）を消去し、引っ張り合いを防止。
-//      - 存在しないブロックや古い目標（targetBlock, elevatorChoice, forkBranchChoice）を完全消去。
-//      - 最寄りブロックの即座索敵（searchCooldown = 0）を直ちに走らせ、迷走時間0秒で自律走行へ移行。
-//   2. ゲスト本名の即時検知・ネームプレート強制再描画は100%維持。
-//   3. createRoom直後のリスナー開通、ゲスト即時赤スロットバインド、二重作成防止ロジックも完全維持。
+// ★ 修正版（ピン留めフリーズ根絶 ＆ AI復帰迷走ゼロ化）：
+//   1. 【フリーズ根絶】_bindRemoteSlot 内で、既にリモート走者となっている場合は resetCharacterToStageZero をスキップ。
+//      同期パケットが届くたびに初期位置へ強制送還されるバグを根絶し、端末Bの操作が端末Aで即座に滑らかに動くよう修正。
+//   2. 【本名即時反映】端末Bの本名（「のりおん」）検知によるネームプレート更新は100%維持。
+//   3. 【AI復帰迷走ゼロ化】_restoreSlotToAI でスタックタイマー・残存慣性を消去し、迷走時間0秒で索敵へ移行。
+//   4. createRoom 直後のリスナー開通、ゲスト即時赤スロットバインド、二重作成防止ロジックも完全維持。
 
 import {
   characters,
@@ -709,9 +707,15 @@ export const NetworkManager = {
     });
   },
 
+  /**
+   * ★【核心修正】ピン留めフリーズ根絶版 _bindRemoteSlot
+   * すでにリモート走者になっているキャラは位置を初期化せず、名前の更新のみを行う
+   */
   _bindRemoteSlot(slotIndex, playerName) {
     const targetChar = characters[slotIndex];
     if (!targetChar) return;
+
+    const wasAlreadyRemote = targetChar.isRemote && !targetChar.isAI;
 
     targetChar.isPlayer = false;
     targetChar.isAI = false;
@@ -739,28 +743,31 @@ export const NetworkManager = {
       targetChar.nameplateSprite.visible = true;
     }
 
-    if (typeof resetCharacterToStageZero === 'function') {
-      resetCharacterToStageZero(targetChar, targetChar.name, false);
-    } else if (typeof window.resetCharacterToStageZero === 'function') {
-      window.resetCharacterToStageZero(targetChar, targetChar.name, false);
-    } else {
-      const defaultX = (slotIndex === 1) ? -4.0 : (slotIndex === 2 ? 4.0 : 0.0);
-      const stage0Y = (STAGES[0] ? STAGES[0].y : 0);
-      const stage0Z = (STAGES[0] ? (STAGES[0].z + 4.0) : 4.0);
-      targetChar.currentStage = 0;
-      targetChar.pos.set(defaultX, stage0Y, stage0Z);
-      if (targetChar.meshObj && targetChar.meshObj.root) {
-        targetChar.meshObj.root.position.copy(targetChar.pos);
-        targetChar.meshObj.root.rotation.set(0, Math.PI, 0);
+    // ★ 既にリモート走者として動いているなら初期位置リセットは絶対に呼ばない！
+    // AIから初めてゲストへ切り替わった初回の1度だけ初期位置リセットを実行する
+    if (!wasAlreadyRemote) {
+      if (typeof resetCharacterToStageZero === 'function') {
+        resetCharacterToStageZero(targetChar, targetChar.name, false);
+      } else if (typeof window.resetCharacterToStageZero === 'function') {
+        window.resetCharacterToStageZero(targetChar, targetChar.name, false);
+      } else {
+        const defaultX = (slotIndex === 1) ? -4.0 : (slotIndex === 2 ? 4.0 : 0.0);
+        const stage0Y = (STAGES[0] ? STAGES[0].y : 0);
+        const stage0Z = (STAGES[0] ? (STAGES[0].z + 4.0) : 4.0);
+        targetChar.currentStage = 0;
+        targetChar.pos.set(defaultX, stage0Y, stage0Z);
+        if (targetChar.meshObj && targetChar.meshObj.root) {
+          targetChar.meshObj.root.position.copy(targetChar.pos);
+          targetChar.meshObj.root.rotation.set(0, Math.PI, 0);
+        }
+        if (!targetChar.targetNetPos) targetChar.targetNetPos = new THREE.Vector3();
+        targetChar.targetNetPos.copy(targetChar.pos);
       }
-      if (!targetChar.targetNetPos) targetChar.targetNetPos = new THREE.Vector3();
-      targetChar.targetNetPos.copy(targetChar.pos);
     }
   },
 
   /**
    * ★【Phase 2 完全強化版】ゲスト退出後にスロットをAIへ安全かつ即座に復帰させる関数
-   * ゲスト操作時の残存慣性・スタックタイマー・ゾンビターゲットを完全消去し、迷走時間を0秒化
    */
   _restoreSlotToAI(slotIndex) {
     const targetChar = characters[slotIndex];
@@ -773,28 +780,27 @@ export const NetworkManager = {
     targetChar.aiState = 'COLLECT';
     targetChar.name = (slotIndex === 1) ? 'CPU 1' : 'CPU 2';
 
-    // ★【Phase 2 核心①】残存慣性・ネットワーク補間を完全ニュートラル化
+    // 残存慣性・ネットワーク補間を完全ニュートラル化
     targetChar.netVelocity = { x: 0, z: 0 };
     targetChar.remoteActionState = 'NORMAL';
     if (targetChar.targetNetPos) {
       targetChar.targetNetPos.copy(targetChar.pos);
     }
 
-    // ★【Phase 2 核心②】AIスタック回避タイマーの完全クリア（急激なバック走や横飛びを防止）
+    // AIスタック回避タイマーの完全クリア
     targetChar.unstuckTimer = 0;
     targetChar.stuckCheckTimer = 0;
     targetChar.lastPosCheck = null;
     targetChar.unstuckDirX = 0;
     targetChar.unstuckDirZ = 0;
 
-    // ★【Phase 2 核心③】ターゲット・進行ベクトルの完全リフレッシュ（迷走旋回を根絶）
+    // ターゲット・進行ベクトルの完全リフレッシュ
     targetChar.targetBlock = null;
     targetChar.aiDirX = 0;
     targetChar.aiDirZ = -1;
     targetChar.elevatorChoice = undefined;
     targetChar.forkBranchChoice = undefined;
     targetChar.botSlideOffsetTarget = 0;
-    // 復帰初フレームで即座に新しい最寄りブロックを索敵させる
     targetChar.searchCooldown = (targetChar.team && targetChar.team.id === 'red') ? 0 : 0.06;
 
     // 2. 状態・スタック表示の整合
