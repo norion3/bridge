@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>階段を架けろ！</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Three.js r128 CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <style>
+    * {
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
+      touch-action: none;
+    }
+    body, html {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #7dd3fc;
+    }
+    #canvas-container {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 1;
+    }
+    #touch-control-layer {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 10;
+      touch-action: none;
+    }
+    .safe-top-padding {
+      padding-top: max(16px, env(safe-area-inset-top));
+    }
+    .safe-bottom-padding {
+      padding-bottom: max(16px, env(safe-area-inset-bottom));
+    }
+    .safe-x-padding {
+      padding-left: max(16px, env(safe-area-inset-left));
+      padding-right: max(16px, env(safe-area-inset-right));
+    }
+
+    /* ★ 階段スコアの小気味よい Micro-Pop ＆ 連続設置アンチシェイク設計 */
+    #hud-score {
+      display: inline-block;
+      transform-origin: center center;
+      will-change: transform, color;
+    }
+    .score-pop {
+      transform: scale(1.14) !important;
+      color: #fde047 !important; /* 鮮やかなイエローゴールド発光 */
+      transition: transform 120ms cubic-bezier(0.18, 0.89, 0.32, 1.28), color 120ms ease-out;
+    }
+    .score-clamped {
+      transform: scale(1.15) !important;
+      color: #fde047 !important;
+      transition: transform 50ms linear, color 50ms ease-out;
+    }
+
+    /* ★ 残り30秒「タイムクライシス・アラート」（ネオンレッド化 ＆ 心拍パルス） */
+    @keyframes timerHeartbeat {
+      0%, 100% {
+        transform: scale(1.0);
+        filter: drop-shadow(0 0 6px rgba(244, 63, 94, 0.5));
+      }
+      50% {
+        transform: scale(1.06);
+        filter: drop-shadow(0 0 14px rgba(244, 63, 94, 0.95));
+      }
+    }
+    .timer-critical {
+      color: #f43f5e !important; /* 鮮烈なネオンレッド / コーラルピンク */
+      animation: timerHeartbeat 1.0s ease-in-out infinite;
+      display: inline-block;
+      transform-origin: center center;
+    }
+  </style>
+</head>
+<body class="font-sans antialiased">
+  <!-- 3Dレンダリング用コンテナ -->
+  <div id="canvas-container"></div>
+
+  <!-- タッチ・スワイプ入力受取レイヤー -->
+  <div id="touch-control-layer"></div>
+
+  <!-- HUD オーバーレイ（画面上部：動的ヘッダー余白対応・背景透過・クリーン文字配置） -->
+  <div id="hud-top-container" class="fixed top-0 left-0 right-0 z-20 flex justify-between items-start safe-top-padding safe-x-padding pointer-events-none transition-all duration-300">
+    <!-- 左上：階段スコア（SCOREラベル追加・背景透過・クリーン文字配置） -->
+    <div class="flex items-baseline gap-1.5" style="text-shadow: 0 2px 8px rgba(0,0,0,0.85), 0 0 4px rgba(0,0,0,0.9);">
+      <span class="text-xs sm:text-sm font-black text-amber-300 tracking-wider">SCORE</span>
+      <span id="hud-score" class="text-lg sm:text-xl font-black text-amber-400 tracking-wide">0</span>
+      <span class="text-xs font-bold text-amber-200">段</span>
+    </div>
+
+    <!-- 中央上：残り時間タイマー（アイコン・黒座布団カプセル完全排除） -->
+    <div class="flex items-center" style="text-shadow: 0 2px 8px rgba(0,0,0,0.85), 0 0 4px rgba(0,0,0,0.9);">
+      <span id="hud-timer" class="text-lg sm:text-xl font-black text-white tracking-widest transition-colors duration-300">05:00</span>
+    </div>
+
+    <!-- 右上：所持ブロック数（アイコン・黒座布団カプセル完全排除） -->
+    <div class="flex items-baseline gap-1" style="text-shadow: 0 2px 8px rgba(0,0,0,0.85), 0 0 4px rgba(0,0,0,0.9);">
+      <span id="hud-stack-count" class="text-lg sm:text-xl font-black text-cyan-400 tracking-wide">0</span>
+      <span class="text-xs font-bold text-cyan-200">個</span>
+    </div>
+  </div>
+
+  <!-- 左下：ワンタップ即時リスタートボタン（GitHubでは快適リトライ、将来GRAVITYではホスト専用に自動切替） -->
+  <div class="fixed bottom-0 left-0 z-20 p-4 sm:p-6 safe-bottom-padding safe-x-padding pointer-events-none flex justify-start items-end">
+    <button id="btn-restart-quick" type="button" aria-label="Restart Game" 
+      class="pointer-events-auto w-11 h-11 rounded-full bg-slate-900/80 backdrop-blur-md border border-white/15 flex items-center justify-center shadow-lg hover:bg-slate-800 active:scale-90 transition cursor-pointer">
+      <svg class="w-5 h-5 text-amber-300 fill-none stroke-current" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+      </svg>
+    </button>
+  </div>
+
+  <!-- 右下：サウンドボタン -->
+  <div class="fixed bottom-0 right-0 z-20 p-4 sm:p-6 safe-bottom-padding safe-x-padding pointer-events-none flex justify-end items-end">
+    <button id="btn-sound" type="button" aria-label="Toggle Sound" 
+      class="pointer-events-auto w-11 h-11 rounded-full bg-slate-900/80 backdrop-blur-md border border-white/15 flex items-center justify-center shadow-lg hover:bg-slate-800 active:scale-90 transition cursor-pointer">
+      <svg id="icon-sound-off" class="w-5 h-5 text-slate-400 fill-none stroke-current" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
+      </svg>
+      <svg id="icon-sound-on" class="w-5 h-5 text-cyan-400 fill-none stroke-current hidden" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+      </svg>
+    </button>
+  </div>
+
+  <!-- スタートモーダル -->
+  <div id="modal-start" class="fixed inset-0 z-30 flex items-center justify-center bg-slate-950/40 backdrop-blur-sm p-4">
+    <div class="bg-slate-900/90 border border-white/20 rounded-3xl p-6 sm:p-8 max-w-sm w-full text-center shadow-2xl flex flex-col items-center">
+      <h1 class="text-2xl sm:text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-sky-200 mb-2">階段を架けろ！</h1>
+      <p class="text-xs sm:text-sm text-slate-300 mb-6 font-medium leading-relaxed">
+        ブロックを集めて階段を架けろ！<br>
+        スワイプで自由に移動
+      </p>
+      <button id="btn-start" type="button" 
+        class="w-full py-3.5 bg-gradient-to-r from-sky-400 to-blue-600 hover:from-sky-300 hover:to-blue-500 active:scale-95 text-white font-extrabold rounded-2xl shadow-lg transition duration-150 cursor-pointer text-base">
+        TAP TO START
+      </button>
+    </div>
+  </div>
+
+  <!-- リザルトモーダル -->
+  <div id="modal-result" class="fixed inset-0 z-30 hidden items-center justify-center bg-slate-950/50 backdrop-blur-sm p-4">
+    <div class="bg-slate-900/95 border border-white/20 rounded-3xl p-6 sm:p-8 max-w-sm w-full text-center shadow-2xl flex flex-col items-center">
+      <h2 class="text-xl font-bold text-amber-400 mb-1">TIME UP!</h2>
+      <div class="text-4xl sm:text-5xl font-black text-white my-4 tracking-tight" id="modal-rank">0 段</div>
+      <button id="btn-restart" type="button" 
+        class="w-full py-3.5 bg-gradient-to-r from-emerald-400 to-teal-600 hover:from-emerald-300 hover:to-teal-500 active:scale-95 text-white font-extrabold rounded-2xl shadow-lg transition duration-150 cursor-pointer text-base">
+        もう一度遊ぶ
+      </button>
+    </div>
+  </div>
+
+  <script type="module" src="./main.js"></script>
+</body>
+</html>
