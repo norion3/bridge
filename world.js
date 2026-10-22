@@ -1,8 +1,14 @@
 // world.js: コース伸長・浮島・橋・スライド・ジップライン・エレベーター・スカイダイブ・ドロップタワー施設・二股分岐＆合流・目鼻なし愛嬌お邪魔キャラ
-// ★ 決定論シード同期版:
-//   1. extendCourse / extendCourseForkPatternB の冒頭で、ステージ番号に応じた決定論的シード（_prngState = (currentWorldSeed + idx * 10007) | 0）へ一時同期
-//   2. ゲーム中の床ブロック補充などでPRNG消費回数がズレていても、奥のコース形状・ギミック・カーブが全端末で100%同一に生成されることを数学的に保証
-//   3. 他のコース幾何構造・ギミック生成・お掃除処理は100%維持
+// ★ Phase 2 実装版（スライダーボーナスブロック確定論的ID保証 ＆ グローバル同期配列完全登録）：
+//   1. 【直線スライダーボーナスの一意ID保証 ＆ 登録漏れ根絶】
+//      直線スライダー上の各ボーナスブロックに対し、ステージIdx・レーンIdx・進行度から一意の
+//      確定論的ID（bonus_slide_${stageIdx}_${laneIdx}_${sbi}）を100%確実に付与。
+//      各橋の bonusBlocks だけでなく、消去ハンドラが参照するグローバルの slideBonusBlocks 配列へ漏れなく登録。
+//   2. 【S字カーブスライダーボーナスのID整合】
+//      S字スライダー上のボーナスブロックへ一意の確定論的ID（bonus_curved_${stageIdx}_${bi}）を付与し、
+//      gimmicks.js の消去ハンドラ（applyRemoteBonusConsumed）との完全一致を保証。
+//   3. 【PRNGシード同期 ＆ 幾何構造の完全維持】
+//      Mulberry32 による決定論的コース形状生成、全アトラクション、お掃除処理（cleanupOldData）は100%維持。
 
 import {
   TRAMPOLINE_TIERS,
@@ -462,6 +468,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       bMesh.position.set(bX, bY, bZ);
       scene.add(bMesh);
 
+      const bonusId = `bonus_skydive_${stageIdx}_${si}`;
       const bonusData = {
         mesh: bMesh,
         t: t,
@@ -470,7 +477,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
         si: si,
         collected: false,
         stageIdx: stageIdx,
-        bonusId: `bonus_skydive_${stageIdx}_${Math.round(t * 10000)}`
+        bonusId: bonusId
       };
       skydiveBridge.bonusBlocks.push(bonusData);
       skydiveBonusBlocks.push(bonusData);
@@ -617,6 +624,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       bMesh.position.copy(bPos);
       scene.add(bMesh);
 
+      const bonusId = `bonus_zipline_${stageIdx}_${zi}`;
       const bonusData = {
         mesh: bMesh,
         t: t,
@@ -624,7 +632,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
         zi: zi,
         collected: false,
         stageIdx: stageIdx,
-        bonusId: `bonus_zipline_${stageIdx}_${Math.round(t * 10000)}`
+        bonusId: bonusId
       };
       ziplineBridge.bonusBlocks.push(bonusData);
       ziplineBonusBlocks.push(bonusData);
@@ -755,13 +763,15 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       bMesh.position.copy(bPos);
       scene.add(bMesh);
 
+      // ★ 一意の確定論的ID保証
+      const bonusId = `bonus_curved_${stageIdx}_${bi}`;
       const bonusData = {
         mesh: bMesh,
         t: t,
         offset: offsetVal,
         collected: false,
         stageIdx: stageIdx,
-        bonusId: `bonus_curvedslide_${stageIdx}_${Math.round(t * 10000)}`
+        bonusId: bonusId
       };
       curvedBridge.bonusBlocks.push(bonusData);
       curvedSlideBonusBlocks.push(bonusData);
@@ -856,6 +866,8 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
         bMesh.rotation.x = angleX;
         scene.add(bMesh);
 
+        // ★【Phase 2 核心】確定論的一意IDの保証 ＆ グローバル slideBonusBlocks 配列への登録
+        const bonusId = `bonus_slide_${stageIdx}_${laneIdx}_${sbi}`;
         const bonusData = {
           mesh: bMesh,
           laneIdx: laneIdx,
@@ -866,7 +878,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
           sbi: sbi,
           collected: false,
           stageIdx: stageIdx,
-          bonusId: `bonus_slide_${stageIdx}_${laneIdx}_${Math.round(prog * 10000)}`
+          bonusId: bonusId
         };
         bridge.bonusBlocks.push(bonusData);
         slideBonusBlocks.push(bonusData);
@@ -979,7 +991,6 @@ export function extendCourseForkPatternB(scene) {
   const forkIdx = STAGES.length;
   const prev = STAGES[forkIdx - 1];
 
-  // ★ 分岐ステージ番号に応じた決定論的シードへ一時同期
   _prngState = (currentWorldSeed + forkIdx * 10007) | 0;
 
   const forkDistZ = 36.0;
@@ -1156,7 +1167,6 @@ export function extendCourse(scene) {
   const idx = STAGES.length;
   const prev = STAGES[idx - 1];
 
-  // ★ ステージ番号に応じた決定論的シードへ一時同期（ブロック補充等によるPRNGズレを完全無効化）
   _prngState = (currentWorldSeed + idx * 10007) | 0;
 
   const stagesSinceLastMerge = (lastMergeStageIdx === -1) ? (idx - 6) : (idx - lastMergeStageIdx);

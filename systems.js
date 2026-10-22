@@ -1,14 +1,15 @@
 // systems.js: 物理移動判定・スカイウォーク歩行開放・ハッチ進入同期・リュック収納アニメーション連動・シームレス風音連携・スカイダイブ＆スライダーボーナス回収・合流島安全着地完全整合・お邪魔キャラ衝突判定・下層島誤ワープ完全防止・階段/床ブロック取得リアルタイム同期
-// ★ Phase 1 実装版（マグネット・足元回収時の CPU負荷 O(1)化 ＆ 線形探索全廃）：
-//   1. 【floorBlockPool.indexOf(blk) 全件線形探索の完全撤廃】
-//      マグネット吸引（490行目付近）および足元ブロック回収（573行目付近）で毎フレーム走っていた
-//      数百要素の indexOf 線形探索を撤廃。blk.poolIdx を直接参照し、CPUコストを O(N) から O(1) へ極小化。
-//   2. 【高負荷時のフレーム落ち・CPUスパイク根絶】
-//      マグネットで数十個のブロックを一気に吸い寄せる際も、配列全スキャンが一切発生しないため、
-//      iPhone 15（60Hz）端末でも滑らかな描画と60fpsを安定維持。
-//   3. 【100ms周期キューイング連携の完全維持】
-//      階段設置（queuePlankBuild）やブロック回収（queueBlockPick）のバッファ蓄積、
-//      および物理移動・アトラクション制御・衝突判定は100%維持。
+// ★ Phase 1 実装版（直線スライダーボーナスブロック回収時ブロードキャスト追加 ＆ GC最適化）：
+//   1. 【直線スライダーの回収時ブロードキャスト追加】
+//      直線スライダー滑走時のボーナス回収ループ（370行目付近）に、欠落していた
+//      NetworkManager.broadcastConsumeObject(blk.bonusId, 'bonus') を追加。
+//      取得した瞬間に 100ms周期の POS パケット（consumes）へ同封して相手端末へ自動同期。
+//   2. 【localBridges 配列生成のゼロアロケーション化】
+//      毎フレーム new Array されていた localBridges を静的再利用バッファへ切り替え、
+//      60fps/120fps 移動時のGCスパイク（画面の一瞬のカクつき）を根絶。
+//   3. 【CPU負荷 O(1)化 ＆ 既存の物理・アトラクション同期の完全維持】
+//      マグネット・足元ブロック回収時の blk.poolIdx による O(1) 参照、
+//      階段設置・ブロック取得の100ms集約、衝突判定は100%維持。
 
 import {
   TRAMPOLINE_TIERS,
@@ -72,6 +73,8 @@ let updateHUDRef = null;
 let onPlankPlacedCallback = null;
 
 const dummyPlankObj = new THREE.Object3D();
+// ★ GCスパイク防止用の静的再利用ブリッジ配列
+const reusableLocalBridges = [];
 
 export function setSystemCallbacks(sound, updateHUD, onPlankPlaced = null) {
   soundRef = sound;
@@ -335,13 +338,21 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
     (nextZ > curStageObj.z - curStageObj.r * 0.72) &&
     (char.pos.z > curStageObj.z - curStageObj.r * 0.72);
 
-  const localBridges = [];
+  // ★【GC最適化】毎フレームの配列アロケーション（new Array）を防止
+  reusableLocalBridges.length = 0;
   if (bridgesByStage.has(char.currentStage)) {
-    localBridges.push(...bridgesByStage.get(char.currentStage));
+    const curStageBridges = bridgesByStage.get(char.currentStage);
+    for (let bi = 0; bi < curStageBridges.length; bi++) {
+      reusableLocalBridges.push(curStageBridges[bi]);
+    }
   }
   if (char.slideCooldown <= 0 && char.currentStage > 0 && bridgesByStage.has(char.currentStage - 1)) {
-    localBridges.push(...bridgesByStage.get(char.currentStage - 1));
+    const prevStageBridges = bridgesByStage.get(char.currentStage - 1);
+    for (let bi = 0; bi < prevStageBridges.length; bi++) {
+      reusableLocalBridges.push(prevStageBridges[bi]);
+    }
   }
+  const localBridges = reusableLocalBridges;
 
   if (!isFarFromBridges) {
     // 1. スカイダイブ進入判定
@@ -601,6 +612,7 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
           char.onSlide = true;
           char.lastPlankIdx = plankIdx;
 
+          // ★【Phase 1 核心改善】直線スライダー上のボーナスブロック回収 ＆ ブロードキャスト
           if (scene && onBridge.bonusBlocks && onBridge.bonusBlocks.length > 0) {
             for (let sbi = 0; sbi < onBridge.bonusBlocks.length; sbi++) {
               const blk = onBridge.bonusBlocks[sbi];
@@ -611,6 +623,15 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
                   addBrickToCharacter(char, char.team, 1, soundRef, updateHUDRef);
                   if (char.isPlayer && soundRef) {
                     soundRef.playCollect(1.2 + blk.prog * 0.6);
+                  }
+
+                  // 相手端末へ消去イベントをブロードキャスト（100ms周期キューへ同封）
+                  const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
+                  const shouldBroadcastBonus = char.isPlayer || (isHost && char.isAI);
+                  if (shouldBroadcastBonus && typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive) {
+                    if (blk.bonusId) {
+                      window.NetworkManager.broadcastConsumeObject(blk.bonusId, 'bonus');
+                    }
                   }
                 }
               }
@@ -670,7 +691,7 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
                   }
                 }
 
-                // ★【Phase 2 核心①】for ループ内での生 sendMessage 連射を完全廃止し、NetworkManager の一時バッファへキューイング
+                // for ループ内での生 sendMessage 連射を完全廃止し、NetworkManager の一時バッファへキューイング
                 const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
                 const shouldBroadcastPlank = char.isPlayer || (isHost && char.isAI);
 
@@ -869,7 +890,7 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
           const dx = char.pos.x - blk.pos.x;
           const dz = char.pos.z - blk.pos.z;
           if (dx * dx + dz * dz < magnetRadiusSq && Math.abs(char.pos.y - blk.pos.y) < 3.2) {
-            // ★【Phase 1 核心改善①】indexOf の全件線形探索を撤廃し、O(1) で即座にインデックスを参照
+            // indexOf の全件線形探索を撤廃し、O(1) で即座にインデックスを参照
             const poolIdx = (blk.poolIdx !== undefined) ? blk.poolIdx : floorBlockPool.indexOf(blk);
             const blockX = blk.pos.x;
             const blockZ = blk.pos.z;
@@ -1115,7 +1136,7 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
         const dx = char.pos.x - blk.pos.x;
         const dz = char.pos.z - blk.pos.z;
         if (dx * dx + dz * dz < 2.25) {
-          // ★【Phase 1 核心改善②】足元ブロック拾い時も indexOf の線形探索を撤廃（O(1)化）
+          // 足元ブロック拾い時も indexOf の線形探索を撤廃（O(1)化）
           const poolIdx = (blk.poolIdx !== undefined) ? blk.poolIdx : floorBlockPool.indexOf(blk);
           const blockX = blk.pos.x;
           const blockZ = blk.pos.z;
