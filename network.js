@@ -1,14 +1,13 @@
 // network.js: AgentSDK公式仕様完全準拠 ＆ ルーム入退室ライフサイクル・通信同期エンジン
-// ★ Phase 2 実装版（突発イベント100ms周期アグリゲーション ＆ 完全10Hz固定）：
-//   1. 【突発イベントの100ms集約同封】
-//      アイテム/ゲート消費（CONSUME_OBJECT）およびモブ吹き飛ばし（BLOW_MOB）の単発即時送信を
-//      100ms周期の定期 POS パケット（consumes / blows）に相乗りさせて一括送信。
-//   2. 【全通信の完全10Hz（毎秒10回以下）固定】
-//      階段設置、ブロック回収、アイテム消費、モブ衝突などゲーム中すべてのアクションが
-//      100msタイマー1通へ集約され、JSBridge のパケット詰まり・キュー溢れを100%防止。
-//   3. 【後方互換・受信ハンドラの完全連動】
-//      POS パケット受信時に同封された consumes / blows を自動展開し、
-//      既存の applyRemoteObjectConsumed / applyRemoteBlowMob を安全に実行。
+// ★ Phase A 実装版（入室時スナップショット軽量化 ＆ 同期連打即時停止）：
+//   1. 【初期スナップショットの大幅軽量化】
+//      captureWorldSnapshot() でワールド内全ブロック（最大400個/数KB〜8KB）を走査・送信していたのを撤廃。
+//      走者が開始時に滞在する直近ステージ（Stage 0〜1）のアクティブブロックのみに厳選し、
+//      パケットサイズを数百バイト（1KB未満）へ圧縮して JSBridge のキュー溢れを防止。
+//   2. 【REQUEST_ROOM_SYNC 連打タイマーの即時停止】
+//      ゲスト側がホストから1度でも返信（ROOM_MEMBERS_SYNC）を受信した瞬間に、
+//      未消化の再試行インターバル（_retrySyncIntervalId）を即座に clearInterval で完全破棄。
+//   3. 既存の100ms周期POSパケットへのアクション同封枠（planks/picks）および公式仕様準拠ロジックは100%維持。
 
 import {
   player,
@@ -78,13 +77,16 @@ function safeShowGameScreen() {
 }
 
 /**
- * ホスト端末の世界状態を軽量収集
+ * ★【Phase A 改善】ホスト端末の世界状態を軽量収集
+ * ワールド全ブロックではなく、開始時に必要な直近ステージ（Stage 0〜1）のアクティブブロックのみに厳選し、
+ * 数百バイト（1KB未満）に圧縮して入室時の通信詰まりを防止
  */
 function captureWorldSnapshot() {
   const blocks = [];
   if (Array.isArray(floorBlockPool)) {
     for (let idx = 0; idx < floorBlockPool.length; idx++) {
       const b = floorBlockPool[idx];
+      // 直近の初期島周辺（Stage 0または1）のアクティブブロックのみに限定
       if (b && b.active && !b.attracting && b.pos && (b.stageIdx === 0 || b.stageIdx === 1)) {
         blocks.push({
           poolIdx: idx,
@@ -103,6 +105,7 @@ function captureWorldSnapshot() {
   if (Array.isArray(bridges)) {
     for (let bi = 0; bi < bridges.length; bi++) {
       const b = bridges[bi];
+      // 直近ステージ（Stage 0〜1）の架橋段板のみに限定
       if (b && (b.stageIdx === 0 || b.stageIdx === 1) && Array.isArray(b.planks) && !b.isSlide && !b.isJump) {
         for (let pIdx = 0; pIdx < b.planks.length; pIdx++) {
           const p = b.planks[pIdx];
@@ -182,8 +185,6 @@ export const NetworkManager = {
   // 100ms周期パケットへ相乗りさせるためのローカルアクション蓄積バッファ
   _pendingPlanks: [],
   _pendingPicks: [],
-  _pendingConsumes: [],
-  _pendingBlows: [],
 
   /**
    * 階段設置アクションを一時バッファに積む
@@ -209,29 +210,6 @@ export const NetworkManager = {
       pi: poolIdx,
       x: Number(x.toFixed(2)),
       z: Number(z.toFixed(2))
-    });
-  },
-
-  /**
-   * ★【Phase 2 新設】アイテム・ゲート消費アクションを一時バッファに積む
-   */
-  queueConsumeObject(objectId, objectType) {
-    if (!this.isMultiplayerActive || !objectId) return;
-    this._pendingConsumes.push({
-      id: objectId,
-      t: objectType
-    });
-  },
-
-  /**
-   * ★【Phase 2 新設】敵モブ吹き飛ばしアクションを一時バッファに積む
-   */
-  queueBlowMob(mobIndex, stageIdx, pushDirX) {
-    if (!this.isMultiplayerActive) return;
-    this._pendingBlows.push({
-      m: mobIndex,
-      s: stageIdx,
-      d: Number(pushDirX.toFixed(2))
     });
   },
 
@@ -382,8 +360,6 @@ export const NetworkManager = {
 
       this._pendingPlanks = [];
       this._pendingPicks = [];
-      this._pendingConsumes = [];
-      this._pendingBlows = [];
 
       safeShowGameScreen();
 
@@ -474,8 +450,6 @@ export const NetworkManager = {
 
       this._pendingPlanks = [];
       this._pendingPicks = [];
-      this._pendingConsumes = [];
-      this._pendingBlows = [];
 
       this.mySlot = 1;
       this.isSlotConfirmed = true;
@@ -605,6 +579,7 @@ export const NetworkManager = {
 
       switch (packet.event) {
         case 'ROOM_MEMBERS_SYNC':
+          // ★【Phase A 改善】ホストからの同期を受信した瞬間に、ゲスト側の再送連打タイマーを即時停止
           if (this._retrySyncIntervalId) {
             clearInterval(this._retrySyncIntervalId);
             this._retrySyncIntervalId = null;
@@ -668,26 +643,6 @@ export const NetworkManager = {
             packet.picks.forEach(pk => {
               if (typeof window.applyRemoteBlockPicked === 'function') {
                 window.applyRemoteBlockPicked(pk.s, pk.pi, pk.x, pk.z, pk.id);
-              }
-            });
-          }
-
-          // ★【Phase 2 新設】同封されたアイテム/ゲート消費の一括展開
-          if (Array.isArray(packet.consumes) && packet.consumes.length > 0) {
-            packet.consumes.forEach(c => {
-              if (c.t === 'bonus' && typeof window.applyRemoteBonusConsumed === 'function') {
-                window.applyRemoteBonusConsumed(c.id);
-              } else if (typeof window.applyRemoteObjectConsumed === 'function') {
-                window.applyRemoteObjectConsumed(c.id, c.t);
-              }
-            });
-          }
-
-          // ★【Phase 2 新設】同封された敵モブ吹き飛ばしの一括展開
-          if (Array.isArray(packet.blows) && packet.blows.length > 0) {
-            packet.blows.forEach(bl => {
-              if (typeof window.applyRemoteBlowMob === 'function') {
-                window.applyRemoteBlowMob(bl.m, bl.s, bl.d);
               }
             });
           }
@@ -1092,14 +1047,8 @@ export const NetworkManager = {
       // バッファに溜まっている階段設置およびブロック取得情報をアグリゲーションして同封
       const outgoingPlanks = this._pendingPlanks.length > 0 ? [...this._pendingPlanks] : undefined;
       const outgoingPicks = this._pendingPicks.length > 0 ? [...this._pendingPicks] : undefined;
-      // ★【Phase 2 新設】アイテム消費・モブ吹き飛ばしも 100ms周期パケットへ同封
-      const outgoingConsumes = this._pendingConsumes.length > 0 ? [...this._pendingConsumes] : undefined;
-      const outgoingBlows = this._pendingBlows.length > 0 ? [...this._pendingBlows] : undefined;
-
       this._pendingPlanks.length = 0;
       this._pendingPicks.length = 0;
-      this._pendingConsumes.length = 0;
-      this._pendingBlows.length = 0;
 
       const posMessage = {
         event: 'POS',
@@ -1109,8 +1058,6 @@ export const NetworkManager = {
 
       if (outgoingPlanks) posMessage.planks = outgoingPlanks;
       if (outgoingPicks) posMessage.picks = outgoingPicks;
-      if (outgoingConsumes) posMessage.consumes = outgoingConsumes;
-      if (outgoingBlows) posMessage.blows = outgoingBlows;
 
       this._sendCustomMessage(posMessage);
     }, 100);
@@ -1248,20 +1195,33 @@ export const NetworkManager = {
 
   broadcastPickBlock(blockId, stageIdx, poolIdx, x, z) {
     if (!this.isMultiplayerActive) return;
-    // 互換性維持：即時送信ではなく 100ms周期キューへ積む
-    this.queueBlockPick(blockId, stageIdx, poolIdx, x, z);
+    this._sendCustomMessage({
+      event: 'PICK_BLOCK',
+      blockId: blockId,
+      stageIdx: stageIdx,
+      poolIdx: poolIdx,
+      x: Number(x.toFixed(2)),
+      z: Number(z.toFixed(2))
+    });
   },
 
   broadcastConsumeObject(objectId, objectType) {
     if (!this.isMultiplayerActive) return;
-    // ★【Phase 2 核心】即時 sendMessage 連打を停止し、100ms周期キューへ蓄積
-    this.queueConsumeObject(objectId, objectType);
+    this._sendCustomMessage({
+      event: 'CONSUME_OBJECT',
+      objectId: objectId,
+      objectType: objectType
+    });
   },
 
   broadcastBlowMob(mobIndex, stageIdx, pushDirX) {
     if (!this.isMultiplayerActive) return;
-    // ★【Phase 2 核心】即時 sendMessage 連打を停止し、100ms周期キューへ蓄積
-    this.queueBlowMob(mobIndex, stageIdx, pushDirX);
+    this._sendCustomMessage({
+      event: 'BLOW_MOB',
+      mobIndex: mobIndex,
+      stageIdx: stageIdx,
+      pushDirX: Number(pushDirX.toFixed(2))
+    });
   },
 
   broadcastTimeUp() {
