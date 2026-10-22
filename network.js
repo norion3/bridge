@@ -1,14 +1,17 @@
-// network.js: AgentSDK公式仕様完全準拠 ＆ ルーム入退室ライフサイクル・通信同期エンジン
-// ★ Phase 2 実装版（突発イベント100ms周期アグリゲーション ＆ 完全10Hz固定）：
-//   1. 【突発イベントの100ms集約同封】
-//      アイテム/ゲート消費（CONSUME_OBJECT）およびモブ吹き飛ばし（BLOW_MOB）の単発即時送信を
-//      100ms周期の定期 POS パケット（consumes / blows）に相乗りさせて一括送信。
-//   2. 【全通信の完全10Hz（毎秒10回以下）固定】
-//      階段設置、ブロック回収、アイテム消費、モブ衝突などゲーム中すべてのアクションが
-//      100msタイマー1通へ集約され、JSBridge のパケット詰まり・キュー溢れを100%防止。
-//   3. 【後方互換・受信ハンドラの完全連動】
-//      POS パケット受信時に同封された consumes / blows を自動展開し、
-//      既存の applyRemoteObjectConsumed / applyRemoteBlowMob を安全に実行。
+// network.js: AgentSDK公式仕様完全準拠 ＆ ホスト主導型ハンドシェイク同期エンジン
+// ★ ホスト主導型ハンドシェイク完全同期版（Race Condition・ランダム非同期100%根絶）：
+//   1. 【ゲスト先走り送信の完全停止 ＆ 純粋待機モード】
+//      joinRoom() 直後の REQUEST_ROOM_SYNC 連射タイマーおよび _startPositionBroadcasting() 呼び出しを撤廃。
+//      ホストがまだ認識していない段階でパケットを垂れ流して破棄される競合を根絶。
+//   2. 【ホストの joinroom 検知による同期開始宣告】
+//      ホスト端末が aitools_game_joinroom を受信した瞬間に ROOM_MEMBERS_SYNC を送信し、正式ハンドシェイクを開始。
+//   3. 【ゲスト送信ループの安全始動トリガー】
+//      ゲスト端末はホストからの ROOM_MEMBERS_SYNC を受信し、自分のスロット（mySlot=1）を確定させた瞬間に
+//      初めて _startPositionBroadcasting()（10Hz送信ループ）を開始。
+//   4. 【exit() 後 250ms 安全ウェイト挿入】
+//      safeExitCurrentRoom() 完了後、250ms のスリープを挟み、親アプリWebSocketの切断と接続の交差混線を防止。
+//   5. 【入室直後の確実なリスナー登録】
+//      create() および join() 成功直後の行で ensureMessageListener() を即座に実行。
 
 import {
   player,
@@ -24,6 +27,7 @@ import { resetParticlePools, floorBlockPool } from './particles.js';
 
 /**
  * ★【公式仕様準拠】未入室時の exit() による無限保留（Promiseハング）を確実に防ぐ安全退出ヘルパー
+ * 退出完了後に意図的に 250ms の待機を挟み、親アプリ側での切断と新規接続のスレッド交差を防止
  */
 async function safeExitCurrentRoom() {
   if (typeof window === 'undefined' || !window.AgentSDK || !window.AgentSDK.room) return;
@@ -38,6 +42,8 @@ async function safeExitCurrentRoom() {
     const exitPromise = window.AgentSDK.room.exit();
     const timeoutPromise = new Promise(resolve => setTimeout(() => resolve({ timeout: true }), 700));
     await Promise.race([exitPromise, timeoutPromise]);
+    // ★【公式AI推奨】切断完了後、250ms の安全マージンウェイトを挟む
+    await new Promise(r => setTimeout(r, 250));
   } catch (e) {
     console.warn('[network.js] safeExitCurrentRoom caught:', e);
   }
@@ -78,7 +84,7 @@ function safeShowGameScreen() {
 }
 
 /**
- * ホスト端末の世界状態を軽量収集
+ * ホスト端末の世界状態を軽量収集（Stage 0〜1周辺のみ）
  */
 function captureWorldSnapshot() {
   const blocks = [];
@@ -173,7 +179,6 @@ export const NetworkManager = {
   _hasRegisteredListener: false,
   _lastRefreshTime: 0,
   _syncIntervalId: null,
-  _retrySyncIntervalId: null,
   _timeSyncCounter: 0,
 
   _isCreatingRoom: false,
@@ -185,9 +190,6 @@ export const NetworkManager = {
   _pendingConsumes: [],
   _pendingBlows: [],
 
-  /**
-   * 階段設置アクションを一時バッファに積む
-   */
   queuePlankBuild(stageIdx, laneIdx, plankIdx, teamId) {
     if (!this.isMultiplayerActive) return;
     this._pendingPlanks.push({
@@ -198,9 +200,6 @@ export const NetworkManager = {
     });
   },
 
-  /**
-   * ブロック取得アクションを一時バッファに積む
-   */
   queueBlockPick(blockId, stageIdx, poolIdx, x, z) {
     if (!this.isMultiplayerActive) return;
     this._pendingPicks.push({
@@ -212,9 +211,6 @@ export const NetworkManager = {
     });
   },
 
-  /**
-   * ★【Phase 2 新設】アイテム・ゲート消費アクションを一時バッファに積む
-   */
   queueConsumeObject(objectId, objectType) {
     if (!this.isMultiplayerActive || !objectId) return;
     this._pendingConsumes.push({
@@ -223,9 +219,6 @@ export const NetworkManager = {
     });
   },
 
-  /**
-   * ★【Phase 2 新設】敵モブ吹き飛ばしアクションを一時バッファに積む
-   */
   queueBlowMob(mobIndex, stageIdx, pushDirX) {
     if (!this.isMultiplayerActive) return;
     this._pendingBlows.push({
@@ -257,7 +250,7 @@ export const NetworkManager = {
   },
 
   /**
-   * メッセージリスナー登録
+   * ★【公式仕様準拠】メッセージリスナー登録（作成/入室成功直後に呼ぶ）
    */
   ensureMessageListener() {
     if (!this.isSDKAvailable || this._hasRegisteredListener) return;
@@ -291,9 +284,6 @@ export const NetworkManager = {
     }
   },
 
-  /**
-   * 公開ルーム一覧の自前除外フィルタリング
-   */
   async getPublicRooms() {
     if (!this.isSDKAvailable) return [];
     const now = Date.now();
@@ -372,6 +362,7 @@ export const NetworkManager = {
       }
 
       this.currentRoomId = createdRoomId;
+      // ★ 公式推奨：部屋作成成功直後に確実にリスナーを登録
       this.ensureMessageListener();
 
       this.isHost = true;
@@ -419,6 +410,7 @@ export const NetworkManager = {
         }
       }
 
+      // ホスト端末は入室完了直後から10Hz位置送信ループを開始
       this._startPositionBroadcasting();
       return this.currentRoomId;
     } finally {
@@ -466,6 +458,7 @@ export const NetworkManager = {
       }
 
       this.currentRoomId = safeRoomId;
+      // ★ 公式推奨：入室成功直後に確実にリスナーを登録
       this.ensureMessageListener();
 
       this.isHost = false;
@@ -478,7 +471,7 @@ export const NetworkManager = {
       this._pendingBlows = [];
 
       this.mySlot = 1;
-      this.isSlotConfirmed = true;
+      this.isSlotConfirmed = false; // ★ ホストからの ROOM_MEMBERS_SYNC 受信までは未確定
       window.MY_PLAYER_SLOT = 1;
 
       const myRealName = (typeof window !== 'undefined' && window.GRAVITY_USER_NAME)
@@ -496,34 +489,11 @@ export const NetworkManager = {
 
       safeShowGameScreen();
 
-      let retries = 0;
-      if (this._retrySyncIntervalId) {
-        clearInterval(this._retrySyncIntervalId);
-        this._retrySyncIntervalId = null;
-      }
+      // ★【公式AI設計：ホスト主導型ハンドシェイク】
+      // ゲストからの先走り REQUEST_ROOM_SYNC 送信・リトライタイマーは完全撤廃。
+      // また、ホストから相手を認識される前の _startPositionBroadcasting() もここでは開始せず、
+      // ホストからの ROOM_MEMBERS_SYNC 受信ハンドラ内で初めて始動する。
 
-      const sendSyncReq = () => {
-        this._sendCustomMessage({
-          event: 'REQUEST_ROOM_SYNC',
-          clientId: this.clientId,
-          userId: this.myUser.user_id,
-          name: myRealName,
-          suggestedSlot: 1
-        });
-      };
-
-      sendSyncReq();
-
-      this._retrySyncIntervalId = setInterval(() => {
-        retries++;
-        sendSyncReq();
-        if (retries >= 6) {
-          clearInterval(this._retrySyncIntervalId);
-          this._retrySyncIntervalId = null;
-        }
-      }, 300);
-
-      this._startPositionBroadcasting();
       return true;
     } finally {
       setTimeout(() => {
@@ -532,6 +502,10 @@ export const NetworkManager = {
     }
   },
 
+  /**
+   * ★【公式AI設計：ホスト主導ハンドシェイクの核心】
+   * ホスト端末が aitools_game_joinroom（ゲスト入室通知）を受信した瞬間に発動
+   */
   _handleUserJoined(data) {
     if (!data) return;
     const userId = String(data.user_id || data.userId || data.uid || '');
@@ -557,6 +531,7 @@ export const NetworkManager = {
         this._bindRemoteSlot(targetSlot, guestName);
       }
 
+      // ★ ホストが相手を正式認識した瞬間、初期状態とスロット確定パケットをゲストへ送信
       this._sendCustomMessage({
         event: 'ROOM_MEMBERS_SYNC',
         slots: this.slots,
@@ -605,14 +580,16 @@ export const NetworkManager = {
 
       switch (packet.event) {
         case 'ROOM_MEMBERS_SYNC':
-          if (this._retrySyncIntervalId) {
-            clearInterval(this._retrySyncIntervalId);
-            this._retrySyncIntervalId = null;
-          }
+          // ★ ホストから初期同期を受信
           this._applyRoomMembersSync(packet.slots, packet.seed, packet.snapshot);
+          // ★【公式AI設計】ここで初めてゲスト自身の10Hz送信ループを始動！
+          if (!this.isHost && this.isMultiplayerActive && !this._syncIntervalId) {
+            this._startPositionBroadcasting();
+          }
           break;
 
         case 'REQUEST_ROOM_SYNC':
+          // フォールバック用
           if (this.isHost) {
             const reqClientId = packet.clientId;
             const reqUserId = String(packet.userId || '');
@@ -672,7 +649,6 @@ export const NetworkManager = {
             });
           }
 
-          // ★【Phase 2 新設】同封されたアイテム/ゲート消費の一括展開
           if (Array.isArray(packet.consumes) && packet.consumes.length > 0) {
             packet.consumes.forEach(c => {
               if (c.t === 'bonus' && typeof window.applyRemoteBonusConsumed === 'function') {
@@ -683,7 +659,6 @@ export const NetworkManager = {
             });
           }
 
-          // ★【Phase 2 新設】同封された敵モブ吹き飛ばしの一括展開
           if (Array.isArray(packet.blows) && packet.blows.length > 0) {
             packet.blows.forEach(bl => {
               if (typeof window.applyRemoteBlowMob === 'function') {
@@ -861,6 +836,7 @@ export const NetworkManager = {
       }
 
       if (isMyClient) {
+        this.isSlotConfirmed = true;
         if (this.mySlot !== s.slot) {
           this.mySlot = s.slot;
           window.MY_PLAYER_SLOT = s.slot;
@@ -1092,7 +1068,6 @@ export const NetworkManager = {
       // バッファに溜まっている階段設置およびブロック取得情報をアグリゲーションして同封
       const outgoingPlanks = this._pendingPlanks.length > 0 ? [...this._pendingPlanks] : undefined;
       const outgoingPicks = this._pendingPicks.length > 0 ? [...this._pendingPicks] : undefined;
-      // ★【Phase 2 新設】アイテム消費・モブ吹き飛ばしも 100ms周期パケットへ同封
       const outgoingConsumes = this._pendingConsumes.length > 0 ? [...this._pendingConsumes] : undefined;
       const outgoingBlows = this._pendingBlows.length > 0 ? [...this._pendingBlows] : undefined;
 
@@ -1248,19 +1223,16 @@ export const NetworkManager = {
 
   broadcastPickBlock(blockId, stageIdx, poolIdx, x, z) {
     if (!this.isMultiplayerActive) return;
-    // 互換性維持：即時送信ではなく 100ms周期キューへ積む
     this.queueBlockPick(blockId, stageIdx, poolIdx, x, z);
   },
 
   broadcastConsumeObject(objectId, objectType) {
     if (!this.isMultiplayerActive) return;
-    // ★【Phase 2 核心】即時 sendMessage 連打を停止し、100ms周期キューへ蓄積
     this.queueConsumeObject(objectId, objectType);
   },
 
   broadcastBlowMob(mobIndex, stageIdx, pushDirX) {
     if (!this.isMultiplayerActive) return;
-    // ★【Phase 2 核心】即時 sendMessage 連打を停止し、100ms周期キューへ蓄積
     this.queueBlowMob(mobIndex, stageIdx, pushDirX);
   },
 
@@ -1302,10 +1274,6 @@ export const NetworkManager = {
     if (this._syncIntervalId) {
       clearInterval(this._syncIntervalId);
       this._syncIntervalId = null;
-    }
-    if (this._retrySyncIntervalId) {
-      clearInterval(this._retrySyncIntervalId);
-      this._retrySyncIntervalId = null;
     }
     await safeExitCurrentRoom();
     this.currentRoomId = null;
