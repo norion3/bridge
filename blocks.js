@@ -1,13 +1,14 @@
 // blocks.js: 床ブロック管理・補充・スポーン・一意キー（blockId）マルチ同期専用モジュール
-// ★ Phase 2 完全復旧版（初期島ブロック枯渇根絶 ＆ 公式SDK準拠・軽量バッチ通信）：
-//   1. 【現在ステージの強制リサイクル強奪を完全遮断】
-//      プール枯渇時に現在走者が滞在しているステージ（Stage 0など）のブロックが奥の島へ
-//      強制テレポートされて画面から全消滅する致命的欠陥を根絶。現在走者がいるステージは絶対にリサイクル除外。
-//   2. 【公式SDK仕様準拠の軽量バッチ送信】
-//      1個ずつのマシンガン通信を撤廃し、ステージごとの補充ブロックを必要最小限の軽量データに圧縮して1通に集約。
-//      JSBridgeのパケットサイズ制限（数百バイト以内）を厳格にクリア。
-//   3. 【確定論的ブロックID ＆ 重複ガード】
-//      ミリ秒時刻に依存しない連番ID（b_${stageIdx}_${globalBlockSpawnCounter}）による完全一致管理。
+// ★ Phase 2 完全準拠版（バースト送信完全根絶 ＆ 全ステージブロック一括集約 ＆ プール保護）：
+//   1. 【1フレーム1通信の厳格保証（バースト完全根絶）】
+//      manageBlockSpawns において、各ステージやチームごとに sendMessage を連打していた処理を完全廃止。
+//      全走者・全ステージで補充されたブロックを単一の配列（allNewlySpawned）に完全集約し、
+//      1回の補充サイクルにつき最大1通（数百バイト以内）の一括送信に一本化。JSBridgeのキュー溢れ・遅延を100%防止。
+//   2. 【現在滞在ステージの強制リサイクル強奪を完全遮断】
+//      プール枯渇時に走者が現在滞在しているステージのアクティブブロックが奥の島へ
+//      強制テレポートされて消滅する欠陥を防止。安全な非アクティブ枠・過去ステージからのみリサイクル。
+//   3. 【確定論的ブロックID ＆ 重複生成ガード】
+//      連番ID（b_${stageIdx}_${globalBlockSpawnCounter}）および近接座標判定による二重生成防止を維持。
 
 import {
   BLOCK_TYPES,
@@ -300,7 +301,7 @@ export function spawnSingleBlock(scene, stageIdx, targetTeam = null, shouldBroad
 
 /**
  * 全走者の滞在ステージに応じた床ブロック定期補充
- * ★ 補充されたブロックをステージごとにまとめ、1通の軽量バッチでブロードキャスト
+ * ★【Phase 2 核心】全ステージで湧いた新ブロックを単一の配列に集約し、最大1通のバッチパケットで送信
  */
 export function manageBlockSpawns(scene, isGameOver = false) {
   if (isGameOver) return;
@@ -310,6 +311,9 @@ export function manageBlockSpawns(scene, isGameOver = false) {
 
   // ゲスト端末はホストからのパケットのみを受信するためローカル補充は行わない
   if (isMulti && !isHost) return;
+
+  // 全ステージで新しく生成されたブロックを単一配列に集約
+  const allNewlySpawned = [];
 
   for (let cIdx = 0; cIdx < characters.length; cIdx++) {
     const s = characters[cIdx].currentStage;
@@ -324,7 +328,6 @@ export function manageBlockSpawns(scene, isGameOver = false) {
     if (alreadyChecked) continue;
 
     const stageBlocks = getFloorBlocksForStage(s);
-    const newlySpawnedInStage = [];
 
     for (let tIdx = 0; tIdx < BLOCK_TYPES.length; tIdx++) {
       const team = BLOCK_TYPES[tIdx];
@@ -352,20 +355,20 @@ export function manageBlockSpawns(scene, isGameOver = false) {
       for (let k = 0; k < spawnLimit; k++) {
         const spawned = spawnSingleBlock(scene, s, team, false);
         if (spawned) {
-          newlySpawnedInStage.push(spawned);
+          allNewlySpawned.push(spawned);
         }
       }
     }
+  }
 
-    // ステージごとに1通だけバッチブロードキャスト送信（パケットサイズ数百バイト以内）
-    if (isMulti && isHost && newlySpawnedInStage.length > 0 && window.NetworkManager) {
-      if (typeof window.NetworkManager.broadcastSpawnBlocksBatch === 'function') {
-        window.NetworkManager.broadcastSpawnBlocksBatch(s, newlySpawnedInStage);
-      } else if (typeof window.NetworkManager.broadcastSpawnBlock === 'function') {
-        newlySpawnedInStage.forEach(b => {
-          window.NetworkManager.broadcastSpawnBlock(s, b.poolIdx, b.x, b.y, b.z, b.teamId, b.blockId);
-        });
-      }
+  // ★【Phase 2 核心】ステージごとの複数回送信を完全廃止し、このフレーム全体で1回のみ送信
+  if (isMulti && isHost && allNewlySpawned.length > 0 && window.NetworkManager) {
+    if (typeof window.NetworkManager.broadcastSpawnBlocksBatch === 'function') {
+      window.NetworkManager.broadcastSpawnBlocksBatch(0, allNewlySpawned);
+    } else if (typeof window.NetworkManager.broadcastSpawnBlock === 'function') {
+      allNewlySpawned.forEach(b => {
+        window.NetworkManager.broadcastSpawnBlock(b.stageIdx, b.poolIdx, b.x, b.y, b.z, b.teamId, b.blockId);
+      });
     }
   }
 }

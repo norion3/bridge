@@ -1,17 +1,21 @@
-// network.js: AgentSDK連携 ＆ ルーム入退室ライフサイクル・マルチプレイ通信同期エンジン
-// ★ 自己パケット誤認・AI化バグ根絶・ゲスト操作同期確定版：
-//   1. 【ホスト側AI干渉の完全遮断】
-//      ホストがスロット1（ゲスト）のPOSパケットを受信した瞬間、targetChar.isAI = false を
-//      確定させ、ホストのAI思考がゲストの座標を初期位置に固定するバグを100%根絶。
-//   2. 【ID重複によるパケット誤破棄の撤廃】
-//      テスト環境での clientId/userId 重複によって、相手のパケットを「自分のパケット」と誤認して
-//      ゴミ箱へ捨てる（AIのままになる）危険なガードを撤廃。スロット番号のみで安全に判定。
-//   3. 【ゲストのスロット誤認完全ブロック】
-//      ゲスト端末がホスト（スロット0）を自分だと誤認して mySlot=0 に書き換わるロジック欠陥を根絶。
-//   4. 【実機WebView必須プロパティ完全維持】
-//      room_id, roomId, msg_data 同封を100%維持し、ネイティブ層での破棄を防止。
+// network.js: AgentSDK公式仕様完全準拠 ＆ ルーム入退室ライフサイクル・通信同期エンジン
+// ★ Phase 1 実装版（公式確定仕様完全準拠 ＆ 通信パイプライン正常化）：
+//   1. 【未入室時 exit() ハング完全根絶】
+//      getRoomId() で直下の room_id !== "" を事前確認してから exit() を呼び出し、
+//      未入室時の Promise 永久保留（タップ不能・フリーズ）を 100% 根絶。
+//   2. 【sendMessage 送信プロパティの純粋化】
+//      公式仕様に従い、サイレント破棄の原因となっていた room_id / roomId / msg_data を完全削除。
+//      SDKが正式受理する `{ message: JSON.stringify(...) }` のみの一本化送信を徹底。
+//   3. 【receiveMessage 受信パーサーの正規化】
+//      送信時と非対称な公式仕様（payload.data.msg_data）を正規ルートで直接 JSON.parse。
+//   4. 【エコーバックなし前提の自己パケット判定】
+//      同一セッションIDによる誤破棄ガードを撤廃し、自身のスロット番号（packet.slot === this.mySlot）
+//      のみで弾いて他走者のパケットを 100% 受理。
+//   5. 【公開ルーム一覧の自前除外フィルタリング】
+//      0人（ゴーストルーム）および満員（>= max_players）の部屋をフロント側で確実に除外。
 
 import {
+  player,
   characters,
   createNameplateMesh,
   updatePlayerName,
@@ -23,13 +27,22 @@ import { STAGES, buildWorld, manageBlockSpawns, bridges, floorBlocksByStage } fr
 import { resetParticlePools, floorBlockPool } from './particles.js';
 
 /**
- * 未入室時の exit() による無限待機（Pendingフリーズ）を確実に防ぐ安全退出ヘルパー
+ * ★【公式仕様準拠】未入室時の exit() による無限保留（Promiseハング）を確実に防ぐ安全退出ヘルパー
+ * getRoomId() は例外的に data ラッパーがなく直下に { room_id } を返し、未入室時は空文字 "" を返す
  */
 async function safeExitCurrentRoom() {
   if (typeof window === 'undefined' || !window.AgentSDK || !window.AgentSDK.room) return;
   try {
+    if (typeof window.AgentSDK.room.getRoomId === 'function') {
+      const res = await window.AgentSDK.room.getRoomId();
+      const activeRoomId = (res && typeof res.room_id === 'string') ? res.room_id : (res && res.data && res.data.room_id ? res.data.room_id : '');
+      if (!activeRoomId || activeRoomId === '') {
+        // 未入室時は exit() を呼ぶと親アプリが無応答になり Promise がハングするため即座にリターン
+        return;
+      }
+    }
     const exitPromise = window.AgentSDK.room.exit();
-    const timeoutPromise = new Promise(resolve => setTimeout(() => resolve({ timeout: true }), 600));
+    const timeoutPromise = new Promise(resolve => setTimeout(() => resolve({ timeout: true }), 700));
     await Promise.race([exitPromise, timeoutPromise]);
   } catch (e) {
     console.warn('[network.js] safeExitCurrentRoom caught:', e);
@@ -190,6 +203,9 @@ export const NetworkManager = {
     return this.myUser;
   },
 
+  /**
+   * ★【公式仕様準拠】メッセージリスナー登録
+   */
   ensureMessageListener() {
     if (!this.isSDKAvailable || this._hasRegisteredListener) return;
     this._hasRegisteredListener = true;
@@ -208,10 +224,11 @@ export const NetworkManager = {
             this._handleUserExited(data);
             break;
           case 'aitools_game_sendmsg':
-            this._handleCustomMessage(data);
+            // 公式仕様：本文文字列は payload.data.msg_data に格納されて届く
+            this._handleCustomMessage(payload);
             break;
           default:
-            if (payload.msg_data || payload.message || payload.event) {
+            if (payload.msg_data || payload.message || payload.event || (payload.data && (payload.data.msg_data || payload.data.message))) {
               this._handleCustomMessage(payload);
             }
             break;
@@ -222,6 +239,10 @@ export const NetworkManager = {
     }
   },
 
+  /**
+   * ★【公式仕様準拠】公開ルーム一覧の自前除外フィルタリング
+   * 0人（ゴーストルーム）や満員（>= max_players）の部屋はサーバー側で自動除外されないためフロントで除外
+   */
   async getPublicRooms() {
     if (!this.isSDKAvailable) return [];
     const now = Date.now();
@@ -347,7 +368,7 @@ export const NetworkManager = {
     } finally {
       setTimeout(() => {
         this._isCreatingRoom = false;
-      }, 800);
+      }, 600);
     }
   },
 
@@ -368,6 +389,7 @@ export const NetworkManager = {
         try {
           const res = await window.AgentSDK.room.join({ room_id: safeRoomId });
 
+          // ★ 公式仕様準拠：Promiseはrejectされず errno !== 0 で返却される
           let isSuccess = false;
           if (res) {
             if (res.errno === 0 || res.errno === '0' || res.code === 0 || res.code === '0') {
@@ -443,13 +465,13 @@ export const NetworkManager = {
     } finally {
       setTimeout(() => {
         this._isJoiningRoom = false;
-      }, 800);
+      }, 600);
     }
   },
 
   _handleUserJoined(data) {
     if (!data) return;
-    const userId = String(data.user_id || '');
+    const userId = String(data.user_id || data.userId || data.uid || '');
     if (!userId || userId === String(this.myUser.user_id)) return;
 
     if (this.isHost) {
@@ -464,7 +486,7 @@ export const NetworkManager = {
       if (targetSlot !== -1) {
         this.slots[targetSlot] = {
           slot: targetSlot,
-          clientId: this.slots[targetSlot].clientId || null,
+          clientId: data.clientId || this.slots[targetSlot].clientId || null,
           userId: userId,
           name: guestName,
           isAI: false
@@ -481,20 +503,25 @@ export const NetworkManager = {
     }
   },
 
+  /**
+   * ★【公式仕様準拠】受信パーサー
+   * 受信時は payload.data.msg_data にJSON文字列が格納されて届く
+   */
   _handleCustomMessage(data) {
     if (!data) return;
     try {
       let rawStr = '';
-      if (typeof data === 'string') {
-        rawStr = data;
+
+      if (data.data && typeof data.data.msg_data === 'string') {
+        rawStr = data.data.msg_data;
       } else if (typeof data.msg_data === 'string') {
         rawStr = data.msg_data;
+      } else if (data.data && typeof data.data.message === 'string') {
+        rawStr = data.data.message;
       } else if (typeof data.message === 'string') {
         rawStr = data.message;
-      } else if (data.data) {
-        rawStr = (typeof data.data === 'string')
-          ? data.data
-          : (data.data.msg_data || data.data.message || '');
+      } else if (typeof data === 'string') {
+        rawStr = data;
       }
 
       let packet = null;
@@ -508,6 +535,8 @@ export const NetworkManager = {
 
       if (!packet && typeof data === 'object' && data.event) {
         packet = data;
+      } else if (!packet && data.data && typeof data.data === 'object' && data.data.event) {
+        packet = data.data;
       }
 
       if (!packet || !packet.event) return;
@@ -523,8 +552,10 @@ export const NetworkManager = {
             const reqUserId = String(packet.userId || '');
             const reqName = (packet.name && packet.name !== 'ゲスト' && packet.name !== 'YOU') ? packet.name : 'ゲスト1';
 
-            // ★ 相手からの要求は、IDが被っていても確実に処理してスロットを割り当てる
-            let targetSlot = this.slots.findIndex(s => s.clientId && s.clientId === reqClientId);
+            let targetSlot = -1;
+            if (reqClientId) {
+              targetSlot = this.slots.findIndex(s => s.clientId === reqClientId);
+            }
 
             if (targetSlot === -1 && reqUserId && reqUserId !== 'local_user') {
               targetSlot = this.slots.findIndex(s => s.userId && String(s.userId) === reqUserId);
@@ -661,9 +692,6 @@ export const NetworkManager = {
     }
   },
 
-  /**
-   * ★【核心修正①】ゲスト端末がスロット0を自分と誤認するロジック欠陥を完全遮断
-   */
   _applyRoomMembersSync(syncedSlots, seed, snapshot = null) {
     if (!Array.isArray(syncedSlots)) return;
     this.slots = syncedSlots;
@@ -714,10 +742,8 @@ export const NetworkManager = {
       let isMyClient = false;
 
       if (this.isHost) {
-        // ホスト端末はスロット0のみが自分
         isMyClient = (s.slot === 0);
       } else {
-        // ★ ゲスト端末：スロット0は絶対に自分ではない（100%ホストのもの）
         if (s.slot !== 0) {
           const isClientIdMatch = !!(s.clientId && s.clientId === this.clientId);
           const isUserIdMatch = !!(
@@ -751,7 +777,6 @@ export const NetworkManager = {
         return;
       }
 
-      // ★ s.userIdによる人間プレイヤー判定を確実に実行
       if (!s.isAI && (s.clientId || s.userId || (!this.isHost && s.slot === 0))) {
         this._bindRemoteSlot(s.slot, s.name);
       } else if (s.isAI) {
@@ -863,7 +888,7 @@ export const NetworkManager = {
   },
 
   /**
-   * 10Hz 位置情報ブロードキャスト
+   * ★【公式仕様準拠】10Hz（100ms周期）位置情報ブロードキャスト
    */
   _startPositionBroadcasting() {
     if (this._syncIntervalId) clearInterval(this._syncIntervalId);
@@ -972,11 +997,10 @@ export const NetworkManager = {
   },
 
   /**
-   * リモート座標の反映
-   * ★【核心修正②】テスト環境特有の clientId 重複による相手パケットの誤破棄を撤廃
+   * ★【公式仕様準拠】リモート座標の反映
+   * エコーバックはしない仕様のため、自己スロット番号のみを除外して他走者パケットを 100% 受理
    */
   _handleRemotePosition(packet) {
-    // ホストならスロット0のみ弾く、ゲストなら自分のスロットのみ弾く
     if (this.isHost && packet.slot === 0) return;
     if (!this.isHost && packet.slot === this.mySlot) return;
 
@@ -1067,21 +1091,17 @@ export const NetworkManager = {
   },
 
   /**
-   * 実機WebViewネイティブ層必須プロパティ完全同封送信
+   * ★【公式仕様100%準拠】純粋送信
+   * room_id, roomId, msg_data を完全削除し、{ message: JSON.stringify(...) } のみで送信
+   * （余計なプロパティを含めると親アプリでサイレント破棄される制約を厳格にクリア）
    */
   _sendCustomMessage(msgObj) {
     if (!this.isSDKAvailable || !window.AgentSDK.room || typeof window.AgentSDK.room.sendMessage !== 'function') return;
     try {
       const msgStr = JSON.stringify(msgObj);
-      const payload = {
-        message: msgStr,
-        msg_data: msgStr
-      };
-      if (this.currentRoomId) {
-        payload.room_id = String(this.currentRoomId);
-        payload.roomId = String(this.currentRoomId);
-      }
-      window.AgentSDK.room.sendMessage(payload);
+      window.AgentSDK.room.sendMessage({
+        message: msgStr
+      });
     } catch (e) {
       console.warn('[NetworkManager] sendMessage failed:', e);
     }

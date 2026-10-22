@@ -1,16 +1,16 @@
 // main.js: ゲーム全体の起動指揮・Three.js初期化・メインループ・入力・HUD制御
-// ★ Step 3 完全復旧版（リモート走者の初期位置フリーズ根絶 ＆ 姿勢復帰 ＆ 滑らかLerp追従）：
-//   1. 【初期島でのうつ伏せ・埋まり固まり根絶】
-//      入室時にリモートキャラが初期ポーズのまま倒れて固まる不具合を解消。NORMAL状態復帰時に
-//      X/Z軸の倒れ回転を即座にリセットし、素直に自立・歩行モーションへ遷移。
-//   2. 【強制吸着・足踏み防止 ＆ 大幅ワープ補正】
-//      古い座標への引き戻しを起こしていた過剰な予測デッドレコニングを適正化。
-//      初期同期時やステージ移動など目標座標との差が4.0m以上の場合は瞬時に追いつかせ（即時補正）、
-//      通常移動時は dt * 14.0 の滑らかなLerpで遅延なく追従。
-//   3. 【タイマー相乗り受取平滑化】
-//      ホストの POS パケットに同封された timeLeft を受け取る applyRemoteTimeSync により、
-//      両端末のタイマーを完全一致。
-//   4. 既存の JUMP空中姿勢、マグネット紫オーラ、無敵点滅、サンダー小人化、ブースト煙演出は100%維持。
+// ★ Phase 3 実装版（リモート走者の滑らかLerp追従 ＆ 初期位置固まり根絶 ＆ 姿勢復帰完全化）：
+//   1. 【素直で滑らかな3D Lerp追従 ＆ 距離乖離ガード】
+//      古い座標への吸着や足踏みを起こす過剰な予測を撤廃し、dt * 14.0 の滑らかなLerpに一本化。
+//      落下やステージ跳躍など目標座標と5.0m以上の乖離がある場合は即座にワープさせて取り残しを防止。
+//   2. 【初期島でのうつ伏せ・倒れポーズ残留の完全根絶】
+//      NORMAL状態復帰時にメッシュのX/Z回転だけでなく体・頭のオフセット（body, head）も直立位置へリセットし、
+//      地面にめり込んで倒れたまま固まる不具合を完全解消。
+//   3. 【操作キャラ実体（localPlayerInstance）の毎フレーム常時連携】
+//      操作中の player インスタンスを確実に window.localPlayerInstance に紐付け、
+//      network.js の送信処理が確実に操作中の実測座標を送り出すことを保証。
+//   4. 【タイマー同期 ＆ ホストリスタート連動】
+//      applyRemoteTimeSync による残り秒数の平滑同期、およびホストリスタート時の onRemoteRestartReceived を完備。
 
 import { mountAllUI } from './dom.js';
 
@@ -81,7 +81,7 @@ let placedPlankCount = 0;
 let lastDisplayedSec = -1;
 
 /**
- * ホストの POS パケットから届いた残り秒数を平滑同期
+ * ホストから届いた残り秒数を平滑同期
  */
 export function applyRemoteTimeSync(remoteTimeLeft) {
   if (typeof remoteTimeLeft === 'number' && !isNaN(remoteTimeLeft)) {
@@ -113,6 +113,9 @@ if (typeof window !== 'undefined') {
   window.getGameTimeLeft = () => timeLeft;
   window.applyRemoteTimeSync = applyRemoteTimeSync;
   window.applyRemoteTimeUp = applyRemoteTimeUp;
+  window.onRemoteRestartReceived = () => {
+    resetGame();
+  };
 }
 
 /**
@@ -361,6 +364,18 @@ export function setupControls() {
       }
       sound.init();
       resetGame();
+
+      const isMulti = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive);
+      const isHost = (isMulti && window.NetworkManager.isHost);
+      if (isMulti && isHost && window.AgentSDK && window.AgentSDK.room) {
+        try {
+          window.AgentSDK.room.sendMessage({
+            message: JSON.stringify({ event: 'RESTART_GAME' })
+          });
+        } catch (err) {
+          console.warn('[main.js] Failed to broadcast RESTART_GAME:', err);
+        }
+      }
     };
     quickRestartBtn.addEventListener('click', onQuickRestart);
     quickRestartBtn.addEventListener('touchend', onQuickRestart);
@@ -500,6 +515,9 @@ export function animate(currentTime) {
     const isGuest = isMulti && !isHost;
 
     if (player) {
+      if (typeof window !== 'undefined') {
+        window.localPlayerInstance = player;
+      }
       updateSingleCharacter(scene, player, moveDirX, moveDirZ, dt, spawnPuffCloud, spawnSpeedStepRing);
       updateNameplatePosition(player);
     }
@@ -565,11 +583,11 @@ export function animate(currentTime) {
           c.meshObj.root.visible = true;
         }
 
-        // ★【Step 3 核心改善①】目標位置との乖離ガード ＆ 素直で滑らかなLerp追従
-        const distToTargetSq = (c.targetNetPos.x - c.pos.x) ** 2 + (c.targetNetPos.z - c.pos.z) ** 2;
+        // ★【Phase 3 核心①】目標位置との3D距離乖離ガード ＆ 素直で滑らかなLerp追従
+        const dist3DSq = (c.targetNetPos.x - c.pos.x) ** 2 + (c.targetNetPos.y - c.pos.y) ** 2 + (c.targetNetPos.z - c.pos.z) ** 2;
 
-        if (distToTargetSq > 20.25) {
-          // 初期入室時やステージ跳躍時など 4.5m 以上離れている場合は即座にワープさせて取り残しを防止
+        if (dist3DSq > 25.0) {
+          // 初期入室時やステージ跳躍時など 5.0m 以上離れている場合は即座にワープさせて取り残しを防止
           c.pos.copy(c.targetNetPos);
         } else {
           const lerpFactor = Math.min(1.0, dt * 14.0);
@@ -627,7 +645,7 @@ export function animate(currentTime) {
           }
         }
 
-        // ★【Step 3 核心改善②】初期位置でのうつ伏せ・倒れポーズ残留の根絶
+        // ★【Phase 3 核心②】初期位置でのうつ伏せ・倒れポーズ残留の根絶 ＆ 完全姿勢復帰
         const isRemoteStunned = Boolean(c.isStunned || (c.stunTimer && c.stunTimer > 0));
 
         if (isRemoteStunned) {
@@ -653,6 +671,10 @@ export function animate(currentTime) {
           c.meshObj.rightArm.rotation.z = 0;
           c.meshObj.leftLeg.rotation.z = 0;
           c.meshObj.rightLeg.rotation.z = 0;
+
+          // 体と頭のY座標オフセットを確実に直立位置へ補正
+          c.meshObj.body.position.y = 0.65;
+          c.meshObj.head.position.y = 1.25;
 
           // 移動量または速度パケットがある場合は歩行モーションを再生
           if (stepDist > 0.005 || hasNetVelocity) {
