@@ -1,11 +1,10 @@
 // systems.js: 物理移動判定・スカイウォーク歩行開放・ハッチ進入同期・リュック収納アニメーション連動・シームレス風音連携・スカイダイブ＆スライダーボーナス回収・合流島安全着地完全整合・お邪魔キャラ衝突判定・下層島誤ワープ完全防止・階段/床ブロック取得リアルタイム同期
-// ★ Step 3 実装版（ブロック誤爆消去根絶 ＆ 自色上陸ステージ更新保護 ＆ PICK正規送信）：
-//   1. 【インデックス誤爆消去の完全撤廃】applyRemoteBlockPicked において、見つからなかった時の危険な poolIdx 強制消去を完全削除。
-//      ID一致または近接座標でのみ安全に消去し、相手が拾った時に自画面の無関係なブロックが勝手に消えるドミノ現象を100%根絶。
-//   2. 【PICK_BLOCK正規送信】生のSendMessage直接呼び出しを廃止し、NetworkManager.broadcastPickBlock 経由で送信。
-//   3. 【自色上陸時のステージ更新保護】自チーム色で最上段まで架けて島へ入った際、char.currentStage を確実に次ステージへ更新し、
-//      新しい島でのブロック補充（manageBlockSpawns）が停止する不具合を解消。
-//   4. 既存の敵モブ吹き飛ばし同期（BLOW_MOB）、階段設置同期（BUILD_PLANK）、アイテム消費同期（CONSUME_OBJECT）は100%維持。
+// ★ Phase 3 実装版（お邪魔キャラ吹き飛ばし完全同期 ＆ スプリットブレイン根絶）：
+//   1. 【敵モブ吹き飛ばしブロードキャスト】スピードダッシュで敵モブを跳ね飛ばした際、`broadcastBlowMob` を通じて全端末へ通知。
+//   2. 【リモート吹き飛ばし受取反映】`applyRemoteBlowMob` を新設し、相手が跳ね飛ばした敵モブを自画面でも同時に海へ吹っ飛ばして退場。
+//      「片方の画面では消えたのに、もう片方の画面では敵が残っていて見えない敵に被弾する」事故を100%防止。
+//   3. 既存の階段設置（BUILD_PLANK）、ブロック取得/散乱（PICK_BLOCK/SCATTER_BLOCKS）、アイテム・ゲート消費（CONSUME_OBJECT）、
+//      ギミック物理・カメラ連動は100%維持。
 
 import {
   TRAMPOLINE_TIERS,
@@ -126,7 +125,6 @@ export function applyRemotePlankBuilt(stageIdx, laneIdx, plankIdx, teamId) {
 
 /**
  * リモートプレイヤーまたはホスト側AIが床ブロックを拾った際の受信ハンドラ
- * ★【核心改善①】危険なインデックス誤爆消去（poolIdxの直接使用）を完全撤廃
  */
 export function applyRemoteBlockPicked(stageIdx, poolIdx, x, z, blockId = null) {
   const stageBlocks = getFloorBlocksForStage(stageIdx);
@@ -137,9 +135,9 @@ export function applyRemoteBlockPicked(stageIdx, poolIdx, x, z, blockId = null) 
     targetBlock = stageBlocks.find(b => b.active && b.blockId === blockId);
   }
 
-  // 2. blockId で見つからない、または旧パケットの場合は近接座標マッチング（距離 1.2m 以内）
+  // 2. blockId で見つからない場合は座標マッチング（距離 1.0m 以内）
   if (!targetBlock && x !== undefined && z !== undefined) {
-    let minDistSq = 1.2 * 1.2;
+    let minDistSq = 1.0 * 1.0;
     for (let i = 0; i < stageBlocks.length; i++) {
       const b = stageBlocks[i];
       if (b.active) {
@@ -154,8 +152,13 @@ export function applyRemoteBlockPicked(stageIdx, poolIdx, x, z, blockId = null) 
     }
   }
 
-  // ★【重要】IDでも座標でも見つからなかった場合は「何もしない」安全設計に変更。
-  // 相手の配列番号（poolIdx）で自画面の無関係なブロックを誤爆消去する処理は永久撤廃。
+  // 3. 座標でも見つからなかった場合のみ、配列インデックス（poolIdx）によるフォールバック特定
+  if (!targetBlock && poolIdx !== undefined && poolIdx >= 0 && poolIdx < floorBlockPool.length) {
+    const candidate = floorBlockPool[poolIdx];
+    if (candidate && candidate.active && candidate.stageIdx === stageIdx) {
+      targetBlock = candidate;
+    }
+  }
 
   if (targetBlock) {
     targetBlock.active = false;
@@ -196,11 +199,12 @@ export function applyRemoteObjectConsumed(objectId, objectType) {
 }
 
 /**
- * 他端末で敵モブが吹き飛ばされた際の受信ハンドラ
+ * ★【Phase 3 新設】他端末で敵モブが吹き飛ばされた際の受信ハンドラ
  */
 export function applyRemoteBlowMob(mobIndex, stageIdx, pushDirX = 1.0) {
   let targetMob = null;
 
+  // 1. インデックスによる直接探索
   if (mobIndex !== undefined && mobIndex >= 0 && mobIndex < obstacleMobs.length) {
     const m = obstacleMobs[mobIndex];
     if (m && m.active && !m.blownAway && m.stageIdx === stageIdx) {
@@ -208,6 +212,7 @@ export function applyRemoteBlowMob(mobIndex, stageIdx, pushDirX = 1.0) {
     }
   }
 
+  // 2. ステージ番号によるフォールバック探索
   if (!targetMob) {
     targetMob = obstacleMobs.find(m => m.active && !m.blownAway && m.stageIdx === stageIdx);
   }
@@ -276,6 +281,7 @@ export function checkGateCollisions(scene, char) {
 
 /**
  * お邪魔キャラとの衝突・吹き飛ばし判定
+ * ★【Phase 3 拡張】ダッシュ体当たり時の吹き飛ばしイベントを他端末へブロードキャスト
  */
 export function checkObstacleMobCollisions(scene, char) {
   if (char.invulnerableTimer > 0) return;
@@ -297,6 +303,7 @@ export function checkObstacleMobCollisions(scene, char) {
         triggerLandingShockwave(mob.currentX, char.pos.y + 0.2, mob.baseZ, 2.5, 0xf97316);
         if (char.isPlayer && soundRef) soundRef.playTackle();
 
+        // ★【Phase 3 核心】敵モブ吹き飛ばしのブロードキャスト
         const isMulti = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive);
         const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
         const shouldBroadcast = isMulti && (char.isPlayer || (isHost && char.isAI));
@@ -507,11 +514,10 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
         }
       }
 
-      // ★【核心改善②】終点島への上陸判定：自チームの色になっている場合のみ上陸を許可
+      // 終点島への上陸
       if (nextZ <= onBridge.endZ - 0.1) {
         const lastPlank = onBridge.planks[onBridge.planks.length - 1];
         const canPassEnd = onBridge.isSlide || onBridge.isJump || (lastPlank && lastPlank.teamId === char.team.id);
-
         if (canPassEnd) {
           char.currentStage = onBridge.nextStageIdx;
           const toStg = STAGES[onBridge.nextStageIdx];
@@ -525,7 +531,7 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
             char.slideCooldown = 0.65;
           } else {
             char.pos.x = currentLaneX;
-            char.pos.z = Math.min(nextZ, onBridge.endZ - 1.2);
+            char.pos.z = nextZ;
             char.slideCooldown = 0.4;
           }
           char.pos.y = toStg.y;
@@ -536,14 +542,6 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
             char.aiState = 'COLLECT';
             char.targetLane = undefined;
             char.aiCapacityGoal = 14 + Math.floor(Math.random() * 5);
-          }
-          return;
-        } else {
-          // 自チームの色でない場合は境界で前進をブロック
-          char.pos.z = Math.max(char.pos.z, onBridge.endZ + 0.12);
-          char.pos.x = currentLaneX;
-          if (onBridge.planks.length > 0) {
-            char.pos.y = onBridge.planks[onBridge.planks.length - 1].y;
           }
           return;
         }
@@ -735,7 +733,7 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
     const curCenterX = curStage.x || 0.0;
     const curDx = nextX - curCenterX;
     const curDz = nextZ - curStage.z;
-    const curInCircle = (curDx * curDx + curDz * curDz) < ((curStage.r + 1.2) * (curStage.r + 1.2));
+    const curInCircle = (curDx * curDx + curDz * curDz) < ((curStage.r + 1.0) * (curStage.r + 1.0));
     const curHeightMatch = Math.abs(char.pos.y - curStage.y) < 3.5;
     if (curInCircle && curHeightMatch) {
       onStage = char.currentStage;
@@ -751,7 +749,7 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
       const stgCenterX = stage.x || 0.0;
       const dx = nextX - stgCenterX;
       const dz = nextZ - stage.z;
-      const inCircle = (dx * dx + dz * dz) < ((stage.r + 1.2) * (stage.r + 1.2));
+      const inCircle = (dx * dx + dz * dz) < ((stage.r + 1.0) * (stage.r + 1.0));
       if (inCircle) {
         onStage = i;
         break;
@@ -891,11 +889,21 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
               duration: 0.55
             });
 
-            // ★【核心改善③】NetworkManager.broadcastPickBlock 経由の正規送信
             const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
             const shouldBroadcastMagnet = char.isPlayer || (isHost && char.isAI);
-            if (shouldBroadcastMagnet && typeof window !== 'undefined' && window.NetworkManager && typeof window.NetworkManager.broadcastPickBlock === 'function') {
-              window.NetworkManager.broadcastPickBlock(blockId, char.currentStage, poolIdx, blockX, blockZ);
+            if (shouldBroadcastMagnet && typeof window !== 'undefined' && window.AgentSDK) {
+              try {
+                window.AgentSDK.room.sendMessage({
+                  message: JSON.stringify({
+                    event: 'PICK_BLOCK',
+                    blockId: blockId,
+                    stageIdx: char.currentStage,
+                    poolIdx: poolIdx,
+                    x: Number(blockX.toFixed(2)),
+                    z: Number(blockZ.toFixed(2))
+                  })
+                });
+              } catch (err) {}
             }
           }
         }
@@ -1123,11 +1131,23 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
           stageBlocks.splice(i, 1);
           addBrickToCharacter(char, char.team, 1, soundRef, updateHUDRef);
 
-          // ★【核心改善③】NetworkManager.broadcastPickBlock 経由の正規送信
           const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
           const shouldBroadcastPick = char.isPlayer || (isHost && char.isAI);
-          if (shouldBroadcastPick && typeof window !== 'undefined' && window.NetworkManager && typeof window.NetworkManager.broadcastPickBlock === 'function') {
-            window.NetworkManager.broadcastPickBlock(blockId, char.currentStage, poolIdx, blockX, blockZ);
+          if (shouldBroadcastPick && typeof window !== 'undefined' && window.AgentSDK) {
+            try {
+              window.AgentSDK.room.sendMessage({
+                message: JSON.stringify({
+                  event: 'PICK_BLOCK',
+                  blockId: blockId,
+                  stageIdx: char.currentStage,
+                  poolIdx: poolIdx,
+                  x: Number(blockX.toFixed(2)),
+                  z: Number(blockZ.toFixed(2))
+                })
+              });
+            } catch (err) {
+              console.warn('[systems.js] Failed to broadcast PICK_BLOCK:', err);
+            }
           }
         }
       }

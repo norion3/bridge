@@ -1,16 +1,10 @@
 // main.js: ゲーム全体の起動指揮・Three.js初期化・メインループ・入力・HUD制御
-// ★ Step 3 完全復旧版（リモート走者の初期位置フリーズ根絶 ＆ 姿勢復帰 ＆ 滑らかLerp追従）：
-//   1. 【初期島でのうつ伏せ・埋まり固まり根絶】
-//      入室時にリモートキャラが初期ポーズのまま倒れて固まる不具合を解消。NORMAL状態復帰時に
-//      X/Z軸の倒れ回転を即座にリセットし、素直に自立・歩行モーションへ遷移。
-//   2. 【強制吸着・足踏み防止 ＆ 大幅ワープ補正】
-//      古い座標への引き戻しを起こしていた過剰な予測デッドレコニングを適正化。
-//      初期同期時やステージ移動など目標座標との差が4.0m以上の場合は瞬時に追いつかせ（即時補正）、
-//      通常移動時は dt * 14.0 の滑らかなLerpで遅延なく追従。
-//   3. 【タイマー相乗り受取平滑化】
-//      ホストの POS パケットに同封された timeLeft を受け取る applyRemoteTimeSync により、
-//      両端末のタイマーを完全一致。
-//   4. 既存の JUMP空中姿勢、マグネット紫オーラ、無敵点滅、サンダー小人化、ブースト煙演出は100%維持。
+// ★ Phase 2 完全実装版（リモート描画 ＆ ゲームタイマー完全同期）：
+//   1. 【JUMP空中大ジャンプ連動】相手が `remState === 'JUMP'` の時、ローカル同様の宙返り回転と手足オープン姿勢を描画。
+//   2. 【マグネット紫オーラ同期】相手が `c.magnetActive` の時、足元の紫吸引オーラ（c.meshObj.magnetAura）を点灯・パルス拡縮。
+//   3. 【無敵時間キャラ点滅】相手が `c.isInvulnerable` の時、メッシュをチラチラ高速点滅させて無敵状態を完全可視化。
+//   4. 【タイマー＆タイムアップ同期】ホストの残り秒数による定期補正、およびホストからの TIME_UP 受信による両画面同時リザルト表示を完全保証。
+//   5. 既存のサンダー小人化スケール、スピードオーラ・煙、スタン揺れ、AI思考遮断、Lerp速度予測補間は100%維持。
 
 import { mountAllUI } from './dom.js';
 
@@ -81,25 +75,20 @@ let placedPlankCount = 0;
 let lastDisplayedSec = -1;
 
 /**
- * ホストの POS パケットから届いた残り秒数を平滑同期
+ * ★【Phase 2 追加】ホストから送信されたゲーム残り時間を受け取って補正するハンドラ
  */
 export function applyRemoteTimeSync(remoteTimeLeft) {
   if (typeof remoteTimeLeft === 'number' && !isNaN(remoteTimeLeft)) {
-    const diff = Math.abs(timeLeft - remoteTimeLeft);
-    // 0.4秒以上のズレがある場合のみ滑らかに補正
-    if (diff > 0.4) {
-      if (diff > 2.0) {
-        timeLeft = remoteTimeLeft;
-      } else {
-        timeLeft = THREE.MathUtils.lerp(timeLeft, remoteTimeLeft, 0.4);
-      }
+    // ズレが0.7秒以上ある場合のみスムーズに補正
+    if (Math.abs(timeLeft - remoteTimeLeft) > 0.7) {
+      timeLeft = remoteTimeLeft;
       updateTimerHUD(true);
     }
   }
 }
 
 /**
- * ホストからタイムアップ宣告を受信した際のハンドラ
+ * ★【Phase 2 追加】ホストからタイムアップ宣告を受信した際のハンドラ
  */
 export function applyRemoteTimeUp() {
   if (!isGameOver) {
@@ -109,6 +98,9 @@ export function applyRemoteTimeUp() {
   }
 }
 
+/**
+ * ★【Phase 2 追加】network.js から現在の残り秒数を取得するためのゲッター
+ */
 if (typeof window !== 'undefined') {
   window.getGameTimeLeft = () => timeLeft;
   window.applyRemoteTimeSync = applyRemoteTimeSync;
@@ -117,6 +109,7 @@ if (typeof window !== 'undefined') {
 
 /**
  * 外部（network.js / dom.js）からゲームループを確実に始動させる安全関数
+ * 存在しないDOMボタンの擬似クリックに依存せず、マルチ・ソロ問わずゲームを即座に動かす
  */
 export function launchGameEngine() {
   gameStarted = true;
@@ -213,6 +206,7 @@ export function onTimeUp() {
   if (isGameOver) return;
   isGameOver = true;
 
+  // ホスト端末の場合、ゲスト全員へタイムアップを通知
   if (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive && window.NetworkManager.isHost) {
     if (typeof window.NetworkManager.broadcastTimeUp === 'function') {
       window.NetworkManager.broadcastTimeUp();
@@ -514,13 +508,11 @@ export function animate(currentTime) {
       const hasReceivedNetPos = Boolean(c.targetNetPos && isMulti);
       const isRemotePlayer = Boolean(c.isRemote || isHumanSlot || hasReceivedNetPos);
 
-      // リモートフラグの昇格を毎フレーム確実に同期
-      if ((hasReceivedNetPos || isHumanSlot) && (!c.isRemote || c.isAI)) {
+      if (hasReceivedNetPos && (!c.isRemote || c.isAI)) {
         c.isRemote = true;
         c.isAI = false;
       }
 
-      // ホスト上であっても、人間プレイヤー（あるいはパケット受信中の走者）に対する AI 思考は100%遮断
       const shouldRunAI = (!isMulti || isHost) && !isRemotePlayer && c.isAI === true && !c.targetNetPos;
 
       if (shouldRunAI) {
@@ -550,7 +542,7 @@ export function animate(currentTime) {
         const targetScale = isRemoteShrunk ? 0.42 : 1.0;
         c.meshObj.root.scale.set(targetScale, targetScale, targetScale);
 
-        // 無敵時間中のキャラクター点滅同期
+        // ★【Phase 2 改善①】無敵時間中のキャラクター点滅同期
         if (c.invulnerableTimer > 0) {
           c.invulnerableTimer -= dt;
           if (c.invulnerableTimer <= 0) {
@@ -565,22 +557,24 @@ export function animate(currentTime) {
           c.meshObj.root.visible = true;
         }
 
-        // ★【Step 3 核心改善①】目標位置との乖離ガード ＆ 素直で滑らかなLerp追従
-        const distToTargetSq = (c.targetNetPos.x - c.pos.x) ** 2 + (c.targetNetPos.z - c.pos.z) ** 2;
+        const lerpFactor = Math.min(1.0, dt * 14.0);
 
-        if (distToTargetSq > 20.25) {
-          // 初期入室時やステージ跳躍時など 4.5m 以上離れている場合は即座にワープさせて取り残しを防止
-          c.pos.copy(c.targetNetPos);
-        } else {
-          const lerpFactor = Math.min(1.0, dt * 14.0);
-          c.pos.x = THREE.MathUtils.lerp(c.pos.x, c.targetNetPos.x, lerpFactor);
-          c.pos.y = THREE.MathUtils.lerp(c.pos.y, c.targetNetPos.y, lerpFactor);
-          c.pos.z = THREE.MathUtils.lerp(c.pos.z, c.targetNetPos.z, lerpFactor);
+        let predTargetX = c.targetNetPos.x;
+        let predTargetZ = c.targetNetPos.z;
+
+        if (c.netVelocity && (Math.abs(c.netVelocity.x) > 0.1 || Math.abs(c.netVelocity.z) > 0.1)) {
+          const timeSincePacket = Math.min(0.12, (currentTime - (c.lastPacketTime || currentTime)) * 0.001);
+          predTargetX += c.netVelocity.x * timeSincePacket * 0.5;
+          predTargetZ += c.netVelocity.z * timeSincePacket * 0.5;
         }
+
+        c.pos.x = THREE.MathUtils.lerp(c.pos.x, predTargetX, lerpFactor);
+        c.pos.y = THREE.MathUtils.lerp(c.pos.y, c.targetNetPos.y, lerpFactor);
+        c.pos.z = THREE.MathUtils.lerp(c.pos.z, predTargetZ, lerpFactor);
         c.meshObj.root.position.copy(c.pos);
 
         if (c.targetNetRotY !== undefined) {
-          c.meshObj.root.rotation.y = THREE.MathUtils.lerp(c.meshObj.root.rotation.y, c.targetNetRotY, Math.min(1.0, dt * 14.0));
+          c.meshObj.root.rotation.y = THREE.MathUtils.lerp(c.meshObj.root.rotation.y, c.targetNetRotY, lerpFactor);
         }
 
         // リモート走者のアトラクション状態ビット（remoteActionState）とメッシュの連動
@@ -588,9 +582,8 @@ export function animate(currentTime) {
         applyRemoteGimmickVisuals(c, remState, timeSec);
 
         const stepDist = Math.hypot(c.pos.x - prevX, c.pos.z - prevZ);
-        const hasNetVelocity = c.netVelocity && (Math.abs(c.netVelocity.x) > 0.08 || Math.abs(c.netVelocity.z) > 0.08);
 
-        // スピードブースト演出の同期
+        // スピードブースト演出の同期（オーラ点灯 ＆ 煙パーティクル）
         if (c.meshObj.footAura) {
           if (c.speedBoostActive) {
             c.meshObj.footAura.visible = true;
@@ -614,7 +607,7 @@ export function animate(currentTime) {
           }
         }
 
-        // マグネット吸引オーラ（紫リング）の同期
+        // ★【Phase 2 改善②】マグネット吸引オーラ（紫リング）の同期
         if (c.meshObj.magnetAura) {
           if (c.magnetActive) {
             c.meshObj.magnetAura.visible = true;
@@ -627,10 +620,11 @@ export function animate(currentTime) {
           }
         }
 
-        // ★【Step 3 核心改善②】初期位置でのうつ伏せ・倒れポーズ残留の根絶
+        // スタンやられ姿勢の同期（解除時の完全ニュートラル復帰）
         const isRemoteStunned = Boolean(c.isStunned || (c.stunTimer && c.stunTimer > 0));
 
         if (isRemoteStunned) {
+          // 歩行を止め、ローカル同様のやられ振動と前傾を適用
           c.meshObj.root.rotation.z = Math.sin(currentTime * 0.02) * 0.4;
           c.meshObj.root.rotation.x = 0;
           c.meshObj.leftLeg.rotation.x = 0;
@@ -638,37 +632,37 @@ export function animate(currentTime) {
           c.meshObj.leftArm.rotation.x = 0;
           c.meshObj.rightArm.rotation.x = 0;
         } else if (remState === 'JUMP') {
+          // ★【Phase 2 改善③】トランポリン大ジャンプ時の空中宙返り回転と手足オープン姿勢
           c.meshObj.root.rotation.z = 0;
-          c.meshObj.root.rotation.x += dt * -12.5;
+          c.meshObj.root.rotation.x += dt * -12.5; // 空中前方回転
           c.meshObj.leftArm.rotation.z = -0.75;
           c.meshObj.rightArm.rotation.z = 0.75;
           c.meshObj.leftLeg.rotation.z = -0.30;
           c.meshObj.rightLeg.rotation.z = 0.30;
-        } else if (remState === 'NORMAL') {
-          // NORMAL時は確実にロール（Z回転）をリセットし、地面に倒れた姿勢を解除
+        } else {
           c.meshObj.root.rotation.z = 0;
-          c.meshObj.root.rotation.x = (c.speedBoostActive) ? 0.20 : 0;
+          c.meshObj.root.rotation.x = (c.speedBoostActive && remState === 'NORMAL') ? 0.20 : 0;
 
-          c.meshObj.leftArm.rotation.z = 0;
-          c.meshObj.rightArm.rotation.z = 0;
-          c.meshObj.leftLeg.rotation.z = 0;
-          c.meshObj.rightLeg.rotation.z = 0;
+          if (remState === 'NORMAL') {
+            c.meshObj.leftArm.rotation.z = 0;
+            c.meshObj.rightArm.rotation.z = 0;
+            c.meshObj.leftLeg.rotation.z = 0;
+            c.meshObj.rightLeg.rotation.z = 0;
 
-          // 移動量または速度パケットがある場合は歩行モーションを再生
-          if (stepDist > 0.005 || hasNetVelocity) {
-            const walkSpeedMult = c.speedBoostActive ? 1.75 : 1.0;
-            const effectiveStep = Math.max(stepDist, dt * 1.8);
-            c.walkCycle = (c.walkCycle || 0) + effectiveStep * 5.5 * walkSpeedMult;
-            const swing = Math.sin(c.walkCycle) * 0.75;
-            c.meshObj.leftLeg.rotation.x = swing;
-            c.meshObj.rightLeg.rotation.x = -swing;
-            c.meshObj.leftArm.rotation.x = -swing * 0.8;
-            c.meshObj.rightArm.rotation.x = swing * 0.8;
-          } else {
-            c.meshObj.leftLeg.rotation.x = THREE.MathUtils.lerp(c.meshObj.leftLeg.rotation.x, 0, 0.2);
-            c.meshObj.rightLeg.rotation.x = THREE.MathUtils.lerp(c.meshObj.rightLeg.rotation.x, 0, 0.2);
-            c.meshObj.leftArm.rotation.x = THREE.MathUtils.lerp(c.meshObj.leftArm.rotation.x, 0, 0.2);
-            c.meshObj.rightArm.rotation.x = THREE.MathUtils.lerp(c.meshObj.rightArm.rotation.x, 0, 0.2);
+            if (stepDist > 0.008) {
+              const walkSpeedMult = c.speedBoostActive ? 1.75 : 1.0;
+              c.walkCycle = (c.walkCycle || 0) + stepDist * 5.5 * walkSpeedMult;
+              const swing = Math.sin(c.walkCycle) * 0.75;
+              c.meshObj.leftLeg.rotation.x = swing;
+              c.meshObj.rightLeg.rotation.x = -swing;
+              c.meshObj.leftArm.rotation.x = -swing * 0.8;
+              c.meshObj.rightArm.rotation.x = swing * 0.8;
+            } else {
+              c.meshObj.leftLeg.rotation.x = 0;
+              c.meshObj.rightLeg.rotation.x = 0;
+              c.meshObj.leftArm.rotation.x = 0;
+              c.meshObj.rightArm.rotation.x = 0;
+            }
           }
         }
       } else if (!c.targetNetPos) {
@@ -711,7 +705,7 @@ export function animate(currentTime) {
     }
     if (maxStage >= STAGES.length - 3) extendCourse(scene);
 
-    // タイマー減算とタイムアップのホスト主導化
+    // ★【Phase 2 改善④】タイマー減算とタイムアップのホスト主導化
     if (!isGuest) {
       timeLeft -= dt;
       if (timeLeft <= 0) {
@@ -719,6 +713,7 @@ export function animate(currentTime) {
         onTimeUp();
       }
     } else {
+      // ゲスト端末はローカルでも微減算しつつ、ホストからの TIME_SYNC で定期補正
       if (timeLeft > 0) {
         timeLeft -= dt;
       }
