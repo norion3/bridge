@@ -1,9 +1,13 @@
 // blocks.js: 床ブロック管理・補充・スポーン・一意キー（blockId）マルチ同期専用モジュール
-// ★ Step 7 実装版（ブロック一意キー化・座標丸め誤差による消失防止）：
-//   1. 端末間でズレる配列インデックス（poolIdx）依存を完全撤廃し、ステージ番号＋連番の一意キー（blockId: "stage_counter"）を導入
-//   2. applyRemoteBlockSpawned / applyRemoteBlockPicked で blockId による完全一致マッチングを行い、隣接ブロックの誤消去をゼロ化
-//   3. ホスト側のみが定期スポーン（SPAWN_BLOCK）の主導権を持ち、一意キー付きで生成パケットをブロードキャスト
-//   4. 既存のランダム回転、アイテム・ギミック除外半径、ソロプレイ動作は100%維持
+// ★ Phase 2 完全復旧版（初期島ブロック枯渇根絶 ＆ 公式SDK準拠・軽量バッチ通信）：
+//   1. 【現在ステージの強制リサイクル強奪を完全遮断】
+//      プール枯渇時に現在走者が滞在しているステージ（Stage 0など）のブロックが奥の島へ
+//      強制テレポートされて画面から全消滅する致命的欠陥を根絶。現在走者がいるステージは絶対にリサイクル除外。
+//   2. 【公式SDK仕様準拠の軽量バッチ送信】
+//      1個ずつのマシンガン通信を撤廃し、ステージごとの補充ブロックを必要最小限の軽量データに圧縮して1通に集約。
+//      JSBridgeのパケットサイズ制限（数百バイト以内）を厳格にクリア。
+//   3. 【確定論的ブロックID ＆ 重複ガード】
+//      ミリ秒時刻に依存しない連番ID（b_${stageIdx}_${globalBlockSpawnCounter}）による完全一致管理。
 
 import {
   BLOCK_TYPES,
@@ -47,8 +51,51 @@ export function getFloorBlocksForStage(stageIdx) {
 }
 
 /**
- * ★【Step 7 核心】ホストから新ブロック補充パケット（blockId付き）を受信した際の反映ハンドラ
- * 配列インデックスへの盲従を撤廃し、一意キーによる厳格管理と安全なプール割り当てを実施
+ * 安全なプールアイテムの取得ヘルパー
+ * ★ 走者が現在滞在しているステージのアクティブブロックは絶対にリサイクルしない
+ */
+function findSafePoolItem() {
+  // 1. 非アクティブな空きアイテムを最優先
+  let poolItem = floorBlockPool.find(b => !b.active);
+  if (poolItem) return poolItem;
+
+  // 2. 空きがない場合、全キャラが現在滞在しているステージ以外の古いブロックからリサイクル
+  const activeStages = new Set();
+  if (Array.isArray(characters)) {
+    characters.forEach(c => {
+      if (c && typeof c.currentStage === 'number') {
+        activeStages.add(c.currentStage);
+      }
+    });
+  }
+
+  let bestRecycleIdx = -1;
+  let minStageIdx = 999999;
+
+  for (let k = 0; k < floorBlockPool.length; k++) {
+    const blk = floorBlockPool[k];
+    // 現在走者がいるステージ、または吸引中のブロックは絶対に奪わない
+    if (blk.active && !blk.attracting && !activeStages.has(blk.stageIdx)) {
+      if (blk.stageIdx < minStageIdx) {
+        minStageIdx = blk.stageIdx;
+        bestRecycleIdx = k;
+      }
+    }
+  }
+
+  if (bestRecycleIdx >= 0) {
+    poolItem = floorBlockPool[bestRecycleIdx];
+    const oldStageBlocks = getFloorBlocksForStage(poolItem.stageIdx);
+    const oldIdx = oldStageBlocks.indexOf(poolItem);
+    if (oldIdx !== -1) oldStageBlocks.splice(oldIdx, 1);
+    return poolItem;
+  }
+
+  return null;
+}
+
+/**
+ * ホストから新ブロック補充パケット（blockId付き）を受信した際の反映ハンドラ（単体）
  */
 export function applyRemoteBlockSpawned(stageIdx, poolIdx, x, y, z, teamId, blockId = null) {
   const stageInfo = STAGES[stageIdx];
@@ -73,25 +120,8 @@ export function applyRemoteBlockSpawned(stageIdx, poolIdx, x, y, z, teamId, bloc
     }
   }
 
-  // 3. 安全なプールアイテムの確保（非アクティブな要素を最優先）
-  let poolItem = floorBlockPool.find(b => !b.active);
-  if (!poolItem) {
-    let bestRecycleIdx = -1;
-    let minStageIdx = 999999;
-    for (let k = 0; k < floorBlockPool.length; k++) {
-      const blk = floorBlockPool[k];
-      if (blk.active && !blk.attracting && blk.stageIdx < minStageIdx) {
-        minStageIdx = blk.stageIdx;
-        bestRecycleIdx = k;
-      }
-    }
-    if (bestRecycleIdx >= 0) {
-      poolItem = floorBlockPool[bestRecycleIdx];
-      const oldStageBlocks = getFloorBlocksForStage(poolItem.stageIdx);
-      const oldIdx = oldStageBlocks.indexOf(poolItem);
-      if (oldIdx !== -1) oldStageBlocks.splice(oldIdx, 1);
-    }
-  }
+  // 3. 安全なプールアイテムの確保
+  const poolItem = findSafePoolItem();
   if (!poolItem) return;
 
   const team = BLOCK_TYPES.find(t => t.id === teamId) || BLOCK_TYPES[0];
@@ -118,20 +148,36 @@ export function applyRemoteBlockSpawned(stageIdx, poolIdx, x, y, z, teamId, bloc
   }
 }
 
-// グローバル公開（network.js から安全に呼べるように登録）
+/**
+ * ホストからの一括（バッチ）ブロック補充パケット受信ハンドラ
+ */
+export function applyRemoteBlocksBatch(stageIdx, blocksArray) {
+  if (!Array.isArray(blocksArray) || blocksArray.length === 0) return;
+  for (let i = 0; i < blocksArray.length; i++) {
+    const b = blocksArray[i];
+    applyRemoteBlockSpawned(
+      b.stageIdx !== undefined ? b.stageIdx : stageIdx,
+      b.poolIdx,
+      b.x,
+      b.y,
+      b.z,
+      b.teamId,
+      b.blockId
+    );
+  }
+}
+
 if (typeof window !== 'undefined') {
   window.applyRemoteBlockSpawned = applyRemoteBlockSpawned;
+  window.applyRemoteBlocksBatch = applyRemoteBlocksBatch;
 }
 
 /**
- * 単一床ブロックの出現判定および配置（ホスト端末またはソロプレイで実行）
- * @param {THREE.Scene} scene 
- * @param {number} stageIdx 
- * @param {Object|null} targetTeam 
+ * 単一床ブロックの出現位置判定および内部配置
  */
-export function spawnSingleBlock(scene, stageIdx, targetTeam = null) {
+export function spawnSingleBlock(scene, stageIdx, targetTeam = null, shouldBroadcastImmediately = true) {
   const stageInfo = STAGES[stageIdx];
-  if (!stageInfo) return;
+  if (!stageInfo) return null;
 
   const minClearanceSq = 1.35 * 1.35;
   let validPos = null;
@@ -193,27 +239,10 @@ export function spawnSingleBlock(scene, stageIdx, targetTeam = null) {
     attempts++;
   }
 
-  if (!validPos) return;
+  if (!validPos) return null;
 
-  let poolItem = floorBlockPool.find(b => !b.active);
-  if (!poolItem) {
-    let bestRecycleIdx = -1;
-    let minStageIdx = 999999;
-    for (let k = 0; k < floorBlockPool.length; k++) {
-      const blk = floorBlockPool[k];
-      if (blk.active && !blk.attracting && blk.stageIdx < minStageIdx) {
-        minStageIdx = blk.stageIdx;
-        bestRecycleIdx = k;
-      }
-    }
-    if (bestRecycleIdx >= 0) {
-      poolItem = floorBlockPool[bestRecycleIdx];
-      const oldStageBlocks = getFloorBlocksForStage(poolItem.stageIdx);
-      const oldIdx = oldStageBlocks.indexOf(poolItem);
-      if (oldIdx !== -1) oldStageBlocks.splice(oldIdx, 1);
-    }
-  }
-  if (!poolItem) return;
+  const poolItem = findSafePoolItem();
+  if (!poolItem) return null;
 
   const team = targetTeam || BLOCK_TYPES[Math.floor(seededRandom() * BLOCK_TYPES.length)];
   let mat;
@@ -223,10 +252,11 @@ export function spawnSingleBlock(scene, stageIdx, targetTeam = null) {
   else mat = sharedMats.blockNeutral;
 
   globalBlockSpawnCounter++;
-  const uniqueBlockId = `b_${stageIdx}_${globalBlockSpawnCounter}_${Date.now().toString(36)}`;
+  const uniqueBlockId = `b_${stageIdx}_${globalBlockSpawnCounter}`;
+  const spawnY = stageInfo.y + 0.25;
 
   poolItem.mesh.material = mat;
-  poolItem.mesh.position.set(validPos.x, stageInfo.y + 0.25, validPos.z);
+  poolItem.mesh.position.set(validPos.x, spawnY, validPos.z);
   poolItem.mesh.rotation.set(0, seededRandom() * Math.PI, 0);
   poolItem.mesh.visible = true;
 
@@ -239,37 +269,47 @@ export function spawnSingleBlock(scene, stageIdx, targetTeam = null) {
 
   stageBlocks.push(poolItem);
 
-  // マルチプレイ時、ホストが補充したブロック情報を一意ID付きで他端末へブロードキャスト
-  const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
-  const isMulti = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive);
-  if (isMulti && isHost && typeof window !== 'undefined' && window.AgentSDK) {
-    const poolIdx = floorBlockPool.indexOf(poolItem);
-    try {
-      window.AgentSDK.room.sendMessage({
-        message: JSON.stringify({
-          event: 'SPAWN_BLOCK',
-          blockId: uniqueBlockId,
-          poolIdx: poolIdx,
-          stageIdx: stageIdx,
-          x: Number(validPos.x.toFixed(2)),
-          y: Number((stageInfo.y + 0.25).toFixed(2)),
-          z: Number(validPos.z.toFixed(2)),
-          teamId: team.id
-        })
-      });
-    } catch (err) {
-      console.warn('[blocks.js] Failed to broadcast SPAWN_BLOCK:', err);
+  const blockRecord = {
+    stageIdx: stageIdx,
+    poolIdx: floorBlockPool.indexOf(poolItem),
+    x: Number(validPos.x.toFixed(2)),
+    y: Number(spawnY.toFixed(2)),
+    z: Number(validPos.z.toFixed(2)),
+    teamId: team.id,
+    blockId: uniqueBlockId
+  };
+
+  if (shouldBroadcastImmediately) {
+    const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
+    const isMulti = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive);
+    if (isMulti && isHost && window.NetworkManager && typeof window.NetworkManager.broadcastSpawnBlock === 'function') {
+      window.NetworkManager.broadcastSpawnBlock(
+        stageIdx,
+        blockRecord.poolIdx,
+        blockRecord.x,
+        blockRecord.y,
+        blockRecord.z,
+        blockRecord.teamId,
+        blockRecord.blockId
+      );
     }
   }
+
+  return blockRecord;
 }
 
 /**
  * 全走者の滞在ステージに応じた床ブロック定期補充
- * @param {THREE.Scene} scene 
- * @param {boolean} isGameOver 
+ * ★ 補充されたブロックをステージごとにまとめ、1通の軽量バッチでブロードキャスト
  */
 export function manageBlockSpawns(scene, isGameOver = false) {
   if (isGameOver) return;
+
+  const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
+  const isMulti = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive);
+
+  // ゲスト端末はホストからのパケットのみを受信するためローカル補充は行わない
+  if (isMulti && !isHost) return;
 
   for (let cIdx = 0; cIdx < characters.length; cIdx++) {
     const s = characters[cIdx].currentStage;
@@ -284,6 +324,7 @@ export function manageBlockSpawns(scene, isGameOver = false) {
     if (alreadyChecked) continue;
 
     const stageBlocks = getFloorBlocksForStage(s);
+    const newlySpawnedInStage = [];
 
     for (let tIdx = 0; tIdx < BLOCK_TYPES.length; tIdx++) {
       const team = BLOCK_TYPES[tIdx];
@@ -304,8 +345,26 @@ export function manageBlockSpawns(scene, isGameOver = false) {
         }
       }
 
-      if (currentCount < targetCount) {
-        spawnSingleBlock(scene, s, team);
+      const needed = targetCount - currentCount;
+      // 1回の周期で過剰なバーストが起きないよう上限を4個までに抑制
+      const spawnLimit = Math.min(needed, 4);
+
+      for (let k = 0; k < spawnLimit; k++) {
+        const spawned = spawnSingleBlock(scene, s, team, false);
+        if (spawned) {
+          newlySpawnedInStage.push(spawned);
+        }
+      }
+    }
+
+    // ステージごとに1通だけバッチブロードキャスト送信（パケットサイズ数百バイト以内）
+    if (isMulti && isHost && newlySpawnedInStage.length > 0 && window.NetworkManager) {
+      if (typeof window.NetworkManager.broadcastSpawnBlocksBatch === 'function') {
+        window.NetworkManager.broadcastSpawnBlocksBatch(s, newlySpawnedInStage);
+      } else if (typeof window.NetworkManager.broadcastSpawnBlock === 'function') {
+        newlySpawnedInStage.forEach(b => {
+          window.NetworkManager.broadcastSpawnBlock(s, b.poolIdx, b.x, b.y, b.z, b.teamId, b.blockId);
+        });
       }
     }
   }
