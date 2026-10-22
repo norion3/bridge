@@ -1,9 +1,13 @@
 // gimmicks.js: 特殊アトラクション搭乗中の物理挙動・姿勢制御・ボーナス回収・着地処理モジュール（完全分離レイヤー）
-// ★ Phase 4 実装版（ドロップタワー・ハッチ開放視覚同期 ＆ JUMP/アトラクション外観完全整合）：
-//   1. 【ハッチ開放連動】リモート走者が `TRAPDOOR` 状態になった際、該当ステージの強化ガラスハッチ（doorLeftPivot, doorRightPivot）を開放。
-//      相手が閉じている床をすり抜けて落下する違和感を解消し、着地・復帰時にはハッチを自動で閉鎖。
-//   2. 【JUMP状態の付帯物クリア】大ジャンプ（`JUMP`）時にトロリーやエレベーターカゴの非表示、荷物パッキングを正常化。
-//   3. 既存のボーナス消費同期（applyRemoteBonusConsumed）、滑空・落下・エレベーター・ジップライン・S字スライダー物理は100%維持。
+// ★ Phase 1 実装版（スカイダイブ・ジップラインボーナスブロックID完全照合 ＆ 100%同期消去保証）：
+//   1. 【全アトラクションボーナス回収時のID完全照合】
+//      スカイダイブ（updateSkydiveMovement）およびジップライン（updateZiplineMovement）の回収時、
+//      world.js の確定論的一意キー（bonus_skydive_${stageIdx}_${si} / bonus_zipline_${stageIdx}_${zi}）を
+//      NetworkManager.broadcastConsumeObject へ確実に送出し、100ms周期POSパケット（consumes）へ同封。
+//   2. 【消去ハンドラ（applyRemoteBonusConsumed）の完全一致】
+//      相手端末で回収された際、skydiveBonusBlocks / ziplineBonusBlocks / curvedSlideBonusBlocks / slideBonusBlocks
+//      の全4配列から該当ブロックを即座に特定し、メッシュの非表示 ＆ 親ノードからの確実な除去を実行。
+//   3. 既存のドロップタワーハッチ開放視覚同期、大ジャンプ、エレベーター、S字スライダー物理は100%維持。
 
 import {
   LANES,
@@ -33,14 +37,14 @@ import {
 import { triggerLandingShockwave } from './particles.js';
 
 /**
- * ★【Phase 4 拡張】リモート走者（他端末またはホストAI）のアトラクション状態ビットに応じた外観・メッシュ連動
+ * リモート走者（他端末またはホストAI）のアトラクション状態ビットに応じた外観・メッシュ連動
  */
 export function applyRemoteGimmickVisuals(char, state, timeSec) {
   if (!char || !char.meshObj) return;
 
   const mo = char.meshObj;
 
-  // ★【Phase 4 核心】TRAPDOOR終了時のハッチ自動閉鎖判定
+  // TRAPDOOR終了時のハッチ自動閉鎖判定
   if (char._lastRemoteActionState === 'TRAPDOOR' && state !== 'TRAPDOOR') {
     for (let sIdx = Math.max(0, char.currentStage - 1); sIdx <= char.currentStage + 1; sIdx++) {
       const stageBridges = bridgesByStage.get(sIdx) || [];
@@ -66,7 +70,7 @@ export function applyRemoteGimmickVisuals(char, state, timeSec) {
     packCharacterLuggage(char, 1.0);
     applyTrapdoorPose(char, 0, timeSec);
 
-    // ★【Phase 4 核心】リモート走者がドロップタワーに落下した際、該当ステージのハッチ扉を開放
+    // リモート走者がドロップタワーに落下した際、該当ステージのハッチ扉を開放
     for (let sIdx = Math.max(0, char.currentStage - 1); sIdx <= char.currentStage + 1; sIdx++) {
       const stageBridges = bridgesByStage.get(sIdx) || [];
       const trapB = stageBridges.find(b => b.isTrapdoor || b.isFreefall);
@@ -131,6 +135,7 @@ export function updateSkydiveMovement(scene, char, dirX, dt, soundRef, updateHUD
   const totalFlyTime = SKYDIVE_CONFIG.PHYSICS.totalDuration;
   char.skydiveProgress += dt / totalFlyTime;
 
+  // ★【Phase 1 核心】スカイダイブ上のボーナスブロック回収 ＆ ブロードキャスト
   if (b.bonusBlocks && b.bonusBlocks.length > 0) {
     for (let si = 0; si < b.bonusBlocks.length; si++) {
       const blk = b.bonusBlocks[si];
@@ -139,7 +144,11 @@ export function updateSkydiveMovement(scene, char, dirX, dt, soundRef, updateHUD
         const xDiff = Math.abs(blk.x - char.skydiveX);
         if (progDiff < 0.055 && xDiff < 1.45) {
           blk.collected = true;
-          scene.remove(blk.mesh);
+          if (blk.mesh) {
+            blk.mesh.visible = false;
+            if (blk.mesh.parent) blk.mesh.parent.remove(blk.mesh);
+            else scene.remove(blk.mesh);
+          }
           addBrickToCharacter(char, char.team, 1, soundRef, updateHUDRef);
           if (char.isPlayer && soundRef) {
             soundRef.playCollect(1.2 + blk.t * 0.8);
@@ -148,9 +157,8 @@ export function updateSkydiveMovement(scene, char, dirX, dt, soundRef, updateHUD
           const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
           const shouldBroadcastPick = char.isPlayer || (isHost && char.isAI);
           if (shouldBroadcastPick && typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive) {
-            if (blk.bonusId) {
-              window.NetworkManager.broadcastConsumeObject(blk.bonusId, 'bonus');
-            }
+            const targetBonusId = blk.bonusId || `bonus_skydive_${b.stageIdx}_${si}`;
+            window.NetworkManager.broadcastConsumeObject(targetBonusId, 'bonus');
           }
         }
       }
@@ -398,13 +406,18 @@ export function updateZiplineMovement(scene, char, dt, soundRef, updateHUDRef) {
     char.meshObj.trolleyGroup.visible = true;
   }
 
+  // ★【Phase 1 核心】ジップライン上のボーナスブロック回収 ＆ ブロードキャスト
   if (zip.bonusBlocks && zip.bonusBlocks.length > 0) {
     for (let bi = 0; bi < zip.bonusBlocks.length; bi++) {
       const blk = zip.bonusBlocks[bi];
       if (!blk.collected) {
         if (Math.abs(blk.t - char.ziplineProgress) < 0.048) {
           blk.collected = true;
-          scene.remove(blk.mesh);
+          if (blk.mesh) {
+            blk.mesh.visible = false;
+            if (blk.mesh.parent) blk.mesh.parent.remove(blk.mesh);
+            else scene.remove(blk.mesh);
+          }
           addBrickToCharacter(char, char.team, 1, soundRef, updateHUDRef);
           if (char.isPlayer && soundRef) {
             soundRef.playCollect(1.25 + blk.t * 0.65);
@@ -413,9 +426,8 @@ export function updateZiplineMovement(scene, char, dt, soundRef, updateHUDRef) {
           const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
           const shouldBroadcastPick = char.isPlayer || (isHost && char.isAI);
           if (shouldBroadcastPick && typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive) {
-            if (blk.bonusId) {
-              window.NetworkManager.broadcastConsumeObject(blk.bonusId, 'bonus');
-            }
+            const targetBonusId = blk.bonusId || `bonus_zipline_${zip.stageIdx}_${bi}`;
+            window.NetworkManager.broadcastConsumeObject(targetBonusId, 'bonus');
           }
         }
       }
@@ -550,7 +562,11 @@ export function updateCurvedSlideMovement(scene, char, dirX, dt, soundRef, updat
           const offsetDiff = Math.abs(blk.offset - char.curvedSlideOffset);
           if (progDiff < 0.045 && offsetDiff < 0.95) {
             blk.collected = true;
-            scene.remove(blk.mesh);
+            if (blk.mesh) {
+              blk.mesh.visible = false;
+              if (blk.mesh.parent) blk.mesh.parent.remove(blk.mesh);
+              else scene.remove(blk.mesh);
+            }
             addBrickToCharacter(char, char.team, 1, soundRef, updateHUDRef);
             if (char.isPlayer && soundRef) {
               soundRef.playCollect(1.2 + blk.t * 0.6);
@@ -559,9 +575,8 @@ export function updateCurvedSlideMovement(scene, char, dirX, dt, soundRef, updat
             const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
             const shouldBroadcastPick = char.isPlayer || (isHost && char.isAI);
             if (shouldBroadcastPick && typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive) {
-              if (blk.bonusId) {
-                window.NetworkManager.broadcastConsumeObject(blk.bonusId, 'bonus');
-              }
+              const targetBonusId = blk.bonusId || `bonus_curved_${b.stageIdx}_${bi}`;
+              window.NetworkManager.broadcastConsumeObject(targetBonusId, 'bonus');
             }
           }
         }

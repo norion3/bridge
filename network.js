@@ -1,17 +1,12 @@
 // network.js: AgentSDK公式仕様完全準拠 ＆ ホスト主導型ハンドシェイク同期エンジン
-// ★ ホスト主導型ハンドシェイク完全同期版（Race Condition・ランダム非同期100%根絶）：
-//   1. 【ゲスト先走り送信の完全停止 ＆ 純粋待機モード】
-//      joinRoom() 直後の REQUEST_ROOM_SYNC 連射タイマーおよび _startPositionBroadcasting() 呼び出しを撤廃。
-//      ホストがまだ認識していない段階でパケットを垂れ流して破棄される競合を根絶。
-//   2. 【ホストの joinroom 検知による同期開始宣告】
-//      ホスト端末が aitools_game_joinroom を受信した瞬間に ROOM_MEMBERS_SYNC を送信し、正式ハンドシェイクを開始。
-//   3. 【ゲスト送信ループの安全始動トリガー】
-//      ゲスト端末はホストからの ROOM_MEMBERS_SYNC を受信し、自分のスロット（mySlot=1）を確定させた瞬間に
-//      初めて _startPositionBroadcasting()（10Hz送信ループ）を開始。
-//   4. 【exit() 後 250ms 安全ウェイト挿入】
-//      safeExitCurrentRoom() 完了後、250ms のスリープを挟み、親アプリWebSocketの切断と接続の交差混線を防止。
-//   5. 【入室直後の確実なリスナー登録】
-//      create() および join() 成功直後の行で ensureMessageListener() を即座に実行。
+// ★ Phase 3 実装版（散乱ブロックの集約パケット同封 ＆ 完全10Hz同期）：
+//   1. 【散乱ブロック（scatters）の集約同封 ＆ キュー提供】
+//      combat.js の scatterBricks から渡される散乱ブロック配列を蓄積する queueScatterBlocks() を新設。
+//      100ms周期（10Hz）の POS パケットに `scatters` として相乗りさせ、1通に完全集約。
+//   2. 【POSパケット受信時の scatters 自動展開ハンドラ】
+//      受信パケット内に同封された scatters を検知し、既存の applyRemoteScatterBlocks を順次呼び出して即座に床面へ反映。
+//   3. 【ホスト主導型ハンドシェイク ＆ 安全退出制御の完全維持】
+//      aitools_game_joinroom 起点の ROOM_MEMBERS_SYNC、250ms 安全スリープ、ゲスト待機モードは100%維持。
 
 import {
   player,
@@ -189,6 +184,7 @@ export const NetworkManager = {
   _pendingPicks: [],
   _pendingConsumes: [],
   _pendingBlows: [],
+  _pendingScatters: [], // ★【Phase 3 新設】散乱ブロック用バッファ
 
   queuePlankBuild(stageIdx, laneIdx, plankIdx, teamId) {
     if (!this.isMultiplayerActive) return;
@@ -225,6 +221,17 @@ export const NetworkManager = {
       m: mobIndex,
       s: stageIdx,
       d: Number(pushDirX.toFixed(2))
+    });
+  },
+
+  /**
+   * ★【Phase 3 新設】散乱ブロック（タックル・ゲート被弾）を100ms周期キューへ蓄積
+   */
+  queueScatterBlocks(stageIdx, blocksArray) {
+    if (!this.isMultiplayerActive || !Array.isArray(blocksArray) || blocksArray.length === 0) return;
+    this._pendingScatters.push({
+      s: stageIdx,
+      b: blocksArray
     });
   },
 
@@ -375,6 +382,7 @@ export const NetworkManager = {
       this._pendingPicks = [];
       this._pendingConsumes = [];
       this._pendingBlows = [];
+      this._pendingScatters = [];
 
       safeShowGameScreen();
 
@@ -469,6 +477,7 @@ export const NetworkManager = {
       this._pendingPicks = [];
       this._pendingConsumes = [];
       this._pendingBlows = [];
+      this._pendingScatters = [];
 
       this.mySlot = 1;
       this.isSlotConfirmed = false; // ★ ホストからの ROOM_MEMBERS_SYNC 受信までは未確定
@@ -663,6 +672,15 @@ export const NetworkManager = {
             packet.blows.forEach(bl => {
               if (typeof window.applyRemoteBlowMob === 'function') {
                 window.applyRemoteBlowMob(bl.m, bl.s, bl.d);
+              }
+            });
+          }
+
+          // ★【Phase 3 新設】同封された散乱ブロックの一括展開ハンドラ連動
+          if (Array.isArray(packet.scatters) && packet.scatters.length > 0) {
+            packet.scatters.forEach(sc => {
+              if (typeof window.applyRemoteScatterBlocks === 'function') {
+                window.applyRemoteScatterBlocks(sc.s, sc.b);
               }
             });
           }
@@ -1065,16 +1083,19 @@ export const NetworkManager = {
         }
       }
 
-      // バッファに溜まっている階段設置およびブロック取得情報をアグリゲーションして同封
+      // バッファに溜まっている階段設置、ブロック取得、アイテム消費、モブ吹き飛ばし、散乱ブロック情報をアグリゲーションして同封
       const outgoingPlanks = this._pendingPlanks.length > 0 ? [...this._pendingPlanks] : undefined;
       const outgoingPicks = this._pendingPicks.length > 0 ? [...this._pendingPicks] : undefined;
       const outgoingConsumes = this._pendingConsumes.length > 0 ? [...this._pendingConsumes] : undefined;
       const outgoingBlows = this._pendingBlows.length > 0 ? [...this._pendingBlows] : undefined;
+      // ★【Phase 3 新設】散乱ブロックの集約同封
+      const outgoingScatters = this._pendingScatters.length > 0 ? [...this._pendingScatters] : undefined;
 
       this._pendingPlanks.length = 0;
       this._pendingPicks.length = 0;
       this._pendingConsumes.length = 0;
       this._pendingBlows.length = 0;
+      this._pendingScatters.length = 0;
 
       const posMessage = {
         event: 'POS',
@@ -1086,6 +1107,7 @@ export const NetworkManager = {
       if (outgoingPicks) posMessage.picks = outgoingPicks;
       if (outgoingConsumes) posMessage.consumes = outgoingConsumes;
       if (outgoingBlows) posMessage.blows = outgoingBlows;
+      if (outgoingScatters) posMessage.scatters = outgoingScatters; // ★ 同封
 
       this._sendCustomMessage(posMessage);
     }, 100);
