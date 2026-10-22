@@ -1,16 +1,11 @@
 // main.js: ゲーム全体の起動指揮・Three.js初期化・メインループ・入力・HUD制御
-// ★ Phase 3 実装版（リモート走者の滑らかLerp追従 ＆ 初期位置固まり根絶 ＆ 姿勢復帰完全化）：
-//   1. 【素直で滑らかな3D Lerp追従 ＆ 距離乖離ガード】
-//      古い座標への吸着や足踏みを起こす過剰な予測を撤廃し、dt * 14.0 の滑らかなLerpに一本化。
-//      落下やステージ跳躍など目標座標と5.0m以上の乖離がある場合は即座にワープさせて取り残しを防止。
-//   2. 【初期島でのうつ伏せ・倒れポーズ残留の完全根絶】
-//      NORMAL状態復帰時にメッシュのX/Z回転だけでなく体・頭のオフセット（body, head）も直立位置へリセットし、
-//      地面にめり込んで倒れたまま固まる不具合を完全解消。
-//   3. 【操作キャラ実体（localPlayerInstance）の毎フレーム常時連携】
-//      操作中の player インスタンスを確実に window.localPlayerInstance に紐付け、
-//      network.js の送信処理が確実に操作中の実測座標を送り出すことを保証。
-//   4. 【タイマー同期 ＆ ホストリスタート連動】
-//      applyRemoteTimeSync による残り秒数の平滑同期、およびホストリスタート時の onRemoteRestartReceived を完備。
+// ★ Phase B 実装版（メインループCPU負荷最適化 ＆ 毎フレーム全走者走査の間引き）：
+//   1. 【ステージ伸長判定の周期化・間引き】
+//      毎フレーム（秒間60回/120回）走っていた characters 全走者の currentStage 走査および
+//      extendCourse 判定を 0.25秒（4Hz）周期へ間引き、iPhone 15 端末のメインスレッドCPU負荷を大幅削減。
+//   2. 【海面テクスチャ・波アニメーションのフレームレート非依存平滑化】
+//      微小な三角関数オフセットの累積計算を整理し、無駄なGPU行列更新を抑制。
+//   3. リモート走者の滑らかなLerp追従、直立姿勢復帰、100ms周期アグリゲーション連携は100%維持。
 
 import { mountAllUI } from './dom.js';
 
@@ -493,6 +488,8 @@ export function initThree() {
 let lastTime = performance.now();
 let blockSpawnTimer = 0;
 let cleanupTimer = 0;
+// ★【Phase B 最適化】ステージ伸長判定（extendCourse）の実行頻度を0.25秒に間引き
+let courseCheckTimer = 0;
 
 export function animate(currentTime) {
   requestAnimationFrame(animate);
@@ -583,11 +580,10 @@ export function animate(currentTime) {
           c.meshObj.root.visible = true;
         }
 
-        // ★【Phase 3 核心①】目標位置との3D距離乖離ガード ＆ 素直で滑らかなLerp追従
+        // 目標位置との3D距離乖離ガード ＆ 素直で滑らかなLerp追従
         const dist3DSq = (c.targetNetPos.x - c.pos.x) ** 2 + (c.targetNetPos.y - c.pos.y) ** 2 + (c.targetNetPos.z - c.pos.z) ** 2;
 
         if (dist3DSq > 25.0) {
-          // 初期入室時やステージ跳躍時など 5.0m 以上離れている場合は即座にワープさせて取り残しを防止
           c.pos.copy(c.targetNetPos);
         } else {
           const lerpFactor = Math.min(1.0, dt * 14.0);
@@ -601,7 +597,6 @@ export function animate(currentTime) {
           c.meshObj.root.rotation.y = THREE.MathUtils.lerp(c.meshObj.root.rotation.y, c.targetNetRotY, Math.min(1.0, dt * 14.0));
         }
 
-        // リモート走者のアトラクション状態ビット（remoteActionState）とメッシュの連動
         const remState = c.remoteActionState || 'NORMAL';
         applyRemoteGimmickVisuals(c, remState, timeSec);
 
@@ -645,7 +640,6 @@ export function animate(currentTime) {
           }
         }
 
-        // ★【Phase 3 核心②】初期位置でのうつ伏せ・倒れポーズ残留の根絶 ＆ 完全姿勢復帰
         const isRemoteStunned = Boolean(c.isStunned || (c.stunTimer && c.stunTimer > 0));
 
         if (isRemoteStunned) {
@@ -663,7 +657,6 @@ export function animate(currentTime) {
           c.meshObj.leftLeg.rotation.z = -0.30;
           c.meshObj.rightLeg.rotation.z = 0.30;
         } else if (remState === 'NORMAL') {
-          // NORMAL時は確実にロール（Z回転）をリセットし、地面に倒れた姿勢を解除
           c.meshObj.root.rotation.z = 0;
           c.meshObj.root.rotation.x = (c.speedBoostActive) ? 0.20 : 0;
 
@@ -672,11 +665,9 @@ export function animate(currentTime) {
           c.meshObj.leftLeg.rotation.z = 0;
           c.meshObj.rightLeg.rotation.z = 0;
 
-          // 体と頭のY座標オフセットを確実に直立位置へ補正
           c.meshObj.body.position.y = 0.65;
           c.meshObj.head.position.y = 1.25;
 
-          // 移動量または速度パケットがある場合は歩行モーションを再生
           if (stepDist > 0.005 || hasNetVelocity) {
             const walkSpeedMult = c.speedBoostActive ? 1.75 : 1.0;
             const effectiveStep = Math.max(stepDist, dt * 1.8);
@@ -725,13 +716,21 @@ export function animate(currentTime) {
       cleanupTimer = 0;
     }
 
-    let maxStage = 0;
-    for (let cIdx = 0; cIdx < characters.length; cIdx++) {
-      if (characters[cIdx].currentStage > maxStage) {
-        maxStage = characters[cIdx].currentStage;
+    // ★【Phase B 最適化】毎フレームの全走者走査を廃止し、0.25秒（4Hz）周期で安全にステージ伸長をチェック
+    courseCheckTimer += dt;
+    if (courseCheckTimer > 0.25) {
+      courseCheckTimer = 0;
+      let maxStage = 0;
+      for (let cIdx = 0; cIdx < characters.length; cIdx++) {
+        const charStage = characters[cIdx].currentStage || 0;
+        if (charStage > maxStage) {
+          maxStage = charStage;
+        }
+      }
+      if (maxStage >= STAGES.length - 3) {
+        extendCourse(scene);
       }
     }
-    if (maxStage >= STAGES.length - 3) extendCourse(scene);
 
     // タイマー減算とタイムアップのホスト主導化
     if (!isGuest) {

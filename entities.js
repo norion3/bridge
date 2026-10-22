@@ -1,4 +1,11 @@
 // entities.js: 飛翔体・雷・ドレイン・マグネット・演出パーティクル・浮遊雲の毎フレーム更新モジュール
+// ★ Phase C 実装版（画面外アイテム・ボーナスブロックの不要アニメーション計算間引き）：
+//   1. 【視界外アイテム・ボーナスのアニメーション更新スキップ】
+//      プレイヤーから前後40m以上離れたアイテム（floorItems）やボーナスブロック（slide/zipline/skydive）の
+//      毎フレーム三角関数（Math.sin）や自転回転計算、無駄な行列更新を完全バイパス。
+//   2. 【浮遊雲の計算カリング適正化】
+//      遠方の雲（前後55m超）の浮遊アニメーション更新を間引き、GPU/CPUの無駄な負荷を抑制。
+//   3. 既存のホーミング弾・サンダー・ドレイン・マグネット・衝撃波などの各種演出・オブジェクトプール管理は100%維持。
 
 import {
   sharedMats,
@@ -44,10 +51,11 @@ import {
 export function updateSceneEntities(scene, dt, timeSec, player, sound) {
   const playerZ = player ? player.pos.z : 0;
 
-  // 1. 床置きアイテムの自転・浮遊アニメーション
-  floorItems.forEach(item => {
+  // 1. 床置きアイテムの自転・浮遊アニメーション（★ 前後40m以内の視界内のみ計算）
+  for (let i = 0; i < floorItems.length; i++) {
+    const item = floorItems[i];
     if (item.active && item.group) {
-      if (Math.abs(item.pos.z - playerZ) > 95) return;
+      if (Math.abs(item.pos.z - playerZ) > 40) continue;
       if (item.crystal) {
         item.crystal.rotation.y = timeSec * 3.2;
         item.crystal.rotation.z = Math.sin(timeSec * 2.5) * 0.25;
@@ -62,7 +70,7 @@ export function updateSceneEntities(scene, dt, timeSec, player, sound) {
         item.beaconRing.scale.set(pulse, pulse, pulse);
       }
     }
-  });
+  }
 
   // 2. ホーミングクリスタル弾の追従・着弾更新
   for (let i = 0; i < projectilePool.length; i++) {
@@ -227,9 +235,8 @@ export function updateSceneEntities(scene, dt, timeSec, player, sound) {
 
       if (tp.reticle) tp.reticle.visible = false;
 
-      // ★ Phase 7-4 改善: GCスパイクを引き起こす動的生成を廃止し、プールから取得
       let bolt = lightningPillarPool.find(p => !p.active);
-      if (!bolt) bolt = lightningPillarPool[0]; // フォールバック
+      if (!bolt) bolt = lightningPillarPool[0];
       if (bolt) {
         bolt.active = true;
         bolt.life = 0;
@@ -400,43 +407,48 @@ export function updateSceneEntities(scene, dt, timeSec, player, sound) {
     }
   }
 
-  // 8. アトラクションボーナスブロックの自転・浮遊
-  curvedSlideBonusBlocks.forEach(blk => {
+  // 8. アトラクションボーナスブロックの自転・浮遊（★ 前後40m以内の視界内のみ計算）
+  for (let i = 0; i < curvedSlideBonusBlocks.length; i++) {
+    const blk = curvedSlideBonusBlocks[i];
     if (!blk.collected && blk.mesh) {
-      if (Math.abs(blk.mesh.position.z - playerZ) > 95) return;
+      if (Math.abs(blk.mesh.position.z - playerZ) > 40) continue;
       blk.mesh.rotation.y = timeSec * 2.8 + blk.t * 4.0;
     }
-  });
+  }
 
-  ziplineBonusBlocks.forEach(blk => {
+  for (let i = 0; i < ziplineBonusBlocks.length; i++) {
+    const blk = ziplineBonusBlocks[i];
     if (!blk.collected && blk.mesh) {
-      if (Math.abs(blk.mesh.position.z - playerZ) > 95) return;
+      if (Math.abs(blk.mesh.position.z - playerZ) > 40) continue;
       blk.mesh.rotation.y = timeSec * 3.2 + blk.t * 4.5;
       blk.mesh.position.y = blk.baseY + Math.sin(timeSec * 3.5 + blk.zi) * 0.14;
     }
-  });
+  }
 
-  skydiveBonusBlocks.forEach(blk => {
+  for (let i = 0; i < skydiveBonusBlocks.length; i++) {
+    const blk = skydiveBonusBlocks[i];
     if (!blk.collected && blk.mesh) {
-      if (Math.abs(blk.mesh.position.z - playerZ) > 95) return;
+      if (Math.abs(blk.mesh.position.z - playerZ) > 40) continue;
       blk.mesh.rotation.y = timeSec * 3.2 + blk.t * 4.0;
       blk.mesh.position.y = blk.baseY + Math.sin(timeSec * 3.0 + blk.si) * 0.12;
     }
-  });
+  }
 
-  slideBonusBlocks.forEach(blk => {
+  for (let i = 0; i < slideBonusBlocks.length; i++) {
+    const blk = slideBonusBlocks[i];
     if (!blk.collected && blk.mesh) {
-      if (Math.abs(blk.mesh.position.z - playerZ) > 95) return;
+      if (Math.abs(blk.mesh.position.z - playerZ) > 40) continue;
       blk.mesh.rotation.y = timeSec * 2.8 + blk.prog * 3.0;
     }
-  });
+  }
 
-  // 9. 浮遊雲のふわふわ揺れ
-  cloudObjects.forEach(c => {
-    if (Math.abs(c.mesh.position.z - playerZ) > 115) return;
+  // 9. 浮遊雲のふわふわ揺れ（★ 前後55m以内の視界内のみ計算）
+  for (let i = 0; i < cloudObjects.length; i++) {
+    const c = cloudObjects[i];
+    if (Math.abs(c.mesh.position.z - playerZ) > 55) continue;
     c.mesh.position.y = c.baseY + Math.sin(timeSec + c.offset) * 0.4;
     c.mesh.rotation.y = Math.sin(timeSec * 0.3 + c.offset) * 0.08;
-  });
+  }
 
   // 10. 着地・被弾衝撃波の拡大消散
   for (let i = 0; i < shockwavePool.length; i++) {

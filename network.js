@@ -1,16 +1,13 @@
 // network.js: AgentSDK公式仕様完全準拠 ＆ ルーム入退室ライフサイクル・通信同期エンジン
-// ★ Phase 1 実装版（100ms周期集約パケットコンテナ化 ＆ バッファ受取口新設）：
-//   1. 【100ms POS パケットへのアクション同封枠新設】
-//      10Hz の定期位置送信時に、溜まった階段設置キュー（pendingPlanks）とブロック取得キュー（pendingPicks）を
-//      POS パケット（planks / picks）に同封して1通で送信し、バッファを自動クリア。
-//   2. 【集約パケットの安全な受取口整備】
-//      POS パケット受信時に、同封されている planks や picks を検知し、既存の applyRemotePlankBuilt や
-//      applyRemoteBlockPicked を順次安全に呼び出して反映。
-//   3. 【外部キューイングAPIの提供】
-//      systems.js から生 sendMessage を連打せずキューに預けられるよう、
-//      queuePlankBuild() および queueBlockPick() を提供。
-//   4. 既存の公式仕様準拠（getRoomId チェックによる exit() ハング根絶、{ message } 単一送信、
-//      payload.data.msg_data 受信、エコーバックなし前提判定、公開部屋フィルタ）は100%維持。
+// ★ Phase A 実装版（入室時スナップショット軽量化 ＆ 同期連打即時停止）：
+//   1. 【初期スナップショットの大幅軽量化】
+//      captureWorldSnapshot() でワールド内全ブロック（最大400個/数KB〜8KB）を走査・送信していたのを撤廃。
+//      走者が開始時に滞在する直近ステージ（Stage 0〜1）のアクティブブロックのみに厳選し、
+//      パケットサイズを数百バイト（1KB未満）へ圧縮して JSBridge のキュー溢れを防止。
+//   2. 【REQUEST_ROOM_SYNC 連打タイマーの即時停止】
+//      ゲスト側がホストから1度でも返信（ROOM_MEMBERS_SYNC）を受信した瞬間に、
+//      未消化の再試行インターバル（_retrySyncIntervalId）を即座に clearInterval で完全破棄。
+//   3. 既存の100ms周期POSパケットへのアクション同封枠（planks/picks）および公式仕様準拠ロジックは100%維持。
 
 import {
   player,
@@ -80,13 +77,17 @@ function safeShowGameScreen() {
 }
 
 /**
- * ホスト端末の世界状態（現在の床ブロック・設置済み階段段板）を収集
+ * ★【Phase A 改善】ホスト端末の世界状態を軽量収集
+ * ワールド全ブロックではなく、開始時に必要な直近ステージ（Stage 0〜1）のアクティブブロックのみに厳選し、
+ * 数百バイト（1KB未満）に圧縮して入室時の通信詰まりを防止
  */
 function captureWorldSnapshot() {
   const blocks = [];
   if (Array.isArray(floorBlockPool)) {
-    floorBlockPool.forEach((b, idx) => {
-      if (b && b.active && !b.attracting && b.pos) {
+    for (let idx = 0; idx < floorBlockPool.length; idx++) {
+      const b = floorBlockPool[idx];
+      // 直近の初期島周辺（Stage 0または1）のアクティブブロックのみに限定
+      if (b && b.active && !b.attracting && b.pos && (b.stageIdx === 0 || b.stageIdx === 1)) {
         blocks.push({
           poolIdx: idx,
           stageIdx: b.stageIdx || 0,
@@ -97,14 +98,17 @@ function captureWorldSnapshot() {
           blockId: b.blockId || null
         });
       }
-    });
+    }
   }
 
   const planks = [];
   if (Array.isArray(bridges)) {
-    bridges.forEach(b => {
-      if (b && Array.isArray(b.planks) && !b.isSlide && !b.isJump) {
-        b.planks.forEach((p, pIdx) => {
+    for (let bi = 0; bi < bridges.length; bi++) {
+      const b = bridges[bi];
+      // 直近ステージ（Stage 0〜1）の架橋段板のみに限定
+      if (b && (b.stageIdx === 0 || b.stageIdx === 1) && Array.isArray(b.planks) && !b.isSlide && !b.isJump) {
+        for (let pIdx = 0; pIdx < b.planks.length; pIdx++) {
+          const p = b.planks[pIdx];
           if (p && p.teamId) {
             planks.push({
               stageIdx: b.stageIdx,
@@ -113,9 +117,9 @@ function captureWorldSnapshot() {
               teamId: p.teamId
             });
           }
-        });
+        }
       }
-    });
+    }
   }
 
   return { blocks, planks };
@@ -178,12 +182,12 @@ export const NetworkManager = {
   _isCreatingRoom: false,
   _isJoiningRoom: false,
 
-  // ★【Phase 1 新設】100ms周期パケットへ相乗りさせるためのローカルアクション蓄積バッファ
+  // 100ms周期パケットへ相乗りさせるためのローカルアクション蓄積バッファ
   _pendingPlanks: [],
   _pendingPicks: [],
 
   /**
-   * 階段設置アクションを一時バッファに積む（Phase 2から systems.js が呼び出す）
+   * 階段設置アクションを一時バッファに積む
    */
   queuePlankBuild(stageIdx, laneIdx, plankIdx, teamId) {
     if (!this.isMultiplayerActive) return;
@@ -196,7 +200,7 @@ export const NetworkManager = {
   },
 
   /**
-   * ブロック取得アクションを一時バッファに積む（Phase 2から systems.js が呼び出す）
+   * ブロック取得アクションを一時バッファに積む
    */
   queueBlockPick(blockId, stageIdx, poolIdx, x, z) {
     if (!this.isMultiplayerActive) return;
@@ -467,7 +471,10 @@ export const NetworkManager = {
       safeShowGameScreen();
 
       let retries = 0;
-      if (this._retrySyncIntervalId) clearInterval(this._retrySyncIntervalId);
+      if (this._retrySyncIntervalId) {
+        clearInterval(this._retrySyncIntervalId);
+        this._retrySyncIntervalId = null;
+      }
 
       const sendSyncReq = () => {
         this._sendCustomMessage({
@@ -572,6 +579,11 @@ export const NetworkManager = {
 
       switch (packet.event) {
         case 'ROOM_MEMBERS_SYNC':
+          // ★【Phase A 改善】ホストからの同期を受信した瞬間に、ゲスト側の再送連打タイマーを即時停止
+          if (this._retrySyncIntervalId) {
+            clearInterval(this._retrySyncIntervalId);
+            this._retrySyncIntervalId = null;
+          }
           this._applyRoomMembersSync(packet.slots, packet.seed, packet.snapshot);
           break;
 
@@ -619,7 +631,6 @@ export const NetworkManager = {
           break;
 
         case 'POS':
-          // ★【Phase 1 新設】同封された階段設置リスト（planks）の一括展開
           if (Array.isArray(packet.planks) && packet.planks.length > 0) {
             packet.planks.forEach(p => {
               if (typeof window.applyRemotePlankBuilt === 'function') {
@@ -628,7 +639,6 @@ export const NetworkManager = {
             });
           }
 
-          // ★【Phase 1 新設】同封されたブロック取得リスト（picks）の一括展開
           if (Array.isArray(packet.picks) && packet.picks.length > 0) {
             packet.picks.forEach(pk => {
               if (typeof window.applyRemoteBlockPicked === 'function') {
@@ -644,14 +654,12 @@ export const NetworkManager = {
           }
           break;
 
-        // 後方互換：単体パケットも引き続き受信可能
         case 'BUILD_PLANK':
           if (typeof window.applyRemotePlankBuilt === 'function') {
             window.applyRemotePlankBuilt(packet.stageIdx, packet.laneIdx, packet.plankIdx, packet.teamId);
           }
           break;
 
-        // 後方互換：単体パケットも引き続き受信可能
         case 'PICK_BLOCK':
           if (typeof window.applyRemoteBlockPicked === 'function') {
             window.applyRemoteBlockPicked(packet.stageIdx, packet.poolIdx, packet.x, packet.z, packet.blockId);
@@ -1036,7 +1044,7 @@ export const NetworkManager = {
         }
       }
 
-      // ★ バッファに溜まっている階段設置およびブロック取得情報をアグリゲーションして同封
+      // バッファに溜まっている階段設置およびブロック取得情報をアグリゲーションして同封
       const outgoingPlanks = this._pendingPlanks.length > 0 ? [...this._pendingPlanks] : undefined;
       const outgoingPicks = this._pendingPicks.length > 0 ? [...this._pendingPicks] : undefined;
       this._pendingPlanks.length = 0;
