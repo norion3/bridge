@@ -1,12 +1,13 @@
 // network.js: AgentSDK公式仕様完全準拠 ＆ ホスト主導型ハンドシェイク同期エンジン
-// ★ Phase 3 実装版（散乱ブロックの集約パケット同封 ＆ 完全10Hz同期）：
-//   1. 【散乱ブロック（scatters）の集約同封 ＆ キュー提供】
-//      combat.js の scatterBricks から渡される散乱ブロック配列を蓄積する queueScatterBlocks() を新設。
-//      100ms周期（10Hz）の POS パケットに `scatters` として相乗りさせ、1通に完全集約。
-//   2. 【POSパケット受信時の scatters 自動展開ハンドラ】
-//      受信パケット内に同封された scatters を検知し、既存の applyRemoteScatterBlocks を順次呼び出して即座に床面へ反映。
-//   3. 【ホスト主導型ハンドシェイク ＆ 安全退出制御の完全維持】
-//      aitools_game_joinroom 起点の ROOM_MEMBERS_SYNC、250ms 安全スリープ、ゲスト待機モードは100%維持。
+// ★ Phase 2 実装版（エレベーター搭乗レーン eLane 同期 ＆ 10Hzパケット最適化）：
+//   1. 【エレベーター搭乗レーン（eLane）のパケット同封】
+//      c.onElevator 搭乗中のみ、100ms周期の POS パケットに `e: c.elevatorLane`（0, 1, 2）を付与。
+//      搭乗していない通常時はキーを完全省略し、通信帯域のパケット肥大をゼロ化。
+//   2. 【相手画面のカゴ昇降速度・アニメーション完全一致】
+//      受信側で targetChar.elevatorLane を即座に確定させ、相手のカゴ昇降時間（duration）や
+//      カゴ位置・イージングバウンスとの足元ズレ・浮き沈みを100%解消。
+//   3. 【散乱ブロック集約・ホスト主導ハンドシェイクの完全維持】
+//      Phase 3 実装済みの散乱ブロックキュー（scatters）、250ms安全スリープ、10Hz集約送信は100%維持。
 
 import {
   player,
@@ -184,7 +185,7 @@ export const NetworkManager = {
   _pendingPicks: [],
   _pendingConsumes: [],
   _pendingBlows: [],
-  _pendingScatters: [], // ★【Phase 3 新設】散乱ブロック用バッファ
+  _pendingScatters: [],
 
   queuePlankBuild(stageIdx, laneIdx, plankIdx, teamId) {
     if (!this.isMultiplayerActive) return;
@@ -224,9 +225,6 @@ export const NetworkManager = {
     });
   },
 
-  /**
-   * ★【Phase 3 新設】散乱ブロック（タックル・ゲート被弾）を100ms周期キューへ蓄積
-   */
   queueScatterBlocks(stageIdx, blocksArray) {
     if (!this.isMultiplayerActive || !Array.isArray(blocksArray) || blocksArray.length === 0) return;
     this._pendingScatters.push({
@@ -256,9 +254,6 @@ export const NetworkManager = {
     return this.myUser;
   },
 
-  /**
-   * ★【公式仕様準拠】メッセージリスナー登録（作成/入室成功直後に呼ぶ）
-   */
   ensureMessageListener() {
     if (!this.isSDKAvailable || this._hasRegisteredListener) return;
     this._hasRegisteredListener = true;
@@ -369,7 +364,6 @@ export const NetworkManager = {
       }
 
       this.currentRoomId = createdRoomId;
-      // ★ 公式推奨：部屋作成成功直後に確実にリスナーを登録
       this.ensureMessageListener();
 
       this.isHost = true;
@@ -418,7 +412,6 @@ export const NetworkManager = {
         }
       }
 
-      // ホスト端末は入室完了直後から10Hz位置送信ループを開始
       this._startPositionBroadcasting();
       return this.currentRoomId;
     } finally {
@@ -466,7 +459,6 @@ export const NetworkManager = {
       }
 
       this.currentRoomId = safeRoomId;
-      // ★ 公式推奨：入室成功直後に確実にリスナーを登録
       this.ensureMessageListener();
 
       this.isHost = false;
@@ -480,7 +472,7 @@ export const NetworkManager = {
       this._pendingScatters = [];
 
       this.mySlot = 1;
-      this.isSlotConfirmed = false; // ★ ホストからの ROOM_MEMBERS_SYNC 受信までは未確定
+      this.isSlotConfirmed = false;
       window.MY_PLAYER_SLOT = 1;
 
       const myRealName = (typeof window !== 'undefined' && window.GRAVITY_USER_NAME)
@@ -498,11 +490,6 @@ export const NetworkManager = {
 
       safeShowGameScreen();
 
-      // ★【公式AI設計：ホスト主導型ハンドシェイク】
-      // ゲストからの先走り REQUEST_ROOM_SYNC 送信・リトライタイマーは完全撤廃。
-      // また、ホストから相手を認識される前の _startPositionBroadcasting() もここでは開始せず、
-      // ホストからの ROOM_MEMBERS_SYNC 受信ハンドラ内で初めて始動する。
-
       return true;
     } finally {
       setTimeout(() => {
@@ -511,10 +498,6 @@ export const NetworkManager = {
     }
   },
 
-  /**
-   * ★【公式AI設計：ホスト主導ハンドシェイクの核心】
-   * ホスト端末が aitools_game_joinroom（ゲスト入室通知）を受信した瞬間に発動
-   */
   _handleUserJoined(data) {
     if (!data) return;
     const userId = String(data.user_id || data.userId || data.uid || '');
@@ -540,7 +523,6 @@ export const NetworkManager = {
         this._bindRemoteSlot(targetSlot, guestName);
       }
 
-      // ★ ホストが相手を正式認識した瞬間、初期状態とスロット確定パケットをゲストへ送信
       this._sendCustomMessage({
         event: 'ROOM_MEMBERS_SYNC',
         slots: this.slots,
@@ -550,9 +532,6 @@ export const NetworkManager = {
     }
   },
 
-  /**
-   * 受信パーサー
-   */
   _handleCustomMessage(data) {
     if (!data) return;
     try {
@@ -589,16 +568,13 @@ export const NetworkManager = {
 
       switch (packet.event) {
         case 'ROOM_MEMBERS_SYNC':
-          // ★ ホストから初期同期を受信
           this._applyRoomMembersSync(packet.slots, packet.seed, packet.snapshot);
-          // ★【公式AI設計】ここで初めてゲスト自身の10Hz送信ループを始動！
           if (!this.isHost && this.isMultiplayerActive && !this._syncIntervalId) {
             this._startPositionBroadcasting();
           }
           break;
 
         case 'REQUEST_ROOM_SYNC':
-          // フォールバック用
           if (this.isHost) {
             const reqClientId = packet.clientId;
             const reqUserId = String(packet.userId || '');
@@ -676,7 +652,6 @@ export const NetworkManager = {
             });
           }
 
-          // ★【Phase 3 新設】同封された散乱ブロックの一括展開ハンドラ連動
           if (Array.isArray(packet.scatters) && packet.scatters.length > 0) {
             packet.scatters.forEach(sc => {
               if (typeof window.applyRemoteScatterBlocks === 'function') {
@@ -1016,7 +991,9 @@ export const NetworkManager = {
 
       const posList = [];
 
-      posList.push({
+      // ★【Phase 2 核心】自キャラのエレベーター搭乗中のみレーン番号（eLane）を同封
+      const myState = getCharacterActionState(myChar);
+      const myPosPayload = {
         slot: this.mySlot,
         clientId: this.clientId,
         name: myName,
@@ -1028,13 +1005,17 @@ export const NetworkManager = {
         rotY: Number(myChar.meshObj.root.rotation.y.toFixed(2)),
         stack: myChar.stackCount || 0,
         stage: myChar.currentStage || 0,
-        state: getCharacterActionState(myChar),
+        state: myState,
         boost: Boolean(myChar.speedBoostActive),
         stun: Boolean(myChar.stunTimer > 0),
         shrink: Boolean(myChar.shrinkTimer > 0),
         magnet: Boolean(myChar.magnetActive),
         invuln: Boolean(myChar.invulnerableTimer > 0)
-      });
+      };
+      if (myState === 'ELEVATOR' && typeof myChar.elevatorLane === 'number') {
+        myPosPayload.e = myChar.elevatorLane;
+      }
+      posList.push(myPosPayload);
 
       if (this.isHost) {
         this.slots.forEach(s => {
@@ -1045,7 +1026,8 @@ export const NetworkManager = {
 
           const isHumanPlayer = charObj.isRemote || Boolean(charObj.targetNetPos) || !s.isAI;
           if (s.isAI && !isHumanPlayer) {
-            posList.push({
+            const aiState = getCharacterActionState(charObj);
+            const aiPosPayload = {
               slot: s.slot,
               clientId: this.clientId,
               name: s.name || (s.slot === 1 ? 'CPU 1' : 'CPU 2'),
@@ -1057,13 +1039,18 @@ export const NetworkManager = {
               rotY: Number(charObj.meshObj.root.rotation.y.toFixed(2)),
               stack: charObj.stackCount || 0,
               stage: charObj.currentStage || 0,
-              state: getCharacterActionState(charObj),
+              state: aiState,
               boost: Boolean(charObj.speedBoostActive),
               stun: Boolean(charObj.stunTimer > 0),
               shrink: Boolean(charObj.shrinkTimer > 0),
               magnet: Boolean(charObj.magnetActive),
               invuln: Boolean(charObj.invulnerableTimer > 0)
-            });
+            };
+            // ★ AIキャラのエレベーターレーンも搭乗時のみ同封
+            if (aiState === 'ELEVATOR' && typeof charObj.elevatorLane === 'number') {
+              aiPosPayload.e = charObj.elevatorLane;
+            }
+            posList.push(aiPosPayload);
           }
         });
 
@@ -1088,7 +1075,6 @@ export const NetworkManager = {
       const outgoingPicks = this._pendingPicks.length > 0 ? [...this._pendingPicks] : undefined;
       const outgoingConsumes = this._pendingConsumes.length > 0 ? [...this._pendingConsumes] : undefined;
       const outgoingBlows = this._pendingBlows.length > 0 ? [...this._pendingBlows] : undefined;
-      // ★【Phase 3 新設】散乱ブロックの集約同封
       const outgoingScatters = this._pendingScatters.length > 0 ? [...this._pendingScatters] : undefined;
 
       this._pendingPlanks.length = 0;
@@ -1107,7 +1093,7 @@ export const NetworkManager = {
       if (outgoingPicks) posMessage.picks = outgoingPicks;
       if (outgoingConsumes) posMessage.consumes = outgoingConsumes;
       if (outgoingBlows) posMessage.blows = outgoingBlows;
-      if (outgoingScatters) posMessage.scatters = outgoingScatters; // ★ 同封
+      if (outgoingScatters) posMessage.scatters = outgoingScatters;
 
       this._sendCustomMessage(posMessage);
     }, 100);
@@ -1180,6 +1166,17 @@ export const NetworkManager = {
     };
     targetChar.remoteActionState = packet.state || 'NORMAL';
     targetChar.lastPacketTime = performance.now();
+
+    // ★【Phase 2 核心】相手のエレベーター搭乗レーンを同期
+    if (packet.state === 'ELEVATOR') {
+      if (packet.e !== undefined && typeof packet.e === 'number') {
+        targetChar.elevatorLane = packet.e;
+      }
+    } else {
+      if (targetChar.elevatorLane !== undefined && targetChar.remoteActionState !== 'ELEVATOR') {
+        targetChar.elevatorLane = undefined;
+      }
+    }
 
     targetChar.speedBoostActive = Boolean(packet.boost);
     targetChar.isStunned = Boolean(packet.stun);

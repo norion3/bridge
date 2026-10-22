@@ -1,13 +1,13 @@
 // world.js: コース伸長・浮島・橋・スライド・ジップライン・エレベーター・スカイダイブ・ドロップタワー施設・二股分岐＆合流・目鼻なし愛嬌お邪魔キャラ
-// ★ Phase 1 実装版（床アイテム＆ボーナスブロックのステージ番号完全決定論ハッシュ化）：
-//   1. 【床アイテムのPRNG履歴依存を完全撤廃】
-//      getNextBagItem() や seededRandom() の消費回数ズレによるアイテム食い違いを根絶。
-//      ステージ番号 (stageIdx) と worldSeed から数学的に一意のアイテム種別・出現座標を確定算出。
-//      各端末で extendCourse の実行タイミングがズレても、奥の島に現れるクリスタルの種類・位置が100%一致。
-//   2. 【アトラクション全ボーナスの確定論的ID完全保証】
-//      slide / curved_slide / skydive / zipline の全ボーナスブロックIDを stageIdx と配列番号で一意固定。
-//   3. 【幾何構造・分岐・お掃除処理の完全維持】
-//      Mulberry32 による決定論的コース形状生成、全アトラクション物理用データ構造は100%維持。
+// ★ Phase 1 実装版（二股分岐ステージ Fork Pattern B の完全決定論ハッシュ化 ＆ PRNG消費ゼロ）：
+//   1. 【分岐ステージのPRNG履歴依存を完全撤廃】
+//      extendCourseForkPatternB 内のテーマペア選択、左右テーマ割り当て、アイテム種別、
+//      出口ギミック（スロープ vs スカイダイブ）に残存していた seededRandom() を全廃。
+//      分岐ステージ番号 forkIdx から数学的固定ハッシュにより一意決定。
+//   2. 【二股分岐島・合流島のアイテム＆ギミック完全一致】
+//      左右の島に現れるクリスタルアイテムや出口アトラクションが両端末で100%確定一致。
+//   3. 【幾何構造・通常ステージ・お掃除処理の完全維持】
+//      決定論的コース形状生成、全アトラクション物理用データ構造、cleanupOldData は100%維持。
 
 import {
   TRAMPOLINE_TIERS,
@@ -105,7 +105,7 @@ setModifierGatesReference(modifierGates);
 const BASE_ITEMS = ['speed', 'attack', 'magnet', 'thunder'];
 
 /**
- * ★【Phase 1 核心】ステージ番号固有の決定論的アイテム種別決定関数
+ * ステージ番号固有の決定論的アイテム種別決定関数
  * 乱数消費履歴に一切依存せず、stageIdx と currentWorldSeed から数学的に一意決定
  */
 export function getDeterministicItemType(stageIdx) {
@@ -153,7 +153,7 @@ function getNextAscentGimmick() {
 }
 
 /**
- * ★【Phase 1 核心】床アイテム生成の完全決定論化
+ * 床アイテム生成の完全決定論化
  * PRNGの内部状態を消費せず、stageIdx 固有の固定幾何ハッシュで座標・種別を生成
  */
 export function spawnItem(scene, stageIdx, forcedType = null) {
@@ -163,8 +163,6 @@ export function spawnItem(scene, stageIdx, forcedType = null) {
   const itemType = forcedType || getDeterministicItemType(stageIdx);
   const centerX = stageInfo.x || 0.0;
 
-  // ステージ番号に応じた決定論的配置（乱数消費なし）
-  // 角度と半径を数学的固定オフセットで算出
   const angleSeed = ((stageIdx * 73 + 19) % 360) * (Math.PI / 180);
   const distRatio = 0.35 + (((stageIdx * 41 + 13) % 40) / 100);
   const candX = centerX + Math.cos(angleSeed) * (stageInfo.r * distRatio);
@@ -742,7 +740,6 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       bMesh.position.copy(bPos);
       scene.add(bMesh);
 
-      // ★ 一意の確定論的ID保証
       const bonusId = `bonus_curved_${stageIdx}_${bi}`;
       const bonusData = {
         mesh: bMesh,
@@ -845,7 +842,6 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
         bMesh.rotation.x = angleX;
         scene.add(bMesh);
 
-        // ★【Phase 1 核心】確定論的一意IDの保証 ＆ グローバル slideBonusBlocks 配列への登録
         const bonusId = `bonus_slide_${stageIdx}_${laneIdx}_${sbi}`;
         const bonusData = {
           mesh: bMesh,
@@ -966,6 +962,10 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
   }
 }
 
+/**
+ * ★【Phase 1 核心】二股分岐パターンB（Fork Pattern B）の完全決定論ハッシュ化
+ * seededRandom() の消費をゼロにし、forkIdx と worldSeed から数学的に一意決定
+ */
 export function extendCourseForkPatternB(scene) {
   const forkIdx = STAGES.length;
   const prev = STAGES[forkIdx - 1];
@@ -994,6 +994,12 @@ export function extendCourseForkPatternB(scene) {
   CONNECTIONS.push({ from: forkIdx - 1, to: forkIdx, type: 'bridge' });
   createBridgeLinks(scene, forkIdx - 1, forkIdx, prev.z, forkZ, prev.r, forkR, prev.y, forkY, 'bridge', 0.0, false);
 
+  // ★ forkIdx から数学的固定ハッシュ値を算出（PRNG消費ゼロ）
+  const forkHash = Math.abs(Math.imul(forkIdx ^ 0x6D2B79F5, (currentWorldSeed + 13) | 1));
+
+  const themeBItemType = (forkHash % 2 === 0) ? 'thunder' : 'magnet';
+  const themeCExitType = ((forkHash >> 1) % 2 === 0) ? 'skydive' : 'slide';
+
   const themeA = {
     id: 'theme_a',
     name: 'Rush & Dive',
@@ -1011,7 +1017,7 @@ export function extendCourseForkPatternB(scene) {
     deltaY: 6.0,
     connType: 'bridge',
     exitType: 'slide',
-    itemType: 'thunder'
+    itemType: themeBItemType
   };
 
   const themeC = {
@@ -1020,7 +1026,7 @@ export function extendCourseForkPatternB(scene) {
     role: 'technical',
     deltaY: 14.0,
     connType: 'jump',
-    exitType: 'slide',
+    exitType: themeCExitType,
     itemType: 'attack'
   };
 
@@ -1029,9 +1035,12 @@ export function extendCourseForkPatternB(scene) {
     [themeB, themeC],
     [themeA, themeC]
   ];
-  const chosenPair = candidatePairs[Math.floor(seededRandom() * candidatePairs.length)];
+  // 決定論的ペア選択
+  const pairIdx = ((forkHash >> 2) % candidatePairs.length);
+  const chosenPair = candidatePairs[pairIdx];
 
-  const shuffleLeft = (seededRandom() < 0.5);
+  // 決定論的左右割り当て
+  const shuffleLeft = ((forkHash >> 4) % 2 === 0);
   const leftTheme = shuffleLeft ? chosenPair[0] : chosenPair[1];
   const rightTheme = shuffleLeft ? chosenPair[1] : chosenPair[0];
 
@@ -1060,7 +1069,8 @@ export function extendCourseForkPatternB(scene) {
   createBridgeLinks(scene, forkIdx, leftStageIdx, forkZ, leftMidZ, forkR, leftMidR, forkY, leftMidY, leftTheme.connType, leftMidX, true);
 
   const leftGates = getForkThemeGates(leftTheme.role);
-  if (seededRandom() < 0.5) {
+  // 決定論的ゲート配置反転判定
+  if ((forkHash >> 5) % 2 === 1) {
     const tmp = leftGates[0]; leftGates[0] = leftGates[1]; leftGates[1] = tmp;
   }
   createModifierGate(scene, leftStageIdx, leftMidX - 2.8, leftMidZ - 0.8, leftMidY, leftGates[0].op, leftGates[0].val, leftGates[0].label);
@@ -1097,7 +1107,8 @@ export function extendCourseForkPatternB(scene) {
   createBridgeLinks(scene, forkIdx, rightStageIdx, forkZ, rightMidZ, forkR, rightMidR, forkY, rightMidY, rightTheme.connType, rightMidX, true);
 
   const rightGates = getForkThemeGates(rightTheme.role);
-  if (seededRandom() < 0.5) {
+  // 決定論的ゲート配置反転判定
+  if ((forkHash >> 6) % 2 === 1) {
     const tmp = rightGates[0]; rightGates[0] = rightGates[1]; rightGates[1] = tmp;
   }
   createModifierGate(scene, rightStageIdx, rightMidX - 2.8, rightMidZ - 0.8, rightMidY, rightGates[0].op, rightGates[0].val, rightGates[0].label);
@@ -1127,7 +1138,7 @@ export function extendCourseForkPatternB(scene) {
 
   const mergeMeshGroup = createIslandMesh(mergeR, mergeY, mergeZ, 0.0);
   scene.add(mergeMeshGroup);
-  stageMeshes.push({ meshGroup: mergeStageIdx, stageIdx: mergeStageIdx });
+  stageMeshes.push({ meshGroup: mergeMeshGroup, stageIdx: mergeStageIdx });
 
   CONNECTIONS.push({ from: leftStageIdx, to: mergeStageIdx, type: leftTheme.exitType, branch: 'left' });
   createBridgeLinks(scene, leftStageIdx, mergeStageIdx, leftMidZ, mergeZ, leftMidR, mergeR, leftMidY, mergeY, leftTheme.exitType, leftMidX, true);
@@ -1136,6 +1147,7 @@ export function extendCourseForkPatternB(scene) {
   createBridgeLinks(scene, rightStageIdx, mergeStageIdx, rightMidZ, mergeZ, rightMidR, mergeR, rightMidY, mergeY, rightTheme.exitType, rightMidX, true);
 
   spawnGatesOnIsland(scene, mergeStageIdx, mergeZ, mergeY, 0.0);
+  // 合流島のアイテムも完全決定論化
   spawnItem(scene, mergeStageIdx);
 
   lastGimmickCategory = 'descent';
@@ -1256,7 +1268,6 @@ export function extendCourse(scene) {
   if (idx >= 1) {
     spawnGatesOnIsland(scene, idx, nextZ, nextY, currentIslandX);
 
-    // ★【Phase 1 核心】奇数ステージのアイテム生成を完全決定論化
     if (idx % 2 === 1) {
       spawnItem(scene, idx);
     }
@@ -1314,7 +1325,6 @@ export function buildWorld(scene, seed = null) {
 
   descentBag.length = 0;
   ascentBag.length = 0;
-  itemBag.length = 0;
   lastGimmickCategory = 'descent';
   lastMergeStageIdx = -1;
   stagesSinceLastObstacle = 0;

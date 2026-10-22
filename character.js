@@ -1,10 +1,13 @@
 // 3Dキャラクター外観構築・手足メッシュ・スタックプール・トロリー・ホバー展望リフト・スカイダイブ＆トラップドア姿勢管理・足元手前側（カメラ方向）フロスト投影ネームバッジ
-// ★ Phase 1 完全修正版（交代時スタック誤爆・慣性衝突・数秒間の迷走を完全根絶）：
-//   1. resetCharacterToStageZero() を強化：
-//      - AIのスタック誤爆原因（unstuckTimer, stuckCheckTimer, lastPosCheck）を完全リセット。
-//      - ネットワーク補間用の速度ベクトル（netVelocity）を { x: 0, z: 0 } にリセットし、交代直後の引っ張り合い（ジッター）を遮断。
-//      - 過去のターゲット（targetBlock, elevatorChoice, forkBranchChoice）を完全消去。
-//   2. bindLocalPlayerSlot での自端末ネーム特定フォールバックと他スロットへの名前混入遮断を維持。
+// ★ Phase 3 実装版（ネームプレート静止時追従ガード ＆ CanvasTexture再生成VRAMキャッシュ保護）：
+//   1. 【静止・放置時の行列更新バイパス】
+//      updateNameplatePosition において、前フレームからの移動距離が微小（1mm未満）の場合は
+//      position.set および Three.js のワールド行列再計算をスキップ。放置撮影時のCPU負荷を極小化。
+//   2. 【CanvasTexture 重複生成の完全遮断】
+//      updatePlayerName や resetCharacterToStageZero 等で名前が同一の場合は
+//      新規テクスチャの生成と旧マテリアル破棄をバイパスし、VRAMメモリリークを完全防止。
+//   3. 【既存の交代時慣性リセット・スロット境界保護の完全維持】
+//      Stage 0 リセット、AIスタックタイマー消去、直立整列処理は100%維持。
 
 import {
   TEAMS,
@@ -99,12 +102,18 @@ export const createNameplateSprite = createNameplateMesh;
 
 /**
  * GRAVITYで取得された名前を自キャラ足元に遅延なく即時反映する安全関数
+ * ★【Phase 3 改善】名前同一時の不要なCanvas/Texture再生成をスキップしてVRAMを保護
  */
 export function updatePlayerName(newName) {
   if (!newName) return;
 
   const targetChar = player || (typeof window !== 'undefined' && window.MY_PLAYER_SLOT !== undefined ? characters[window.MY_PLAYER_SLOT] : null);
   if (targetChar) {
+    // 既に同一の名前が表示されている場合はマテリアル再生成をスキップ
+    if (targetChar.name === newName && targetChar.nameplateSprite && targetChar.nameplateSprite.visible) {
+      return;
+    }
+
     targetChar.name = newName;
     if (targetChar.nameplateSprite) {
       if (targetChar.nameplateSprite.material) {
@@ -124,8 +133,7 @@ export function updatePlayerName(newName) {
 }
 
 /**
- * ★【Phase 1 強化版】先行していたキャラを Stage 0 スタート地点へ安全に初期化する関数
- * 座標・ステージ番号・所持ブロックだけでなく、AIのスタック回避タイマーや移動慣性を完全消去して暴走を根絶
+ * 先行していたキャラを Stage 0 スタート地点へ安全に初期化する関数
  */
 export function resetCharacterToStageZero(char, nameText = null, isLocal = false) {
   if (!char) return;
@@ -153,7 +161,6 @@ export function resetCharacterToStageZero(char, nameText = null, isLocal = false
   char.targetNetPos.copy(char.pos);
   char.targetNetRotY = Math.PI;
 
-  // ★【Phase 1 核心】ネットワーク移動慣性の完全リセット（直前AIの慣性引きずり遮断）
   char.netVelocity = { x: 0, z: 0 };
   char.lastPacketTime = performance.now();
   char.remoteActionState = 'NORMAL';
@@ -175,7 +182,6 @@ export function resetCharacterToStageZero(char, nameText = null, isLocal = false
   char.magnetTimer = 0;
   char.isGhostStacked = false;
 
-  // ★【Phase 1 核心】AIスタック回避タイマー・ゾンビターゲットの完全ニュートラル化
   char.unstuckTimer = 0;
   char.stuckCheckTimer = 0;
   char.lastPosCheck = null;
@@ -232,10 +238,11 @@ export function resetCharacterToStageZero(char, nameText = null, isLocal = false
   refreshCharacterStackVisuals(char);
 
   // 6. ネームプレートの更新
+  const needNameRebuild = Boolean(nameText && char.name !== nameText);
   if (nameText) {
     char.name = nameText;
   }
-  if (char.nameplateSprite) {
+  if (char.nameplateSprite && needNameRebuild) {
     if (char.nameplateSprite.material) {
       if (char.nameplateSprite.material.map) {
         char.nameplateSprite.material.map.dispose();
@@ -259,7 +266,6 @@ export function bindLocalPlayerSlot(slotIndex) {
   if (!characters || characters.length < 3) return;
   const targetSlot = Math.max(0, Math.min(2, Number(slotIndex) || 0));
 
-  // 自端末の本名を多段フォールバックで厳密に確定
   let myResolvedName = 'YOU';
   if (typeof window !== 'undefined' && window.GRAVITY_USER_NAME) {
     myResolvedName = String(window.GRAVITY_USER_NAME);
@@ -268,7 +274,6 @@ export function bindLocalPlayerSlot(slotIndex) {
   }
 
   characters.forEach((c, idx) => {
-    // 付帯メッシュの初期非表示を強制徹底
     if (c.meshObj) {
       if (c.meshObj.trolleyGroup) c.meshObj.trolleyGroup.visible = false;
       if (c.meshObj.elevatorGroup) c.meshObj.elevatorGroup.visible = false;
@@ -281,20 +286,17 @@ export function bindLocalPlayerSlot(slotIndex) {
     c.onTrapdoor = false;
     c.onFreefall = false;
 
-    // AI・スタックタイマーをクリア
     c.unstuckTimer = 0;
     c.stuckCheckTimer = 0;
     c.lastPosCheck = null;
 
     if (idx === targetSlot) {
-      // 自操作キャラ化
       c.isPlayer = true;
       c.isAI = false;
       c.isRemote = false;
       c.name = myResolvedName;
-      player = c; // main.js の操作・カメラ対象を即座にスイッチ
+      player = c;
 
-      // ネームプレートを「自キャラ（シアン枠）」に確実に更新
       if (c.nameplateSprite) {
         if (c.nameplateSprite.material) {
           if (c.nameplateSprite.material.map) {
@@ -310,20 +312,17 @@ export function bindLocalPlayerSlot(slotIndex) {
         c.nameplateSprite.visible = true;
       }
     } else {
-      // 他走者またはAI
       c.isPlayer = false;
       if (!c.isRemote) {
         c.isAI = true;
       }
 
-      // 他スロットに自端末の名前が混ざるのを完全遮断
       let otherName = c.name;
       if (!otherName || otherName === 'YOU' || otherName === myResolvedName) {
         otherName = (idx === 0) ? 'norion' : (idx === 1 ? 'CPU 1' : 'CPU 2');
       }
       c.name = otherName;
 
-      // ネームプレートを「他走者用（シアン枠なし）」に確実に更新
       if (c.nameplateSprite) {
         if (c.nameplateSprite.material) {
           if (c.nameplateSprite.material.map) {
@@ -348,7 +347,10 @@ export function bindLocalPlayerSlot(slotIndex) {
   }
 }
 
-// 足元追従：見下ろしカメラから見て開けている画面手前側（カメラ方向: +Z 1.15m）へオフセット配置
+/**
+ * 足元追従：見下ろしカメラから見て開けている画面手前側（カメラ方向: +Z 1.15m）へオフセット配置
+ * ★【Phase 3 改善】前フレームからの移動距離が微小（1mm未満）の静止時は position.set をスキップ
+ */
 export function updateNameplatePosition(char) {
   if (!char || !char.nameplateSprite) return;
 
@@ -361,20 +363,31 @@ export function updateNameplatePosition(char) {
       char.onTrapdoor ||
       char.onFreefall
     ) {
-      char.nameplateSprite.visible = false;
+      if (char.nameplateSprite.visible) {
+        char.nameplateSprite.visible = false;
+      }
       return;
     }
   }
 
-  char.nameplateSprite.visible = true;
-  const isShrunk = (char.shrinkTimer > 0);
+  if (!char.nameplateSprite.visible) {
+    char.nameplateSprite.visible = true;
+  }
 
-  char.nameplateSprite.scale.set(1.0, 1.0, 1.0);
+  const isShrunk = (char.shrinkTimer > 0);
   const targetX = char.pos.x;
   const targetY = char.pos.y + 0.05;
   const targetZ = char.pos.z + (isShrunk ? 0.82 : 1.15);
 
-  char.nameplateSprite.position.set(targetX, targetY, targetZ);
+  // ★ 前フレームの位置から移動していない場合（放置撮影時・静止時）は行列再計算をスキップ
+  const curPos = char.nameplateSprite.position;
+  const dx = curPos.x - targetX;
+  const dy = curPos.y - targetY;
+  const dz = curPos.z - targetZ;
+
+  if (dx * dx + dy * dy + dz * dz > 0.000001) {
+    char.nameplateSprite.position.set(targetX, targetY, targetZ);
+  }
 }
 
 export function createZiplineTrolleyMesh() {
@@ -1016,7 +1029,6 @@ export function resetCharacters(STAGES) {
     if (c.meshObj.footAura) c.meshObj.footAura.visible = false;
     if (c.meshObj.magnetAura) c.meshObj.magnetAura.visible = false;
 
-    // AI・スタックタイマーのクリア
     c.unstuckTimer = 0;
     c.stuckCheckTimer = 0;
     c.lastPosCheck = null;
