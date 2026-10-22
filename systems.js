@@ -1,11 +1,15 @@
 // systems.js: 物理移動判定・スカイウォーク歩行開放・ハッチ進入同期・リュック収納アニメーション連動・シームレス風音連携・スカイダイブ＆スライダーボーナス回収・合流島安全着地完全整合・お邪魔キャラ衝突判定・下層島誤ワープ完全防止・階段/床ブロック取得リアルタイム同期
-// ★ Step 3 実装版（ブロック誤爆消去根絶 ＆ 自色上陸ステージ更新保護 ＆ PICK正規送信）：
-//   1. 【インデックス誤爆消去の完全撤廃】applyRemoteBlockPicked において、見つからなかった時の危険な poolIdx 強制消去を完全削除。
-//      ID一致または近接座標でのみ安全に消去し、相手が拾った時に自画面の無関係なブロックが勝手に消えるドミノ現象を100%根絶。
-//   2. 【PICK_BLOCK正規送信】生のSendMessage直接呼び出しを廃止し、NetworkManager.broadcastPickBlock 経由で送信。
-//   3. 【自色上陸時のステージ更新保護】自チーム色で最上段まで架けて島へ入った際、char.currentStage を確実に次ステージへ更新し、
-//      新しい島でのブロック補充（manageBlockSpawns）が停止する不具合を解消。
-//   4. 既存の敵モブ吹き飛ばし同期（BLOW_MOB）、階段設置同期（BUILD_PLANK）、アイテム消費同期（CONSUME_OBJECT）は100%維持。
+// ★ Phase 2 実装版（階段設置・ブロック取得の生通信連打根絶 ＆ 100ms周期アグリゲーション移行）：
+//   1. 【階段設置ループの生 sendMessage 連打根絶】
+//      for ループ内での window.AgentSDK.room.sendMessage(...) 連射を完全廃止。
+//      NetworkManager.queuePlankBuild を呼び出してバッファに積むだけに軽量化し、JSBridge のキュー溢れを防止。
+//   2. 【ブロック回収の生通信連打根絶】
+//      足元拾い（573行目付近）およびマグネット吸引（613行目付近）での即時 broadcastPickBlock を完全廃止。
+//      NetworkManager.queueBlockPick を呼び出してバッファに積むだけに軽量化。
+//   3. 【厳格な10Hz通信レートの保証】
+//      階段を何段駆け上がろうが、マグネットで何十個吸い込もうが、通信は network.js の 100ms周期（10Hz）
+//      POS パケットに配列集約されて1通で送出され、iPhone 17/15 間のフレームレート差による通信パンクを根絶。
+//   4. 既存のブロック誤爆消去防止、自色上陸判定、敵モブ吹き飛ばし、アイテム消費、各アトラクション物理は100%維持。
 
 import {
   TRAMPOLINE_TIERS,
@@ -126,7 +130,6 @@ export function applyRemotePlankBuilt(stageIdx, laneIdx, plankIdx, teamId) {
 
 /**
  * リモートプレイヤーまたはホスト側AIが床ブロックを拾った際の受信ハンドラ
- * ★【核心改善①】危険なインデックス誤爆消去（poolIdxの直接使用）を完全撤廃
  */
 export function applyRemoteBlockPicked(stageIdx, poolIdx, x, z, blockId = null) {
   const stageBlocks = getFloorBlocksForStage(stageIdx);
@@ -153,9 +156,6 @@ export function applyRemoteBlockPicked(stageIdx, poolIdx, x, z, blockId = null) 
       }
     }
   }
-
-  // ★【重要】IDでも座標でも見つからなかった場合は「何もしない」安全設計に変更。
-  // 相手の配列番号（poolIdx）で自画面の無関係なブロックを誤爆消去する処理は永久撤廃。
 
   if (targetBlock) {
     targetBlock.active = false;
@@ -507,7 +507,7 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
         }
       }
 
-      // ★【核心改善②】終点島への上陸判定：自チームの色になっている場合のみ上陸を許可
+      // 終点島への上陸判定：自チームの色になっている場合のみ上陸を許可
       if (nextZ <= onBridge.endZ - 0.1) {
         const lastPlank = onBridge.planks[onBridge.planks.length - 1];
         const canPassEnd = onBridge.isSlide || onBridge.isJump || (lastPlank && lastPlank.teamId === char.team.id);
@@ -671,22 +671,21 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
                   }
                 }
 
+                // ★【Phase 2 核心①】for ループ内での生 sendMessage 連射を完全廃止し、NetworkManager の一時バッファへキューイング
                 const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
                 const shouldBroadcastPlank = char.isPlayer || (isHost && char.isAI);
 
-                if (shouldBroadcastPlank && typeof window !== 'undefined' && window.AgentSDK) {
-                  try {
-                    window.AgentSDK.room.sendMessage({
-                      message: JSON.stringify({
-                        event: 'BUILD_PLANK',
-                        stageIdx: onBridge.stageIdx,
-                        laneIdx: onBridge.laneIdx,
-                        plankIdx: pIndex,
-                        teamId: char.team.id
-                      })
+                if (shouldBroadcastPlank && typeof window !== 'undefined' && window.NetworkManager) {
+                  if (typeof window.NetworkManager.queuePlankBuild === 'function') {
+                    window.NetworkManager.queuePlankBuild(onBridge.stageIdx, onBridge.laneIdx, pIndex, char.team.id);
+                  } else if (typeof window.NetworkManager._sendCustomMessage === 'function') {
+                    window.NetworkManager._sendCustomMessage({
+                      event: 'BUILD_PLANK',
+                      stageIdx: onBridge.stageIdx,
+                      laneIdx: onBridge.laneIdx,
+                      plankIdx: pIndex,
+                      teamId: char.team.id
                     });
-                  } catch (err) {
-                    console.warn('[systems.js] Failed to broadcast BUILD_PLANK:', err);
                   }
                 }
 
@@ -891,11 +890,15 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
               duration: 0.55
             });
 
-            // ★【核心改善③】NetworkManager.broadcastPickBlock 経由の正規送信
+            // ★【Phase 2 核心②】マグネット吸引時の即時 sendMessage 連打を停止し、キューイングへ移行
             const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
             const shouldBroadcastMagnet = char.isPlayer || (isHost && char.isAI);
-            if (shouldBroadcastMagnet && typeof window !== 'undefined' && window.NetworkManager && typeof window.NetworkManager.broadcastPickBlock === 'function') {
-              window.NetworkManager.broadcastPickBlock(blockId, char.currentStage, poolIdx, blockX, blockZ);
+            if (shouldBroadcastMagnet && typeof window !== 'undefined' && window.NetworkManager) {
+              if (typeof window.NetworkManager.queueBlockPick === 'function') {
+                window.NetworkManager.queueBlockPick(blockId, char.currentStage, poolIdx, blockX, blockZ);
+              } else if (typeof window.NetworkManager.broadcastPickBlock === 'function') {
+                window.NetworkManager.broadcastPickBlock(blockId, char.currentStage, poolIdx, blockX, blockZ);
+              }
             }
           }
         }
@@ -1123,11 +1126,15 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
           stageBlocks.splice(i, 1);
           addBrickToCharacter(char, char.team, 1, soundRef, updateHUDRef);
 
-          // ★【核心改善③】NetworkManager.broadcastPickBlock 経由の正規送信
+          // ★【Phase 2 核心③】足元ブロック拾い時の即時 sendMessage 連打を停止し、キューイングへ移行
           const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
           const shouldBroadcastPick = char.isPlayer || (isHost && char.isAI);
-          if (shouldBroadcastPick && typeof window !== 'undefined' && window.NetworkManager && typeof window.NetworkManager.broadcastPickBlock === 'function') {
-            window.NetworkManager.broadcastPickBlock(blockId, char.currentStage, poolIdx, blockX, blockZ);
+          if (shouldBroadcastPick && typeof window !== 'undefined' && window.NetworkManager) {
+            if (typeof window.NetworkManager.queueBlockPick === 'function') {
+              window.NetworkManager.queueBlockPick(blockId, char.currentStage, poolIdx, blockX, blockZ);
+            } else if (typeof window.NetworkManager.broadcastPickBlock === 'function') {
+              window.NetworkManager.broadcastPickBlock(blockId, char.currentStage, poolIdx, blockX, blockZ);
+            }
           }
         }
       }

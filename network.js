@@ -1,18 +1,16 @@
 // network.js: AgentSDK公式仕様完全準拠 ＆ ルーム入退室ライフサイクル・通信同期エンジン
-// ★ Phase 1 実装版（公式確定仕様完全準拠 ＆ 通信パイプライン正常化）：
-//   1. 【未入室時 exit() ハング完全根絶】
-//      getRoomId() で直下の room_id !== "" を事前確認してから exit() を呼び出し、
-//      未入室時の Promise 永久保留（タップ不能・フリーズ）を 100% 根絶。
-//   2. 【sendMessage 送信プロパティの純粋化】
-//      公式仕様に従い、サイレント破棄の原因となっていた room_id / roomId / msg_data を完全削除。
-//      SDKが正式受理する `{ message: JSON.stringify(...) }` のみの一本化送信を徹底。
-//   3. 【receiveMessage 受信パーサーの正規化】
-//      送信時と非対称な公式仕様（payload.data.msg_data）を正規ルートで直接 JSON.parse。
-//   4. 【エコーバックなし前提の自己パケット判定】
-//      同一セッションIDによる誤破棄ガードを撤廃し、自身のスロット番号（packet.slot === this.mySlot）
-//      のみで弾いて他走者のパケットを 100% 受理。
-//   5. 【公開ルーム一覧の自前除外フィルタリング】
-//      0人（ゴーストルーム）および満員（>= max_players）の部屋をフロント側で確実に除外。
+// ★ Phase 1 実装版（100ms周期集約パケットコンテナ化 ＆ バッファ受取口新設）：
+//   1. 【100ms POS パケットへのアクション同封枠新設】
+//      10Hz の定期位置送信時に、溜まった階段設置キュー（pendingPlanks）とブロック取得キュー（pendingPicks）を
+//      POS パケット（planks / picks）に同封して1通で送信し、バッファを自動クリア。
+//   2. 【集約パケットの安全な受取口整備】
+//      POS パケット受信時に、同封されている planks や picks を検知し、既存の applyRemotePlankBuilt や
+//      applyRemoteBlockPicked を順次安全に呼び出して反映。
+//   3. 【外部キューイングAPIの提供】
+//      systems.js から生 sendMessage を連打せずキューに預けられるよう、
+//      queuePlankBuild() および queueBlockPick() を提供。
+//   4. 既存の公式仕様準拠（getRoomId チェックによる exit() ハング根絶、{ message } 単一送信、
+//      payload.data.msg_data 受信、エコーバックなし前提判定、公開部屋フィルタ）は100%維持。
 
 import {
   player,
@@ -28,7 +26,6 @@ import { resetParticlePools, floorBlockPool } from './particles.js';
 
 /**
  * ★【公式仕様準拠】未入室時の exit() による無限保留（Promiseハング）を確実に防ぐ安全退出ヘルパー
- * getRoomId() は例外的に data ラッパーがなく直下に { room_id } を返し、未入室時は空文字 "" を返す
  */
 async function safeExitCurrentRoom() {
   if (typeof window === 'undefined' || !window.AgentSDK || !window.AgentSDK.room) return;
@@ -37,7 +34,6 @@ async function safeExitCurrentRoom() {
       const res = await window.AgentSDK.room.getRoomId();
       const activeRoomId = (res && typeof res.room_id === 'string') ? res.room_id : (res && res.data && res.data.room_id ? res.data.room_id : '');
       if (!activeRoomId || activeRoomId === '') {
-        // 未入室時は exit() を呼ぶと親アプリが無応答になり Promise がハングするため即座にリターン
         return;
       }
     }
@@ -182,6 +178,37 @@ export const NetworkManager = {
   _isCreatingRoom: false,
   _isJoiningRoom: false,
 
+  // ★【Phase 1 新設】100ms周期パケットへ相乗りさせるためのローカルアクション蓄積バッファ
+  _pendingPlanks: [],
+  _pendingPicks: [],
+
+  /**
+   * 階段設置アクションを一時バッファに積む（Phase 2から systems.js が呼び出す）
+   */
+  queuePlankBuild(stageIdx, laneIdx, plankIdx, teamId) {
+    if (!this.isMultiplayerActive) return;
+    this._pendingPlanks.push({
+      s: stageIdx,
+      l: laneIdx,
+      p: plankIdx,
+      t: teamId
+    });
+  },
+
+  /**
+   * ブロック取得アクションを一時バッファに積む（Phase 2から systems.js が呼び出す）
+   */
+  queueBlockPick(blockId, stageIdx, poolIdx, x, z) {
+    if (!this.isMultiplayerActive) return;
+    this._pendingPicks.push({
+      id: blockId,
+      s: stageIdx,
+      pi: poolIdx,
+      x: Number(x.toFixed(2)),
+      z: Number(z.toFixed(2))
+    });
+  },
+
   async init() {
     if (!this.isSDKAvailable) {
       console.warn('[NetworkManager] AgentSDK is not available. Standalone mode.');
@@ -204,7 +231,7 @@ export const NetworkManager = {
   },
 
   /**
-   * ★【公式仕様準拠】メッセージリスナー登録
+   * メッセージリスナー登録
    */
   ensureMessageListener() {
     if (!this.isSDKAvailable || this._hasRegisteredListener) return;
@@ -224,7 +251,6 @@ export const NetworkManager = {
             this._handleUserExited(data);
             break;
           case 'aitools_game_sendmsg':
-            // 公式仕様：本文文字列は payload.data.msg_data に格納されて届く
             this._handleCustomMessage(payload);
             break;
           default:
@@ -240,8 +266,7 @@ export const NetworkManager = {
   },
 
   /**
-   * ★【公式仕様準拠】公開ルーム一覧の自前除外フィルタリング
-   * 0人（ゴーストルーム）や満員（>= max_players）の部屋はサーバー側で自動除外されないためフロントで除外
+   * 公開ルーム一覧の自前除外フィルタリング
    */
   async getPublicRooms() {
     if (!this.isSDKAvailable) return [];
@@ -329,6 +354,9 @@ export const NetworkManager = {
       this.isMultiplayerActive = true;
       this._seedApplied = true;
 
+      this._pendingPlanks = [];
+      this._pendingPicks = [];
+
       safeShowGameScreen();
 
       if (typeof bindLocalPlayerSlot === 'function') {
@@ -389,7 +417,6 @@ export const NetworkManager = {
         try {
           const res = await window.AgentSDK.room.join({ room_id: safeRoomId });
 
-          // ★ 公式仕様準拠：Promiseはrejectされず errno !== 0 で返却される
           let isSuccess = false;
           if (res) {
             if (res.errno === 0 || res.errno === '0' || res.code === 0 || res.code === '0') {
@@ -416,6 +443,9 @@ export const NetworkManager = {
       this.isHost = false;
       this.isMultiplayerActive = true;
       this._seedApplied = false;
+
+      this._pendingPlanks = [];
+      this._pendingPicks = [];
 
       this.mySlot = 1;
       this.isSlotConfirmed = true;
@@ -504,8 +534,7 @@ export const NetworkManager = {
   },
 
   /**
-   * ★【公式仕様準拠】受信パーサー
-   * 受信時は payload.data.msg_data にJSON文字列が格納されて届く
+   * 受信パーサー
    */
   _handleCustomMessage(data) {
     if (!data) return;
@@ -590,6 +619,24 @@ export const NetworkManager = {
           break;
 
         case 'POS':
+          // ★【Phase 1 新設】同封された階段設置リスト（planks）の一括展開
+          if (Array.isArray(packet.planks) && packet.planks.length > 0) {
+            packet.planks.forEach(p => {
+              if (typeof window.applyRemotePlankBuilt === 'function') {
+                window.applyRemotePlankBuilt(p.s, p.l, p.p, p.t);
+              }
+            });
+          }
+
+          // ★【Phase 1 新設】同封されたブロック取得リスト（picks）の一括展開
+          if (Array.isArray(packet.picks) && packet.picks.length > 0) {
+            packet.picks.forEach(pk => {
+              if (typeof window.applyRemoteBlockPicked === 'function') {
+                window.applyRemoteBlockPicked(pk.s, pk.pi, pk.x, pk.z, pk.id);
+              }
+            });
+          }
+
           if (Array.isArray(packet.list)) {
             packet.list.forEach(p => this._handleRemotePosition(p));
           } else {
@@ -597,12 +644,14 @@ export const NetworkManager = {
           }
           break;
 
+        // 後方互換：単体パケットも引き続き受信可能
         case 'BUILD_PLANK':
           if (typeof window.applyRemotePlankBuilt === 'function') {
             window.applyRemotePlankBuilt(packet.stageIdx, packet.laneIdx, packet.plankIdx, packet.teamId);
           }
           break;
 
+        // 後方互換：単体パケットも引き続き受信可能
         case 'PICK_BLOCK':
           if (typeof window.applyRemoteBlockPicked === 'function') {
             window.applyRemoteBlockPicked(packet.stageIdx, packet.poolIdx, packet.x, packet.z, packet.blockId);
@@ -791,7 +840,6 @@ export const NetworkManager = {
 
     const wasAlreadyRemote = targetChar.isRemote && !targetChar.isAI;
 
-    // リモートプレイヤーフラグを完全固定し、ホスト側AI思考の介入を遮断
     targetChar.isPlayer = false;
     targetChar.isAI = false;
     targetChar.isRemote = true;
@@ -888,7 +936,7 @@ export const NetworkManager = {
   },
 
   /**
-   * ★【公式仕様準拠】10Hz（100ms周期）位置情報ブロードキャスト
+   * 10Hz 位置情報ブロードキャスト ＆ アクションアグリゲーション
    */
   _startPositionBroadcasting() {
     if (this._syncIntervalId) clearInterval(this._syncIntervalId);
@@ -988,17 +1036,27 @@ export const NetworkManager = {
         }
       }
 
-      this._sendCustomMessage({
+      // ★ バッファに溜まっている階段設置およびブロック取得情報をアグリゲーションして同封
+      const outgoingPlanks = this._pendingPlanks.length > 0 ? [...this._pendingPlanks] : undefined;
+      const outgoingPicks = this._pendingPicks.length > 0 ? [...this._pendingPicks] : undefined;
+      this._pendingPlanks.length = 0;
+      this._pendingPicks.length = 0;
+
+      const posMessage = {
         event: 'POS',
         clientId: this.clientId,
         list: posList
-      });
+      };
+
+      if (outgoingPlanks) posMessage.planks = outgoingPlanks;
+      if (outgoingPicks) posMessage.picks = outgoingPicks;
+
+      this._sendCustomMessage(posMessage);
     }, 100);
   },
 
   /**
-   * ★【公式仕様準拠】リモート座標の反映
-   * エコーバックはしない仕様のため、自己スロット番号のみを除外して他走者パケットを 100% 受理
+   * リモート座標の反映
    */
   _handleRemotePosition(packet) {
     if (this.isHost && packet.slot === 0) return;
@@ -1007,7 +1065,6 @@ export const NetworkManager = {
     const targetChar = characters[packet.slot];
     if (!targetChar) return;
 
-    // パケットを受信した瞬間に AI フラグを完全に折り、ホスト側AIの干渉を遮断
     targetChar.isRemote = true;
     targetChar.isAI = false;
     targetChar.aiState = 'REMOTE_IDLE';
@@ -1091,9 +1148,7 @@ export const NetworkManager = {
   },
 
   /**
-   * ★【公式仕様100%準拠】純粋送信
-   * room_id, roomId, msg_data を完全削除し、{ message: JSON.stringify(...) } のみで送信
-   * （余計なプロパティを含めると親アプリでサイレント破棄される制約を厳格にクリア）
+   * 純粋送信
    */
   _sendCustomMessage(msgObj) {
     if (!this.isSDKAvailable || !window.AgentSDK.room || typeof window.AgentSDK.room.sendMessage !== 'function') return;
@@ -1107,9 +1162,6 @@ export const NetworkManager = {
     }
   },
 
-  /**
-   * ブロック補充の一括（バッチ）ブロードキャスト
-   */
   broadcastSpawnBlocksBatch(stageIdx, blocksArray) {
     if (!this.isMultiplayerActive || !Array.isArray(blocksArray) || blocksArray.length === 0) return;
     this._sendCustomMessage({
@@ -1119,9 +1171,6 @@ export const NetworkManager = {
     });
   },
 
-  /**
-   * 単発ブロック生成ブロードキャスト
-   */
   broadcastSpawnBlock(stageIdx, poolIdx, x, y, z, teamId, blockId) {
     if (!this.isMultiplayerActive) return;
     this._sendCustomMessage({
@@ -1136,9 +1185,6 @@ export const NetworkManager = {
     });
   },
 
-  /**
-   * ブロック取得ブロードキャスト
-   */
   broadcastPickBlock(blockId, stageIdx, poolIdx, x, z) {
     if (!this.isMultiplayerActive) return;
     this._sendCustomMessage({
