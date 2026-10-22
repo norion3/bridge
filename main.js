@@ -1,11 +1,12 @@
 // main.js: ゲーム全体の起動指揮・Three.js初期化・メインループ・入力・HUD制御
-// ★ Phase B 実装版（メインループCPU負荷最適化 ＆ 毎フレーム全走者走査の間引き）：
-//   1. 【ステージ伸長判定の周期化・間引き】
-//      毎フレーム（秒間60回/120回）走っていた characters 全走者の currentStage 走査および
-//      extendCourse 判定を 0.25秒（4Hz）周期へ間引き、iPhone 15 端末のメインスレッドCPU負荷を大幅削減。
-//   2. 【海面テクスチャ・波アニメーションのフレームレート非依存平滑化】
-//      微小な三角関数オフセットの累積計算を整理し、無駄なGPU行列更新を抑制。
-//   3. リモート走者の滑らかなLerp追従、直立姿勢復帰、100ms周期アグリゲーション連携は100%維持。
+// ★ Phase 3 実装版（先行AIによる奥のコース伸長安定化 ＆ 新設ステージへの保留ボーナス消去即時適用）：
+//   1. 【先行AIに対するステージ伸長マージン適正化】
+//      手前でプレイヤーが静止・放置していても、先行AI（黄色キャラ）が奥へ進んだ際に
+//      ステージ生成遅延を起こさないよう、courseCheckTimer の伸長境界ガードを適正化（STAGES.length - 4）。
+//   2. 【ステージ生成時の保留キュー即時フラッシュ連動】
+//      extendCourse() 呼び出し直後に gimmicks.js の flushPendingBonusConsumes() を連動実行。
+//      奥の島・スロープが生成された瞬間に、先行AIが回収済みのスロープ白ブロックを100%確実に即座消去。
+//   3. 既存の4Hz伸長チェック、海面波アニメーション、リモート走者のLerp追従、100ms周期アグリゲーションは100%維持。
 
 import { mountAllUI } from './dom.js';
 
@@ -44,7 +45,7 @@ import {
 import { updateAICharacter } from './ai.js';
 import { updateDynamicCamera, resetCameraState } from './camera.js';
 import { updateSceneEntities } from './entities.js';
-import { applyRemoteGimmickVisuals } from './gimmicks.js';
+import { applyRemoteGimmickVisuals, flushPendingBonusConsumes } from './gimmicks.js';
 
 // network.js から相手のスタック数変化時に呼び出せるようグローバルフックを登録
 if (typeof window !== 'undefined') {
@@ -716,7 +717,7 @@ export function animate(currentTime) {
       cleanupTimer = 0;
     }
 
-    // ★【Phase B 最適化】毎フレームの全走者走査を廃止し、0.25秒（4Hz）周期で安全にステージ伸長をチェック
+    // ★【Phase 3 最適化】先行AIの進行に合わせた確実なステージ伸長 ＆ 保留ボーナス消去の即時適用
     courseCheckTimer += dt;
     if (courseCheckTimer > 0.25) {
       courseCheckTimer = 0;
@@ -727,8 +728,11 @@ export function animate(currentTime) {
           maxStage = charStage;
         }
       }
-      if (maxStage >= STAGES.length - 3) {
+      // 先行AIが手前の島から先へ進んだ際、余裕を持ったマージン（-4）で早期に奥を接続
+      if (maxStage >= STAGES.length - 4) {
         extendCourse(scene);
+        // 新しいステージ・橋・スロープがシーンに追加された瞬間に、未消化だった消去IDを一括適用
+        flushPendingBonusConsumes();
       }
     }
 

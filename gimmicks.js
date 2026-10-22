@@ -1,13 +1,12 @@
 // gimmicks.js: 特殊アトラクション搭乗中の物理挙動・姿勢制御・ボーナス回収・着地処理モジュール（完全分離レイヤー）
-// ★ Phase 1 実装版（スカイダイブ・ジップラインボーナスブロックID完全照合 ＆ 100%同期消去保証）：
-//   1. 【全アトラクションボーナス回収時のID完全照合】
-//      スカイダイブ（updateSkydiveMovement）およびジップライン（updateZiplineMovement）の回収時、
-//      world.js の確定論的一意キー（bonus_skydive_${stageIdx}_${si} / bonus_zipline_${stageIdx}_${zi}）を
-//      NetworkManager.broadcastConsumeObject へ確実に送出し、100ms周期POSパケット（consumes）へ同封。
-//   2. 【消去ハンドラ（applyRemoteBonusConsumed）の完全一致】
-//      相手端末で回収された際、skydiveBonusBlocks / ziplineBonusBlocks / curvedSlideBonusBlocks / slideBonusBlocks
-//      の全4配列から該当ブロックを即座に特定し、メッシュの非表示 ＆ 親ノードからの確実な除去を実行。
-//   3. 既存のドロップタワーハッチ開放視覚同期、大ジャンプ、エレベーター、S字スライダー物理は100%維持。
+// ★ Phase 2 実装版（ボーナス消去の保留キュー新設 ＆ 先行AI回収ブロックの遅延バインド100%消滅保証）：
+//   1. 【未バインド保留キュー（pendingConsumedBonusIds）の新設】
+//      ホスト側AIが先行して奥のスロープ白ブロック（slide / curved / skydive / zipline）を回収・送信してきた際、
+//      手前で止まっているゲスト端末側でまだ奥のステージが生成・バインドされていなくてもIDを保持。
+//   2. 【遅延バインド自動消去（flushPendingBonusConsumes）の連動】
+//      ステージが生成・ロードされた瞬間や各フレームの移動処理時に保留キューを再照合し、
+//      奥の島に現れるはずの白ブロックが取り残されず、即座に 100% 確実に非表示＆消滅することを保証。
+//   3. 既存のハッチ開放、大ジャンプ、エレベーター、S字スライダー物理は100%維持。
 
 import {
   LANES,
@@ -35,6 +34,42 @@ import {
   packCharacterLuggage
 } from './character.js';
 import { triggerLandingShockwave } from './particles.js';
+
+/**
+ * ★【Phase 2 核心】ステージ未生成・遅延バインド時に消去IDを保持する保留キュー
+ */
+export const pendingConsumedBonusIds = new Set();
+
+/**
+ * ★【Phase 2 核心】保留中のボーナス消去IDを現在ロードされている全ブロック配列と照合して一括消滅させる関数
+ */
+export function flushPendingBonusConsumes() {
+  if (pendingConsumedBonusIds.size === 0) return;
+
+  const arrays = [skydiveBonusBlocks, ziplineBonusBlocks, curvedSlideBonusBlocks, slideBonusBlocks];
+  pendingConsumedBonusIds.forEach(bonusId => {
+    let consumed = false;
+    for (let i = 0; i < arrays.length; i++) {
+      const arr = arrays[i];
+      if (!arr) continue;
+      const blk = arr.find(b => b.bonusId === bonusId);
+      if (blk) {
+        blk.collected = true;
+        if (blk.mesh) {
+          blk.mesh.visible = false;
+          if (blk.mesh.parent) {
+            blk.mesh.parent.remove(blk.mesh);
+          }
+        }
+        consumed = true;
+        break;
+      }
+    }
+    if (consumed) {
+      pendingConsumedBonusIds.delete(bonusId);
+    }
+  });
+}
 
 /**
  * リモート走者（他端末またはホストAI）のアトラクション状態ビットに応じた外観・メッシュ連動
@@ -135,7 +170,10 @@ export function updateSkydiveMovement(scene, char, dirX, dt, soundRef, updateHUD
   const totalFlyTime = SKYDIVE_CONFIG.PHYSICS.totalDuration;
   char.skydiveProgress += dt / totalFlyTime;
 
-  // ★【Phase 1 核心】スカイダイブ上のボーナスブロック回収 ＆ ブロードキャスト
+  // ★ 保留中ボーナス消去の定期消化
+  flushPendingBonusConsumes();
+
+  // スカイダイブ上のボーナスブロック回収 ＆ ブロードキャスト
   if (b.bonusBlocks && b.bonusBlocks.length > 0) {
     for (let si = 0; si < b.bonusBlocks.length; si++) {
       const blk = b.bonusBlocks[si];
@@ -398,6 +436,9 @@ export function updateZiplineMovement(scene, char, dt, soundRef, updateHUDRef) {
   const totalFlyTime = 3.25;
   char.ziplineProgress += dt / totalFlyTime;
 
+  // ★ 保留中ボーナス消去の定期消化
+  flushPendingBonusConsumes();
+
   char.meshObj.stackGroup.scale.set(0.65, 0.65, 0.65);
   char.meshObj.stackGroup.rotation.x = -Math.PI * 0.28;
   char.meshObj.stackGroup.position.set(0, 0.55, -0.45);
@@ -406,7 +447,7 @@ export function updateZiplineMovement(scene, char, dt, soundRef, updateHUDRef) {
     char.meshObj.trolleyGroup.visible = true;
   }
 
-  // ★【Phase 1 核心】ジップライン上のボーナスブロック回収 ＆ ブロードキャスト
+  // ジップライン上のボーナスブロック回収 ＆ ブロードキャスト
   if (zip.bonusBlocks && zip.bonusBlocks.length > 0) {
     for (let bi = 0; bi < zip.bonusBlocks.length; bi++) {
       const blk = zip.bonusBlocks[bi];
@@ -501,6 +542,9 @@ export function updateCurvedSlideMovement(scene, char, dirX, dt, soundRef, updat
   const slideSpeed = 31.0;
   const progressDelta = (slideSpeed * dt) / Math.max(10, b.curveLength);
   char.curvedSlideProgress += progressDelta;
+
+  // ★ 保留中ボーナス消去の定期消化
+  flushPendingBonusConsumes();
 
   if (char.curvedSlideProgress >= 1.0) {
     char.onCurvedSlide = false;
@@ -602,31 +646,43 @@ export function updateCurvedSlideMovement(scene, char, dirX, dt, soundRef, updat
 }
 
 /**
- * 他端末で消費されたボーナスブロックの強制消去ハンドラ
+ * ★【Phase 2 核心】他端末で消費されたボーナスブロックの強制消去ハンドラ
+ * 配列内にまだ見つからない場合（相手が奥を先行していて自端末で該当ステージが未生成/未バインド時）は、
+ * 保留キュー（pendingConsumedBonusIds）に登録して破棄を防止
  */
 export function applyRemoteBonusConsumed(objectId) {
   if (!objectId) return;
+
   const arrays = [skydiveBonusBlocks, ziplineBonusBlocks, curvedSlideBonusBlocks, slideBonusBlocks];
+  let found = false;
+
   for (let i = 0; i < arrays.length; i++) {
     const arr = arrays[i];
     if (!arr) continue;
     const idx = arr.findIndex(b => b.bonusId === objectId);
     if (idx !== -1) {
       const blk = arr[idx];
-      if (!blk.collected) {
-        blk.collected = true;
-        if (blk.mesh) {
-          blk.mesh.visible = false;
-          if (blk.mesh.parent) {
-            blk.mesh.parent.remove(blk.mesh);
-          }
+      blk.collected = true;
+      if (blk.mesh) {
+        blk.mesh.visible = false;
+        if (blk.mesh.parent) {
+          blk.mesh.parent.remove(blk.mesh);
         }
       }
+      found = true;
       break;
     }
+  }
+
+  // 自端末の配列にまだ存在していなかった場合は保留キューに保管
+  if (!found) {
+    pendingConsumedBonusIds.add(objectId);
+  } else {
+    pendingConsumedBonusIds.delete(objectId);
   }
 }
 
 if (typeof window !== 'undefined') {
   window.applyRemoteBonusConsumed = applyRemoteBonusConsumed;
+  window.flushPendingBonusConsumes = flushPendingBonusConsumes;
 }
