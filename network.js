@@ -1,18 +1,18 @@
-// network.js: AgentSDK公式仕様完全準拠 ＆ ホスト主導型10Hz通信集約・ゼロバースト同期エンジン
-// ★ 確定仕様（ゼロバースト・決定論的圧縮アーキテクチャ）：
-//   1. 【送信一本化の原則（1フレーム1通・10Hz絶対死守）】
-//      window.AgentSDK.room.sendMessage の呼び出しを 100ms周期タイマーの1箇所に完全集約。
-//      あらゆる自発的アクション（移動、階段架橋、ブロック取得、アイテム消費、モブ吹き飛ばし、
-//      スキル発射、ノックアウト被弾判定、ブロック補充、時間同期）を一時配列に蓄積し、
-//      単一の POS パケットに圧縮同封して送出。同一フレーム連打によるネイティブJSBridge破棄を根絶。
-//   2. 【極限ペイロード圧縮（キー短縮 ＆ フラット配列化）】
-//      キー名を2文字へ統一（pl, pk, co, bl, sk, ko, sc, sp）。
-//      散乱ブロックや補充ブロックをフラットな数値配列に圧縮し、最大乱戦時でも400バイト台を維持。
-//   3. 【受信ディスパッチ順序の厳格固定（ラバーバンド・判定不整合の根絶）】
-//      POS 受信時の実行順序を [list -> sc -> pk -> co -> bl -> sp -> ko -> sk -> tl] に固定。
-//      被弾時の確定着地座標による位置上書きや、散乱直後の即時回収における整合性を100%保証。
-//   4. 【決定論的散乱ブロックID復元】
-//      ホスト/発行走者のスロット番号と基点タイムスタンプ短縮値から、各端末で s_{s}_{sl}_{bid}_{i} を一意復元。
+// network.js: AgentSDK公式仕様完全準拠 ＆ ホスト主導型10Hz通信集約・ゼロバースト同期・自律ホスト昇格（Host Migration）エンジン
+// ★ 確定仕様（スロット不変型ホスト昇格 ＆ AI自律復帰 ＆ 再入室完全同期）：
+//   1. 【フロントエンド独自ウォッチドッグタイマー（2.5秒無通信検知）】
+//      タスクキルや通信切断によるホスト離脱時、ネイティブイベントの数十秒〜数分遅延に依存せず、
+//      2.5秒間パケットが途絶えた時点でゲスト端末（端末B）が自律的に promoteToHost() をキック。
+//   2. 【スロット不変型ホスト昇格（チーム色・架橋占有権の100%維持）】
+//      端末Bはスロット番号（Slot 1 / 赤チーム / YOU）を変えずにホスト権限のみを昇格。
+//      自分が今まで架けてきた階段が「敵の階段」扱いになる致命的事故を根絶。
+//   3. 【AI自律思考の完全復帰（硬直・フリーズの根絶）】
+//      昇格時、_restoreAllVacantSlotsToAI() により人間が搭乗していない全スロットの
+//      targetNetPos を破棄し、isRemote = false, isAI = true, aiState = 'COLLECT' を再始動。
+//      元ホストA（青）もCPU 2（黄）も、その場から即座に自律走行を再開。
+//   4. 【パケット破棄・自分判定ハードコードの完全汎用化】
+//      ホスト＝スロット0固定コードを撤廃し、packet.slot === this.mySlot 準拠へ刷新。
+//      元ホスト端末Aが再入室してきた際、空いている Slot 0（または Slot 2）を即座に再割り当て。
 
 import {
   player,
@@ -223,6 +223,11 @@ export const NetworkManager = {
   _isCreatingRoom: false,
   _isJoiningRoom: false,
 
+  // ★ ハートビート（無通信監視）タイマー関連
+  _lastHostPacketTime: 0,
+  _watchdogIntervalId: null,
+  _isPromoting: false,
+
   // ★ 100ms周期パケット（POS）へ完全集約するためのアクション蓄積キュー
   _pendingPlanks: [],     // pl: 階段設置
   _pendingPicks: [],      // pk: ブロック取得
@@ -380,6 +385,113 @@ export const NetworkManager = {
     }
   },
 
+  /**
+   * ★【核心】ハートビート監視ウォッチドッグタイマーの開始
+   * ゲスト端末時、ホストからのパケットが2.5秒間途絶えた場合に自動昇格
+   */
+  _startHostWatchdog() {
+    this._stopHostWatchdog();
+    this._lastHostPacketTime = performance.now();
+
+    this._watchdogIntervalId = setInterval(() => {
+      if (!this.isMultiplayerActive || this.isHost) {
+        this._stopHostWatchdog();
+        return;
+      }
+
+      const elapsed = performance.now() - this._lastHostPacketTime;
+      // 2.5秒以上ホストからの通信が途絶した場合に自律昇格
+      if (elapsed > 2500) {
+        console.warn(`[NetworkManager] Host packet timeout (${Math.round(elapsed)}ms). Promoting to Host...`);
+        this.promoteToHost();
+      }
+    }, 500);
+  },
+
+  _stopHostWatchdog() {
+    if (this._watchdogIntervalId) {
+      clearInterval(this._watchdogIntervalId);
+      this._watchdogIntervalId = null;
+    }
+  },
+
+  /**
+   * ★【核心】スロット不変型ホスト昇格処理
+   * 端末Bはスロット（Slot 1 / 赤 / YOU）を保ったままホスト権限を取得し、全空きスロットをAIへ復帰
+   */
+  promoteToHost() {
+    if (this._isPromoting || this.isHost) return;
+    this._isPromoting = true;
+    this._stopHostWatchdog();
+
+    console.log(`[NetworkManager] promoteToHost: Slot ${this.mySlot} becoming Host.`);
+
+    // 1. ホスト権限の取得
+    this.isHost = true;
+
+    // 2. 左下クイックリスタートボタン＆結果モーダルリスタートボタンを即時表示
+    notifyRestartButtonVisibility();
+
+    // 3. 空いたスロット（旧ホスト Slot 0 や他スロット）を自律AIへ完全復帰
+    this._restoreAllVacantSlotsToAI();
+
+    // 4. ホストとしての10Hz送信ループを再確認・確実に稼働
+    this._startPositionBroadcasting();
+
+    this._isPromoting = false;
+  },
+
+  /**
+   * ★【核心】人間が搭乗していない全スロットを通常の自律AIへ完全復帰（フリーズ根絶）
+   */
+  _restoreAllVacantSlotsToAI() {
+    for (let i = 0; i < this.slots.length; i++) {
+      if (i === this.mySlot) continue; // 自分自身は除外
+
+      const slotData = this.slots[i];
+      const char = characters[i];
+      if (!slotData || !char) continue;
+
+      // スロットメタデータのリセット
+      slotData.isAI = true;
+      slotData.clientId = null;
+      slotData.userId = null;
+      slotData.name = (i === 0) ? 'CPU 0' : (i === 1 ? 'CPU 1' : 'CPU 2');
+
+      // キャラクター物理・AIフラグの完全初期化（shouldRunAI を確実に通過させる）
+      char.isPlayer = false;
+      char.isAI = true;
+      char.isRemote = false;
+      char.targetNetPos = null;        // ★ 補間目標をクリアすることで shouldRunAI が true に！
+      char.netVelocity = { x: 0, z: 0 };
+      char.aiState = 'COLLECT';         // 思考ルーチンを再始動
+      char.searchCooldown = 0;
+      char.unstuckTimer = 0;
+      char.stuckCheckTimer = 0;
+      char.lastPosCheck = null;
+      char.elevatorChoice = undefined;
+      char.forkBranchChoice = undefined;
+      char.botSlideOffsetTarget = 0;
+
+      refreshCharacterStackVisuals(char);
+
+      // ネームプレートの更新
+      if (char.nameplateSprite) {
+        char.name = slotData.name;
+        if (char.nameplateSprite.material) {
+          if (char.nameplateSprite.material.map) {
+            char.nameplateSprite.material.map.dispose();
+          }
+          char.nameplateSprite.material.dispose();
+        }
+        const newMesh = createNameplateMesh(slotData.name, false);
+        if (newMesh.geometry) newMesh.geometry.dispose();
+        char.nameplateSprite.material = newMesh.material;
+        char.nameplateSprite.visible = true;
+      }
+    }
+  },
+
   async getPublicRooms() {
     if (!this.isSDKAvailable) return [];
     const now = Date.now();
@@ -465,6 +577,8 @@ export const NetworkManager = {
       this.isSlotConfirmed = true;
       this.isMultiplayerActive = true;
       this._seedApplied = true;
+
+      this._stopHostWatchdog();
 
       // バッファ初期化
       this._pendingPlanks.length = 0;
@@ -596,6 +710,9 @@ export const NetworkManager = {
 
       notifyRestartButtonVisibility();
 
+      // ★ ゲスト入室完了と同時にホスト監視ウォッチドッグタイマーを開始
+      this._startHostWatchdog();
+
       return true;
     } finally {
       setTimeout(() => {
@@ -604,6 +721,9 @@ export const NetworkManager = {
     }
   },
 
+  /**
+   * ★【核心】新規入室者のスロット割り当て（スロット0も対象に探索し、元ホストも正常復帰）
+   */
   _handleUserJoined(data) {
     if (!data) return;
     const userId = String(data.user_id || data.userId || data.uid || '');
@@ -611,11 +731,18 @@ export const NetworkManager = {
 
     if (this.isHost) {
       const guestName = (data.name && data.name !== 'ゲスト') ? data.name : (data.user_name || 'ゲスト');
+      
+      // 既存ユーザーの再突合
       let targetSlot = this.slots.findIndex(s => s.userId && String(s.userId) === userId);
 
+      // 空いているスロットを探索（Slot 0 も対象に含める）
       if (targetSlot === -1) {
-        if (this.slots[1].isAI) targetSlot = 1;
-        else if (this.slots[2].isAI) targetSlot = 2;
+        for (let i = 0; i < this.slots.length; i++) {
+          if (i !== this.mySlot && this.slots[i].isAI) {
+            targetSlot = i;
+            break;
+          }
+        }
       }
 
       if (targetSlot !== -1) {
@@ -675,6 +802,9 @@ export const NetworkManager = {
 
       if (!packet || !packet.event) return;
 
+      // 受信時刻を更新（ホスト生存シグナル）
+      this._lastHostPacketTime = performance.now();
+
       switch (packet.event) {
         case 'POS':
           // =========================================================================
@@ -693,7 +823,6 @@ export const NetworkManager = {
           if (Array.isArray(scattersList) && scattersList.length > 0) {
             scattersList.forEach(sc => {
               if (typeof window.applyRemoteScatterBlocks === 'function') {
-                // 短縮キー形式: { s, sl, bid, b: [[x, z], ...] }
                 if (Array.isArray(sc.b)) {
                   const reconstructedBlocks = [];
                   const slotNum = (sc.sl !== undefined) ? sc.sl : 0;
@@ -815,10 +944,11 @@ export const NetworkManager = {
             }
 
             if (targetSlot === -1) {
-              if (this.slots[1].isAI) {
-                targetSlot = 1;
-              } else if (this.slots[2].isAI) {
-                targetSlot = 2;
+              for (let i = 0; i < this.slots.length; i++) {
+                if (i !== this.mySlot && this.slots[i].isAI) {
+                  targetSlot = i;
+                  break;
+                }
               }
             }
 
@@ -860,7 +990,7 @@ export const NetworkManager = {
   },
 
   /**
-   * ホストからのスナップショット反映（ブロック・階段・アイテムの完全復元）
+   * ★【核心】スナップショット反映 ＆ 自分スロット判定の完全汎用化
    */
   _applyRoomMembersSync(syncedSlots, seed, snapshot = null) {
     if (!Array.isArray(syncedSlots)) return;
@@ -931,21 +1061,20 @@ export const NetworkManager = {
     syncedSlots.forEach((s) => {
       let isMyClient = false;
 
+      // ★ 修正：ホスト＝スロット0固定を撤廃し、自身のスロット番号で正確に照合
       if (this.isHost) {
-        isMyClient = (s.slot === 0);
+        isMyClient = (s.slot === this.mySlot);
       } else {
-        if (s.slot !== 0) {
-          const isClientIdMatch = !!(s.clientId && s.clientId === this.clientId);
-          const isUserIdMatch = !!(
-            s.userId &&
-            this.myUser &&
-            this.myUser.user_id &&
-            s.userId !== 'local_user' &&
-            String(s.userId) === String(this.myUser.user_id)
-          );
-          const isGuestFallback = (s.slot === this.mySlot);
-          isMyClient = isClientIdMatch || isUserIdMatch || isGuestFallback;
-        }
+        const isClientIdMatch = !!(s.clientId && s.clientId === this.clientId);
+        const isUserIdMatch = !!(
+          s.userId &&
+          this.myUser &&
+          this.myUser.user_id &&
+          s.userId !== 'local_user' &&
+          String(s.userId) === String(this.myUser.user_id)
+        );
+        const isGuestFallback = (s.slot === this.mySlot);
+        isMyClient = isClientIdMatch || isUserIdMatch || isGuestFallback;
       }
 
       if (isMyClient) {
@@ -1044,13 +1173,11 @@ export const NetworkManager = {
     targetChar.isAI = true;
     targetChar.isRemote = false;
     targetChar.aiState = 'COLLECT';
-    targetChar.name = (slotIndex === 1) ? 'CPU 1' : 'CPU 2';
+    targetChar.targetNetPos = null; // ★ リモート目標を破棄しAI思考を通過させる
+    targetChar.name = (slotIndex === 0) ? 'CPU 0' : (slotIndex === 1 ? 'CPU 1' : 'CPU 2');
 
     targetChar.netVelocity = { x: 0, z: 0 };
     targetChar.remoteActionState = 'NORMAL';
-    if (targetChar.targetNetPos) {
-      targetChar.targetNetPos.copy(targetChar.pos);
-    }
 
     targetChar.unstuckTimer = 0;
     targetChar.stuckCheckTimer = 0;
@@ -1141,6 +1268,7 @@ export const NetworkManager = {
 
       let currentSecForSync = undefined;
 
+      // ホスト端末の場合、搭乗中の全AI（人間がいないスロット）の位置をパケットに同封
       if (this.isHost) {
         this.slots.forEach(s => {
           if (s.slot === this.mySlot) return;
@@ -1154,7 +1282,7 @@ export const NetworkManager = {
             const aiPosPayload = {
               slot: s.slot,
               clientId: this.clientId,
-              name: s.name || (s.slot === 1 ? 'CPU 1' : 'CPU 2'),
+              name: s.name || (s.slot === 0 ? 'CPU 0' : (s.slot === 1 ? 'CPU 1' : 'CPU 2')),
               x: Number(charObj.pos.x.toFixed(2)),
               y: Number(charObj.pos.y.toFixed(2)),
               z: Number(charObj.pos.z.toFixed(2)),
@@ -1233,11 +1361,11 @@ export const NetworkManager = {
   },
 
   /**
-   * リモート座標の反映
+   * ★【核心】リモート座標の反映（スロット0固定破棄の完全撤廃）
    */
   _handleRemotePosition(packet) {
-    if (this.isHost && packet.slot === 0) return;
-    if (!this.isHost && packet.slot === this.mySlot) return;
+    // 修正：自分自身のスロットからのパケットのみを正確に破棄
+    if (packet.slot === this.mySlot) return;
 
     const targetChar = characters[packet.slot];
     if (!targetChar) return;
@@ -1257,7 +1385,7 @@ export const NetworkManager = {
       resolvedName = (packet.slot === 0 ? 'norion' : (packet.slot === 1 ? 'ゲスト1' : 'ゲスト2'));
     }
 
-    const isGenericGuestName = (targetChar.name === 'ゲスト' || targetChar.name === 'ゲスト1' || targetChar.name === 'ゲスト2');
+    const isGenericGuestName = (targetChar.name === 'ゲスト' || targetChar.name === 'ゲスト1' || targetChar.name === 'ゲスト2' || targetChar.name === 'CPU 0');
     const isUpgradedToRealName = isGenericGuestName && packetName && packetName !== targetChar.name;
 
     if (targetChar.name !== resolvedName || isUpgradedToRealName) {
@@ -1392,23 +1520,33 @@ export const NetworkManager = {
     });
   },
 
+  /**
+   * ★【核心】ユーザー退出イベントのハンドリング
+   * ホスト退出時は即座に自律昇格（promoteToHost）をキック、ゲスト退出時は該当スロットをAIへ復帰
+   */
   _handleUserExited(data) {
     if (!data) return;
-    const userId = String(data.user_id || '');
+    const userId = String(data.user_id || data.userId || '');
     const exitedSlotIdx = this.slots.findIndex(s => s.userId && String(s.userId) === userId);
 
-    if (exitedSlotIdx !== -1 && exitedSlotIdx !== 0) {
+    if (exitedSlotIdx !== -1) {
+      const isExitedSlotHost = (exitedSlotIdx === 0 && !this.isHost);
+
       this.slots[exitedSlotIdx] = {
         slot: exitedSlotIdx,
         clientId: null,
         userId: null,
-        name: (exitedSlotIdx === 1) ? 'CPU 1' : 'CPU 2',
+        name: (exitedSlotIdx === 0) ? 'CPU 0' : (exitedSlotIdx === 1 ? 'CPU 1' : 'CPU 2'),
         isAI: true
       };
 
       this._restoreSlotToAI(exitedSlotIdx);
 
-      if (this.isHost) {
+      // ホストが抜けた場合は即座に自律昇格
+      if (isExitedSlotHost) {
+        console.warn(`[NetworkManager] Host (Slot 0) exited room. Promoting to Host...`);
+        this.promoteToHost();
+      } else if (this.isHost) {
         this._sendCustomMessage({
           event: 'ROOM_MEMBERS_SYNC',
           slots: this.slots,
@@ -1421,6 +1559,7 @@ export const NetworkManager = {
   },
 
   async exitRoom() {
+    this._stopHostWatchdog();
     if (this._syncIntervalId) {
       clearInterval(this._syncIntervalId);
       this._syncIntervalId = null;

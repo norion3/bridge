@@ -1,16 +1,17 @@
 // combat.js: タックル衝突・ノックアウト・攻撃スキル・ブロック散乱専用モジュール
-// ★ 確定仕様（ゼロバースト・決定論的圧縮アーキテクチャ）：
-//   1. 【スキル発射 ＆ ノックアウトの生 sendMessage 直打ち完全根絶】
-//      fireHomingCrystal / fireThunderStrike / executeSingleKnockout 内で起きていた
-//      生の単発 sendMessage 呼び出しを撤廃。NetworkManager.queueSkillFire および
-//      NetworkManager.queueKnockout へ切り替え、100ms周期の POS パケットに完全集約。
-//   2. 【ゼロレイテンシ（操作遅延0ms）の完全維持】
-//      スキル発射音、自端末での弾丸生成、カメラワーク、被弾衝撃波などのローカル演出は
-//      入力／衝突フレームで即座（0ms）に実行。相手への通知のみを10Hzキューに預ける。
-//   3. 【散乱ブロック（scatterBricks）の極小フラット配列化 ＆ 決定論的ID生成】
-//      散乱ブロックIDを [ステージ番号] + [走者スロット番号] + [短縮基点ID] + [連番] の
-//      決定論的ルールで生成し、フラットな2D座標配列 [[x, z], ...] として同封。
-//      散乱直後に拾われた場合でも、全端末で完全な O(1) 参照・消去の整合性を担保。
+// ★ 確定仕様（タックル衝突判定最適化 ＆ ゼロバースト・決定論的圧縮アーキテクチャ）：
+//   1. 【タックル接触判定の視覚的一致（二乗値 1.90 / 距離 約1.38m）】
+//      「まだ当たっていないのに当たる（約70cmの隙間）」違和感を解消するため、
+//      判定の二乗値を 3.80（約1.95m）から 1.90（約1.38m）へ刷新。
+//      走者の腕の振りが触れ合う自然な距離感と、最高速正面衝突時のすれ抜け防止（100%安全検知）を両立。
+//   2. 【サンダー被弾小人化時の動的スケール連動】
+//      走者の shrinkTimer に連動して判定半径を動的スケーリング。
+//      小人化走者に対しても見た目通りの接触感を実現。
+//   3. 【押し出しベクトル（Push Vector）の整合調整】
+//      接触距離の適正化に合わせて、ノックアウト時の吹き飛ばし距離（2.2m -> 1.8m）および
+//      相打ち反発距離（1.5m -> 1.2m）を調整し、衝撃波エフェクト（半径1.8m）との一体感を向上。
+//   4. 【ゼロバースト通信集約 ＆ 決定論的散乱ブロックIDの完全維持】
+//      queueSkillFire, queueKnockout, queueScatterBlocks による100ms周期POSパケット集約を100%維持。
 
 import { TEAMS } from './constants.js';
 import {
@@ -156,8 +157,8 @@ export function applyRemoteKnockout(loserSlot, pushX, pushZ, targetX = null, tar
     loserChar.targetNetPos.copy(loserChar.pos);
   }
 
-  // 被弾衝撃波エフェクトの表示
-  triggerLandingShockwave(loserChar.pos.x, loserChar.pos.y + 0.1, loserChar.pos.z, 2.0, 0xef4444);
+  // 被弾衝撃波エフェクトの表示（新接触半径に合わせて 1.8m へ調整）
+  triggerLandingShockwave(loserChar.pos.x, loserChar.pos.y + 0.1, loserChar.pos.z, 1.8, 0xef4444);
 }
 
 if (typeof window !== 'undefined') {
@@ -454,6 +455,7 @@ export function fireThunderStrike(scene, userChar, forcedTarget = undefined, isR
 
 /**
  * キャラクター同士のタックル衝突判定（ホスト権限調停）
+ * ★ 改修ポイント：腕の振りが触れ合う距離（二乗値 1.90 / 距離 約1.38m）へ適正化 ＆ 小人化動的スケーリング連動
  * @param {THREE.Scene} scene 
  */
 export function handleTackles(scene) {
@@ -483,7 +485,14 @@ export function handleTackles(scene) {
       const tdx = c1.pos.x - c2.pos.x;
       const tdz = c1.pos.z - c2.pos.z;
 
-      if ((tdx * tdx + tdz * tdz < 3.80) && Math.abs(c1.pos.y - c2.pos.y) < 1.4) {
+      // サンダー被弾による小人化（スケール 0.42）を考慮した動的当たり判定
+      // 通常時同士: 1.90（距離 約1.38m）、片方小人化: 約0.96（距離 約0.98m）、双方小人化: 約0.33（距離 約0.58m）
+      const scale1 = (c1.shrinkTimer > 0) ? 0.42 : 1.0;
+      const scale2 = (c2.shrinkTimer > 0) ? 0.42 : 1.0;
+      const effectiveScale = (scale1 + scale2) * 0.5;
+      const collisionDistSq = 1.90 * (effectiveScale * effectiveScale);
+
+      if ((tdx * tdx + tdz * tdz < collisionDistSq) && Math.abs(c1.pos.y - c2.pos.y) < 1.4) {
         if (c1.stackCount > c2.stackCount) {
           tackleKnockout(scene, c1, c2);
         } else if (c2.stackCount > c1.stackCount) {
@@ -498,6 +507,7 @@ export function handleTackles(scene) {
 
 /**
  * スタック同数時（0枚同士含む）の相打ちクラッシュ処理
+ * ★ 改修ポイント：接触距離の縮小に合わせ、反発距離を 1.5m -> 1.2m へ適正化
  * @param {THREE.Scene} scene 
  * @param {Object} c1 
  * @param {Object} c2 
@@ -509,10 +519,10 @@ export function tackleClashBoth(scene, c1, c2) {
   const kz = c2.pos.z - c1.pos.z;
   const mag = Math.hypot(kx, kz) || 1;
 
-  const pushX1 = -(kx / mag) * 1.5;
-  const pushZ1 = -(kz / mag) * 1.5;
-  const pushX2 = (kx / mag) * 1.5;
-  const pushZ2 = (kz / mag) * 1.5;
+  const pushX1 = -(kx / mag) * 1.2;
+  const pushZ1 = -(kz / mag) * 1.2;
+  const pushX2 = (kx / mag) * 1.2;
+  const pushZ2 = (kz / mag) * 1.2;
 
   executeSingleKnockout(scene, c1, pushX1, pushZ1, 0.9, 1);
   executeSingleKnockout(scene, c2, pushX2, pushZ2, 0.9, 1);
@@ -520,6 +530,7 @@ export function tackleClashBoth(scene, c1, c2) {
 
 /**
  * タックル敗者のノックアウト・所持ブロック放出
+ * ★ 改修ポイント：接触距離の縮小に合わせ、吹き飛ばし距離を 2.2m -> 1.8m へ適正化
  * @param {THREE.Scene} scene 
  * @param {Object} winner 
  * @param {Object} loser 
@@ -529,8 +540,8 @@ export function tackleKnockout(scene, winner, loser) {
 
   const kx = loser.pos.x - winner.pos.x, kz = loser.pos.z - winner.pos.z;
   const mag = Math.hypot(kx, kz) || 1;
-  const pushX = (kx / mag) * 2.2;
-  const pushZ = (kz / mag) * 2.2;
+  const pushX = (kx / mag) * 1.8;
+  const pushZ = (kz / mag) * 1.8;
 
   const drops = Math.min(6, Math.max(2, Math.floor(loser.stackCount * 0.35)));
   executeSingleKnockout(scene, loser, pushX, pushZ, 1.4, drops);
@@ -538,6 +549,7 @@ export function tackleKnockout(scene, winner, loser) {
 
 /**
  * 単一キャラクターのノックアウト確定実行ヘルパー（生送信を完全排除しキューイング化）
+ * ★ 改修ポイント：衝撃波エフェクトの半径を 2.0m -> 1.8m へ最適化
  * @param {THREE.Scene} scene 
  * @param {Object} charObj 
  * @param {number} pushX 
@@ -585,7 +597,7 @@ function executeSingleKnockout(scene, charObj, pushX, pushZ, stunDuration, dropC
     charObj.targetNetPos.set(finalX, charObj.pos.y, finalZ);
   }
 
-  triggerLandingShockwave(finalX, charObj.pos.y + 0.1, finalZ, 2.0, 0xef4444);
+  triggerLandingShockwave(finalX, charObj.pos.y + 0.1, finalZ, 1.8, 0xef4444);
 
   // 生 sendMessage を完全撤廃し、NetworkManager.queueKnockout へ切り替え
   if (isMulti && typeof window !== 'undefined' && window.NetworkManager) {

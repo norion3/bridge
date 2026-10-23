@@ -1,14 +1,15 @@
 // main.js: ゲーム全体の起動指揮・Three.js初期化・メインループ・入力・HUD制御
-// ★ 確定仕様（ゼロバースト・決定論的圧縮アーキテクチャ対応版）：
-//   1. 【ホスト主導型 1秒周期 tl 同期ハンドラの最適化】
-//      単独の TIME_SYNC パケットを完全撤廃し、10Hz POS パケットへ1.0秒に1回同封される tl プロパティから
-//      残り秒数を滑らかに平滑補正。不要なDOM更新・クラス付け替えを遮断し、低負荷かつ高精度な時間同期を実現。
-//   2. 【リスタート完全同期 ＆ 権限制御の完全維持】
-//      ホスト実行時：新シード値を発行して buildWorld を行い、初期配置スナップショットを添えて broadcastRestartGame を送出。
-//      ゲスト受取時：届いた seed で世界を再構築し、snapshot のアイテム・ブロック・階段を両画面で100%完全一致復元。
-//      クイックリスタートボタンおよび結果画面リスタートボタンは、ホストのみ表示（ゲストは確実に非表示）。
-//   3. 【全5モジュール（network / combat / blocks / systems / main）の完全整合】
-//      先行AI進行に応じたステージ伸長、保留ボーナス消去の即時フラッシュ、10Hzアグリゲーションを100%維持。
+// ★ 確定仕様（GRAVITY公式スコア送信 ＆ スロット不変型ホスト昇格完全対応版）：
+//   1. 【GRAVITY公式ランキング（スコア送信）完全準拠】
+//      window.parent.postMessage({ type: 'gameOver', score: placedPlankCount }, '*') による
+//      公式仕様に100%準拠したスコア送信ハンドラ submitGravityScore() を新設。
+//      タイムアップ（onTimeUp）時に、ホスト・ゲスト双方が自身の端末から確定階段数を安全に親アプリへ申告。
+//   2. 【ホスト昇格動的検知 ＆ リスタートボタン表示権限の自動追従】
+//      animate ループ内で isHost の動的変化を監視し、昇格時に左下リセットボタンを確実に表示。
+//   3. 【AI自律思考復帰の完全保証（硬直・フリーズ根絶フェイルセーフ）】
+//      ホスト端末時、人間不搭乗のAIスロットの残存補間目標やリモートフラグを自動パージし、自律走行を100%継続。
+//   4. 【スロット不変型リスタート時のカメラ初期位置最適化】
+//      リスタート時、自キャラの現在座標に合わせてカメラ初期位置を整列。
 
 import { mountAllUI } from './dom.js';
 
@@ -83,6 +84,9 @@ let gameStarted = false;
 let placedPlankCount = 0;
 let lastDisplayedSec = -1;
 
+// ホスト権限の動的変化を検知するための状態キャッシュ
+let lastRecordedHostState = null;
+
 /**
  * リスタートボタン（クイックリスタート＆結果モーダル）の表示権限更新関数
  * シングルプレイ、またはマルチのホストのみ表示し、ゲスト端末では完全に非表示にする
@@ -114,6 +118,29 @@ export function updateRestartButtonVisibility() {
 
 if (typeof window !== 'undefined') {
   window.updateRestartButtonVisibility = updateRestartButtonVisibility;
+}
+
+/**
+ * ★【GRAVITY公式仕様準拠】親アプリ（ネイティブ層）へスコアを送信
+ * @param {number} score 確定した階段数（placedPlankCount）
+ */
+export function submitGravityScore(score) {
+  const safeScore = Math.max(0, Math.floor(Number(score) || 0));
+  try {
+    if (typeof window !== 'undefined' && window.parent) {
+      window.parent.postMessage({
+        type: 'gameOver',
+        score: safeScore
+      }, '*');
+      console.log(`[GravityScore] Score (${safeScore}) submitted successfully via postMessage.`);
+    }
+  } catch (err) {
+    console.warn('[GravityScore] Failed to postMessage score to GRAVITY native:', err);
+  }
+}
+
+if (typeof window !== 'undefined') {
+  window.submitGravityScore = submitGravityScore;
 }
 
 /**
@@ -258,6 +285,7 @@ export function onTimeUp() {
   if (isGameOver) return;
   isGameOver = true;
 
+  // 1. ホストであればタイムアップ宣告を同報
   if (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive && window.NetworkManager.isHost) {
     if (typeof window.NetworkManager.broadcastTimeUp === 'function') {
       window.NetworkManager.broadcastTimeUp();
@@ -265,6 +293,8 @@ export function onTimeUp() {
   }
 
   sound.playVictory();
+
+  // 2. 結果モーダルへの段数反映
   const rankEl = document.getElementById('modal-rank');
   if (rankEl) rankEl.innerText = placedPlankCount + ' 段';
   const resultModal = document.getElementById('modal-result');
@@ -273,6 +303,9 @@ export function onTimeUp() {
     resultModal.style.display = 'flex';
   }
   updateRestartButtonVisibility();
+
+  // 3. ★【GRAVITY公式仕様】親アプリへ自身の確定スコア（階段数）をpostMessage送信
+  submitGravityScore(placedPlankCount);
 }
 
 /**
@@ -317,10 +350,11 @@ export function resetGame(remoteSeed = null, remoteSnapshot = null) {
   buildWorld(scene, targetSeed);
   resetCharacters(STAGES);
 
-  // 3. 視点カメラの初期化
+  // 3. 視点カメラの初期化（スロット不変型：自キャラの現在X座標に合わせてカメラ初期位置を整列）
   if (camera) {
-    camera.position.set(0, STAGES[0].y + 24, STAGES[0].z + 12);
-    camera.lookAt(0, STAGES[0].y, STAGES[0].z - 5);
+    const focusX = (player && player.pos) ? player.pos.x : 0.0;
+    camera.position.set(focusX, STAGES[0].y + 24, STAGES[0].z + 12);
+    camera.lookAt(focusX, STAGES[0].y, STAGES[0].z - 5);
   }
 
   // 4. 世界状態の復元または新規補充
@@ -611,6 +645,12 @@ export function animate(currentTime) {
     const isHost = Boolean(isMulti && window.NetworkManager.isHost);
     const isGuest = Boolean(isMulti && !isHost);
 
+    // ホスト昇格自動検知：ゲストからホストへの昇格時にリスタートボタン表示を即時更新
+    if (lastRecordedHostState !== isHost) {
+      lastRecordedHostState = isHost;
+      updateRestartButtonVisibility();
+    }
+
     if (player) {
       if (typeof window !== 'undefined') {
         window.localPlayerInstance = player;
@@ -623,9 +663,11 @@ export function animate(currentTime) {
       const c = characters[cIdx];
       if (c === player || c.isPlayer) continue;
 
-      const isHumanSlot = isMulti && window.NetworkManager && Array.isArray(window.NetworkManager.slots) &&
-        window.NetworkManager.slots[cIdx] && !window.NetworkManager.slots[cIdx].isAI;
+      const slotData = (isMulti && window.NetworkManager && Array.isArray(window.NetworkManager.slots))
+        ? window.NetworkManager.slots[cIdx]
+        : null;
 
+      const isHumanSlot = isMulti && slotData && !slotData.isAI;
       const hasReceivedNetPos = Boolean(c.targetNetPos && isMulti);
       const isRemotePlayer = Boolean(c.isRemote || isHumanSlot || hasReceivedNetPos);
 
@@ -633,6 +675,17 @@ export function animate(currentTime) {
       if ((hasReceivedNetPos || isHumanSlot) && (!c.isRemote || c.isAI)) {
         c.isRemote = true;
         c.isAI = false;
+      }
+
+      // AI自律復帰フェイルセーフ：ホスト時、人間不搭乗スロットの残存補間目標・リモートフラグをパージ
+      if (isHost && slotData && slotData.isAI) {
+        if (c.targetNetPos) {
+          c.targetNetPos = null;
+        }
+        if (c.isRemote || !c.isAI) {
+          c.isRemote = false;
+          c.isAI = true;
+        }
       }
 
       // ホスト上であっても、人間プレイヤー（あるいはパケット受信中の走者）に対する AI 思考は100%遮断
