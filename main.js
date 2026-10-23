@@ -1,17 +1,20 @@
-// main.js: ゲーム全体の起動指揮・Three.js初期化・メインループ・入力・HUD制御
-// ★ 確定仕様（GRAVITY公式スコア送信 ＆ スロット不変型ホスト昇格完全対応版）：
-//   1. 【GRAVITY公式ランキング（スコア送信）完全準拠】
+// main.js: ゲーム全体の起動指揮・Three.js初期化・メインループ・入力・HUD制御・DM招待リンク自動入室
+// ★ 確定仕様（DM招待Auto-Join ＆ GRAVITY公式スコア送信 ＆ スロット不変型ホスト昇格完全対応版）：
+//   1. 【DM招待リンク起動時の完全直列自動入室（Auto-Join Pipeline）】
+//      起動時に AgentSDK.room.getRoomId() を検知。招待 room_id が存在する場合、
+//      ロビー画面（「1人で遊ぶ」「部屋作成」等）を完全スキップし、自動で joinRoom() をキックして
+//      対象の3D対戦空間へ直接スポーン・合流。満員や解散時は安全にロビーへフォールバック。
+//   2. 【GRAVITY公式ランキング（スコア送信）完全準拠】
 //      window.parent.postMessage({ type: 'gameOver', score: placedPlankCount }, '*') による
-//      公式仕様に100%準拠したスコア送信ハンドラ submitGravityScore() を新設。
-//      タイムアップ（onTimeUp）時に、ホスト・ゲスト双方が自身の端末から確定階段数を安全に親アプリへ申告。
-//   2. 【ホスト昇格動的検知 ＆ リスタートボタン表示権限の自動追従】
+//      公式仕様に100%準拠したスコア送信ハンドラ submitGravityScore() を維持。
+//   3. 【ホスト昇格動的検知 ＆ リスタートボタン表示権限の自動追従】
 //      animate ループ内で isHost の動的変化を監視し、昇格時に左下リセットボタンを確実に表示。
-//   3. 【AI自律思考復帰の完全保証（硬直・フリーズ根絶フェイルセーフ）】
+//   4. 【AI自律思考復帰の完全保証（硬直・フリーズ根絶フェイルセーフ）】
 //      ホスト端末時、人間不搭乗のAIスロットの残存補間目標やリモートフラグを自動パージし、自律走行を100%継続。
-//   4. 【スロット不変型リスタート時のカメラ初期位置最適化】
+//   5. 【スロット不変型リスタート時のカメラ初期位置最適化】
 //      リスタート時、自キャラの現在座標に合わせてカメラ初期位置を整列。
 
-import { mountAllUI } from './dom.js';
+import { mountAllUI, UIController } from './dom.js';
 
 import { SoundEngine } from './audio.js';
 import {
@@ -54,6 +57,7 @@ import { updateAICharacter } from './ai.js';
 import { updateDynamicCamera, resetCameraState } from './camera.js';
 import { updateSceneEntities } from './entities.js';
 import { applyRemoteGimmickVisuals, flushPendingBonusConsumes } from './gimmicks.js';
+import { NetworkManager } from './network.js';
 
 // network.js から相手のスタック数変化時に呼び出せるようグローバルフックを登録
 if (typeof window !== 'undefined') {
@@ -910,6 +914,55 @@ export function animate(currentTime) {
   if (renderer && scene && camera) renderer.render(scene, camera);
 }
 
+/**
+ * ★【核心】DM招待リンク経由の自動入室判定（Auto-Join Pipeline）
+ * 公式仕様: AgentSDK.room.getRoomId() が有効な room_id を返した場合、
+ * ロビー画面をスキップして直接対象ルームへ joinRoom() をキックし、ゲーム画面へ合流。
+ */
+async function checkAndHandleAutoJoin() {
+  if (typeof window === 'undefined') return;
+
+  try {
+    // 1. ユーザープロファイル取得 ＆ 認証セッション完全確立（必須）
+    if (window.NetworkManager && typeof window.NetworkManager.init === 'function') {
+      await window.NetworkManager.init();
+    }
+
+    // 2. ネイティブ層からディープリンクパラメータ（room_id）を取得
+    let targetRoomId = '';
+    if (window.AgentSDK && window.AgentSDK.room && typeof window.AgentSDK.room.getRoomId === 'function') {
+      const res = await window.AgentSDK.room.getRoomId();
+      targetRoomId = (res && typeof res.room_id === 'string')
+        ? res.room_id
+        : (res && res.data && typeof res.data.room_id === 'string' ? res.data.room_id : '');
+    }
+
+    // 3. 招待 room_id が存在する場合のみ自動合流を実行
+    if (targetRoomId && targetRoomId !== '') {
+      console.log(`[AutoJoin] DM招待リンクを検知: Room #${targetRoomId} へ自動入室します`);
+
+      // ゲームエンジンを即時始動
+      launchGameEngine();
+
+      if (window.NetworkManager && typeof window.NetworkManager.joinRoom === 'function') {
+        const success = await window.NetworkManager.joinRoom(targetRoomId);
+        if (!success) {
+          console.warn('[AutoJoin] 自動入室に失敗しました（満員・解散など）。ロビー画面へ戻します。');
+          if (typeof UIController !== 'undefined' && typeof UIController.showLobby === 'function') {
+            UIController.showLobby();
+          } else if (window.UIController && typeof window.UIController.showLobby === 'function') {
+            window.UIController.showLobby();
+          }
+        }
+      }
+    } else {
+      console.log('[AutoJoin] 通常起動のためロビー待機');
+    }
+  } catch (err) {
+    console.warn('[AutoJoin] 自動入室判定エラー:', err);
+  }
+}
+
 export function bootGame() {
   if (window._gameEngineBooted) return;
   window._gameEngineBooted = true;
@@ -921,6 +974,9 @@ export function bootGame() {
 
     initThree();
     animate(performance.now());
+
+    // Three.js 初期化完了後、直列にDM招待リンク自動合流を判定
+    checkAndHandleAutoJoin();
   } catch (err) {
     console.error("Game boot failed:", err);
   }
