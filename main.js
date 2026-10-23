@@ -14,7 +14,7 @@
 //   5. 【スロット不変型リスタート時のカメラ初期位置最適化】
 //      リスタート時、自キャラの現在座標に合わせてカメラ初期位置を整列。
 
-import { mountAllUI, UIController } from './dom.js';
+import { mountAllUI, UIController, EntryShield } from './dom.js';
 
 import { SoundEngine } from './audio.js';
 import {
@@ -923,12 +923,17 @@ async function checkAndHandleAutoJoin() {
   if (typeof window === 'undefined') return;
 
   try {
-    // 1. ユーザープロファイル取得 ＆ 認証セッション完全確立（必須）
+    // 1. 初期シールドを展開（ロビーは裏で初期スタイル非表示のまま待機）
+    if (typeof EntryShield !== 'undefined' && EntryShield.show) {
+      EntryShield.show('CONNECTING...', 'ルームへ合流中...');
+    }
+
+    // 2. ユーザープロファイル取得 ＆ 認証セッション完全確立（必須）
     if (window.NetworkManager && typeof window.NetworkManager.init === 'function') {
       await window.NetworkManager.init();
     }
 
-    // 2. ネイティブ層からディープリンクパラメータ（room_id）を取得
+    // 3. ネイティブ層からディープリンクパラメータ（room_id）を取得
     let targetRoomId = '';
     if (window.AgentSDK && window.AgentSDK.room && typeof window.AgentSDK.room.getRoomId === 'function') {
       const res = await window.AgentSDK.room.getRoomId();
@@ -937,29 +942,64 @@ async function checkAndHandleAutoJoin() {
         : (res && res.data && typeof res.data.room_id === 'string' ? res.data.room_id : '');
     }
 
-    // 3. 招待 room_id が存在する場合のみ自動合流を実行
+    // 4. 招待 room_id が存在する場合のみ自動合流を実行
     if (targetRoomId && targetRoomId !== '') {
+      const shortId = targetRoomId.length > 5 ? targetRoomId.slice(-5) : targetRoomId;
       console.log(`[AutoJoin] DM招待リンクを検知: Room #${targetRoomId} へ自動入室します`);
+
+      if (typeof EntryShield !== 'undefined' && EntryShield.update) {
+        EntryShield.update(`ROOM #${shortId}`, 'ルームへ合流中...');
+      }
 
       // ゲームエンジンを即時始動
       launchGameEngine();
 
       if (window.NetworkManager && typeof window.NetworkManager.joinRoom === 'function') {
         const success = await window.NetworkManager.joinRoom(targetRoomId);
-        if (!success) {
+        if (success) {
+          // 入室成功: シールドを滑らかに解除して3D対戦フィールドへ直接着地
+          setTimeout(() => {
+            if (typeof EntryShield !== 'undefined' && EntryShield.hide) {
+              EntryShield.hide();
+            }
+          }, 350);
+        } else {
           console.warn('[AutoJoin] 自動入室に失敗しました（満員・解散など）。ロビー画面へ戻します。');
+          if (typeof EntryShield !== 'undefined' && EntryShield.hide) {
+            EntryShield.hide();
+          }
           if (typeof UIController !== 'undefined' && typeof UIController.showLobby === 'function') {
             UIController.showLobby();
           } else if (window.UIController && typeof window.UIController.showLobby === 'function') {
             window.UIController.showLobby();
           }
         }
+      } else {
+        if (typeof EntryShield !== 'undefined' && EntryShield.hide) EntryShield.hide();
+        if (typeof UIController !== 'undefined' && typeof UIController.showLobby === 'function') UIController.showLobby();
       }
     } else {
       console.log('[AutoJoin] 通常起動のためロビー待機');
+      // 通常起動: シールドを即座に解除し、通常ロビー画面を表示
+      if (typeof EntryShield !== 'undefined' && EntryShield.hide) {
+        EntryShield.hide();
+      }
+      if (typeof UIController !== 'undefined' && typeof UIController.showLobby === 'function') {
+        UIController.showLobby();
+      } else if (window.UIController && typeof window.UIController.showLobby === 'function') {
+        window.UIController.showLobby();
+      }
     }
   } catch (err) {
     console.warn('[AutoJoin] 自動入室判定エラー:', err);
+    if (typeof EntryShield !== 'undefined' && EntryShield.hide) {
+      EntryShield.hide();
+    }
+    if (typeof UIController !== 'undefined' && typeof UIController.showLobby === 'function') {
+      UIController.showLobby();
+    } else if (window.UIController && typeof window.UIController.showLobby === 'function') {
+      window.UIController.showLobby();
+    }
   }
 }
 
@@ -970,6 +1010,11 @@ export function bootGame() {
     const appContainer = document.getElementById('app-container') || document.body;
     if (!document.getElementById('canvas-container')) {
       mountAllUI(appContainer);
+    }
+
+    // 起動直後にシールドを展開し、FOUCを完全遮断
+    if (typeof EntryShield !== 'undefined' && EntryShield.show) {
+      EntryShield.show('CONNECTING...', 'ルームへ合流中...');
     }
 
     initThree();

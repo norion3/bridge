@@ -1,14 +1,16 @@
-// dom.js: 画面UI・HUD・ロビー・待機室の動的生成モジュール
-// ★ 公開ルーム一覧 独立スクロール化 ＆ 1行Ellipsis対応版：
-//   1. 【#room-list-container の独立スクロール化】
-//      max-height: 210px; overflow-y: auto; -webkit-overflow-scrolling: touch; を定義。
-//      部屋が多数並んだ場合でもロビー全体が縦に伸びず、枠内だけで滑らかに慣性スクロール。
-//   2. 【薄型シアンのカスタムスクロールバー】
-//      4px幅の半透明シアン色スクロールバーをCSSに定義し、青空・マリンデザインに調和。
-//   3. 【.gravity-room-item の Flexbox ガード】
-//      長いIDでも「参加」ボタンを画面外に押し出さず、テキスト領域が安全に伸縮するレイアウト基盤を整備。
-//   4. 【既存ロビー外観の完全維持】
-//      「▶ 1人で遊ぶ」ボタンや青空フロストデザインの整合性を100%維持。
+// dom.js: 画面UI・HUD・ロビー・待機室・超ミニマルエントリーシールドの動的生成モジュール
+// ★ 超ミニマル・エントリーシールド ＆ FOUC根絶（Phase 1）：
+//   1. 【初期スタイル強制非表示によるFOUC完全遮断】
+//      #test-lobby-overlay の初期スタイルを display: none !important; に設定。
+//      ローダー消去から判定完了までの間に素のロビー画面が露出する事故を物理的に根絶。
+//   2. 【超ミニマル・エントリーシールド（#entry-shield）のDOM＆CSS追加】
+//      ボタン・枠線・TIPSを一切持たない、極細ネオンスピナー＋ルーム番号＋合流中テキストのみの
+//      最軽量全画面すりガラスシールド（z-index: 9999）を追加。
+//   3. 【EntryShield コントローラーの実装と公開】
+//      show(roomText, statusText), update(roomText, statusText), hide() を提供し、
+//      main.js の起動シーケンスからシームレスに操作可能。
+//   4. 【公開ルーム一覧の独立スクロール ＆ 1行Ellipsisの完全維持】
+//      max-height: 210px の慣性スクロールと1行省略レイアウトを100%維持。
 
 import { updatePlayerName } from './character.js';
 
@@ -50,12 +52,13 @@ export function injectStyles() {
     }
 
     /* ロビー画面 ＆ 待機画面：ポップで爽やかな青空・マリンフロストデザイン */
+    /* ★ 初期状態は強制非表示（display: none !important）にしてFOUCを根絶 */
     .gravity-screen-overlay,
     #test-lobby-overlay {
       position: absolute;
       inset: 0;
       z-index: 100;
-      display: flex;
+      display: none !important;
       flex-direction: column;
       align-items: center;
       background: radial-gradient(circle at 50% 10%, rgba(14, 165, 233, 0.95) 0%, rgba(15, 23, 42, 0.97) 100%) !important;
@@ -65,6 +68,11 @@ export function injectStyles() {
       overflow-y: auto;
       -webkit-overflow-scrolling: touch;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+    /* 表示命令（active-screen）が付与された時のみ表示 */
+    .gravity-screen-overlay.active-screen,
+    #test-lobby-overlay.active-screen {
+      display: flex !important;
     }
     .gravity-screen-overlay.hidden,
     #test-lobby-overlay.hidden {
@@ -200,6 +208,48 @@ export function injectStyles() {
     .slot-blue { background-color: #0284c7; }
     .slot-red { background-color: #ef4444; }
     .slot-yellow { background-color: #f59e0b; }
+
+    /* ★ 超ミニマル・エントリーシールド スタイル */
+    .entry-shield-minimal {
+      position: absolute;
+      inset: 0;
+      z-index: 9999;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      background: radial-gradient(circle at 50% 30%, rgba(14, 165, 233, 0.94) 0%, rgba(15, 23, 42, 0.98) 100%);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      transition: opacity 0.3s ease;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    .entry-shield-minimal.hidden {
+      display: none !important;
+    }
+    .shield-mini-spinner {
+      width: 36px;
+      height: 36px;
+      border: 3px solid rgba(56, 189, 248, 0.2);
+      border-top-color: #38bdf8;
+      border-radius: 50%;
+      animation: mini-shield-spin 0.8s linear infinite;
+    }
+    @keyframes mini-shield-spin {
+      to { transform: rotate(360deg); }
+    }
+    .shield-mini-room {
+      font-size: 16px;
+      font-weight: 800;
+      color: #38bdf8;
+      letter-spacing: 0.05em;
+      text-shadow: 0 0 10px rgba(56, 189, 248, 0.5);
+    }
+    .shield-mini-status {
+      font-size: 13px;
+      color: rgba(255, 255, 255, 0.75);
+    }
   `;
 }
 
@@ -348,7 +398,60 @@ export function patchExistingLobbyLabels() {
 }
 
 /**
- * 指定されたコンテナ要素内に、全画面UI（3Dコンテナ、HUD、ロビー、待機室）を一括マウント
+ * ★【Phase 1】超ミニマル・エントリーシールド コントローラー
+ */
+export const EntryShield = {
+  show(roomText = 'CONNECTING...', statusText = 'ルームへ合流中...') {
+    let el = document.getElementById('entry-shield');
+    if (!el) {
+      const container = document.getElementById('app-container') || document.body;
+      el = document.createElement('div');
+      el.id = 'entry-shield';
+      el.className = 'entry-shield-minimal';
+      el.innerHTML = `
+        <div class="shield-mini-spinner"></div>
+        <div id="shield-room-text" class="shield-mini-room">${roomText}</div>
+        <div id="shield-status-text" class="shield-mini-status">${statusText}</div>
+      `;
+      container.appendChild(el);
+    }
+    const roomEl = document.getElementById('shield-room-text');
+    const statusEl = document.getElementById('shield-status-text');
+    if (roomEl && roomText) roomEl.textContent = roomText;
+    if (statusEl && statusText) statusEl.textContent = statusText;
+
+    el.classList.remove('hidden');
+    el.style.removeProperty('display');
+    el.style.opacity = '1';
+    el.style.pointerEvents = 'auto';
+  },
+
+  update(roomText, statusText) {
+    const roomEl = document.getElementById('shield-room-text');
+    const statusEl = document.getElementById('shield-status-text');
+    if (roomEl && roomText) roomEl.textContent = roomText;
+    if (statusEl && statusText) statusEl.textContent = statusText;
+  },
+
+  hide() {
+    const el = document.getElementById('entry-shield');
+    if (!el) return;
+    el.style.transition = 'opacity 0.3s ease';
+    el.style.opacity = '0';
+    el.style.pointerEvents = 'none';
+    setTimeout(() => {
+      el.classList.add('hidden');
+      el.style.setProperty('display', 'none', 'important');
+    }, 300);
+  }
+};
+
+if (typeof window !== 'undefined') {
+  window.EntryShield = EntryShield;
+}
+
+/**
+ * 指定されたコンテナ要素内に、全画面UI（3Dコンテナ、HUD、ロビー、待機室、シールド）を一括マウント
  * @param {HTMLElement} container 
  */
 export function mountAllUI(container) {
@@ -382,6 +485,19 @@ export function mountAllUI(container) {
     container.appendChild(waitScreen);
   }
 
+  // ★ 超ミニマル・エントリーシールドがまだなければ動的追加
+  if (!document.getElementById('entry-shield')) {
+    const shield = document.createElement('div');
+    shield.id = 'entry-shield';
+    shield.className = 'entry-shield-minimal hidden';
+    shield.innerHTML = `
+      <div class="shield-mini-spinner"></div>
+      <div id="shield-room-text" class="shield-mini-room">CONNECTING...</div>
+      <div id="shield-status-text" class="shield-mini-status">ルームへ合流中...</div>
+    `;
+    container.appendChild(shield);
+  }
+
   patchExistingLobbyLabels();
   syncGravityUserName();
 
@@ -413,12 +529,13 @@ export const UIController = {
     const staticOverlay = document.getElementById('test-lobby-overlay');
     if (screenLobby) {
       screenLobby.classList.remove('hidden');
-      screenLobby.style.removeProperty('display');
+      screenLobby.classList.add('active-screen');
+      screenLobby.style.setProperty('display', 'flex', 'important');
     }
     if (staticOverlay) {
       staticOverlay.classList.remove('hidden');
-      staticOverlay.style.removeProperty('display');
-      staticOverlay.style.display = 'flex';
+      staticOverlay.classList.add('active-screen');
+      staticOverlay.style.setProperty('display', 'flex', 'important');
     }
     document.getElementById('screen-waiting')?.classList.add('hidden');
     this._setHUDVisible(false);
@@ -429,8 +546,8 @@ export const UIController = {
     const waitScreen = document.getElementById('screen-waiting');
     if (waitScreen) {
       waitScreen.classList.remove('hidden');
-      waitScreen.style.removeProperty('display');
-      waitScreen.style.display = 'flex';
+      waitScreen.classList.add('active-screen');
+      waitScreen.style.setProperty('display', 'flex', 'important');
     }
     const tag = document.getElementById('waiting-room-tag');
     if (tag) tag.innerText = `ROOM #${roomId}`;
@@ -442,6 +559,7 @@ export const UIController = {
 
     const waitScreen = document.getElementById('screen-waiting');
     if (waitScreen) {
+      waitScreen.classList.remove('active-screen');
       waitScreen.classList.add('hidden');
       waitScreen.style.setProperty('display', 'none', 'important');
     }
@@ -458,18 +576,21 @@ export const UIController = {
   _hideAllLobbyOverlays() {
     const staticOverlay = document.getElementById('test-lobby-overlay');
     if (staticOverlay) {
+      staticOverlay.classList.remove('active-screen');
       staticOverlay.classList.add('hidden');
       staticOverlay.style.setProperty('display', 'none', 'important');
     }
 
     const screenLobby = document.getElementById('screen-lobby');
     if (screenLobby) {
+      screenLobby.classList.remove('active-screen');
       screenLobby.classList.add('hidden');
       screenLobby.style.setProperty('display', 'none', 'important');
     }
 
     const allOverlays = document.querySelectorAll('.gravity-screen-overlay');
     allOverlays.forEach(overlay => {
+      overlay.classList.remove('active-screen');
       overlay.classList.add('hidden');
       overlay.style.setProperty('display', 'none', 'important');
     });
