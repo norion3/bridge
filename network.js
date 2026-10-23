@@ -1,13 +1,15 @@
 // network.js: AgentSDK公式仕様完全準拠 ＆ ホスト主導型ハンドシェイク同期エンジン
-// ★ Phase 2 実装版（エレベーター搭乗レーン eLane 同期 ＆ 10Hzパケット最適化）：
-//   1. 【エレベーター搭乗レーン（eLane）のパケット同封】
-//      c.onElevator 搭乗中のみ、100ms周期の POS パケットに `e: c.elevatorLane`（0, 1, 2）を付与。
-//      搭乗していない通常時はキーを完全省略し、通信帯域のパケット肥大をゼロ化。
-//   2. 【相手画面のカゴ昇降速度・アニメーション完全一致】
-//      受信側で targetChar.elevatorLane を即座に確定させ、相手のカゴ昇降時間（duration）や
-//      カゴ位置・イージングバウンスとの足元ズレ・浮き沈みを100%解消。
-//   3. 【散乱ブロック集約・ホスト主導ハンドシェイクの完全維持】
-//      Phase 3 実装済みの散乱ブロックキュー（scatters）、250ms安全スリープ、10Hz集約送信は100%維持。
+// ★ Phase 1 実装版（リスタート完全同期 ＆ リスタートボタン表示権限フック連動）：
+//   1. 【リスタートパケットへのシード＆スナップショット同封】
+//      broadcastRestartGame(newSeed, snapshot) を新設し、ホストが生成した新しいシード値と
+//      初期島周辺（Stage 0〜2）のスナップショット（ブロック・階段・アイテム）を1通に完全集約して送出。
+//   2. 【受信ハンドラでの新世界情報伝達】
+//      RESTART_GAME 受信時に packet.seed と packet.snapshot を window.onRemoteRestartReceived(packet) へ伝達。
+//   3. 【左下リスタートボタン表示権限の自動更新フック連動】
+//      createRoom, joinRoom, exitRoom, およびスロット確定（_applyRoomMembersSync）時に
+//      window.updateRestartButtonVisibility() を安全にキックし、ゲスト端末での誤爆を確実に防止。
+//   4. 【既存のアイテム・エレベーター・散乱ブロック同期の完全維持】
+//      10Hz パケット集約、250ms 安全スリープ、ホスト主導型ハンドシェイクは 100% 維持。
 
 import {
   player,
@@ -18,7 +20,15 @@ import {
   refreshCharacterStackVisuals,
   resetCharacterToStageZero
 } from './character.js';
-import { STAGES, buildWorld, manageBlockSpawns, bridges, floorBlocksByStage } from './world.js';
+import {
+  STAGES,
+  buildWorld,
+  manageBlockSpawns,
+  bridges,
+  floorBlocksByStage,
+  floorItems,
+  spawnItem
+} from './world.js';
 import { resetParticlePools, floorBlockPool } from './particles.js';
 
 /**
@@ -38,7 +48,7 @@ async function safeExitCurrentRoom() {
     const exitPromise = window.AgentSDK.room.exit();
     const timeoutPromise = new Promise(resolve => setTimeout(() => resolve({ timeout: true }), 700));
     await Promise.race([exitPromise, timeoutPromise]);
-    // ★【公式AI推奨】切断完了後、250ms の安全マージンウェイトを挟む
+    // ★ 切断完了後、250ms の安全マージンウェイトを挟む
     await new Promise(r => setTimeout(r, 250));
   } catch (e) {
     console.warn('[network.js] safeExitCurrentRoom caught:', e);
@@ -80,14 +90,27 @@ function safeShowGameScreen() {
 }
 
 /**
- * ホスト端末の世界状態を軽量収集（Stage 0〜1周辺のみ）
+ * リスタートボタンなどの表示権限更新を安全に呼び出すヘルパー
+ */
+function notifyRestartButtonVisibility() {
+  if (typeof window !== 'undefined' && typeof window.updateRestartButtonVisibility === 'function') {
+    try {
+      window.updateRestartButtonVisibility();
+    } catch (e) {
+      console.warn('[network.js] updateRestartButtonVisibility failed:', e);
+    }
+  }
+}
+
+/**
+ * ホスト端末の世界状態を軽量収集（Stage 0〜2周辺のブロック、階段、およびアイテム）
  */
 function captureWorldSnapshot() {
   const blocks = [];
   if (Array.isArray(floorBlockPool)) {
     for (let idx = 0; idx < floorBlockPool.length; idx++) {
       const b = floorBlockPool[idx];
-      if (b && b.active && !b.attracting && b.pos && (b.stageIdx === 0 || b.stageIdx === 1)) {
+      if (b && b.active && !b.attracting && b.pos && (b.stageIdx === 0 || b.stageIdx === 1 || b.stageIdx === 2)) {
         blocks.push({
           poolIdx: idx,
           stageIdx: b.stageIdx || 0,
@@ -105,7 +128,7 @@ function captureWorldSnapshot() {
   if (Array.isArray(bridges)) {
     for (let bi = 0; bi < bridges.length; bi++) {
       const b = bridges[bi];
-      if (b && (b.stageIdx === 0 || b.stageIdx === 1) && Array.isArray(b.planks) && !b.isSlide && !b.isJump) {
+      if (b && (b.stageIdx === 0 || b.stageIdx === 1 || b.stageIdx === 2) && Array.isArray(b.planks) && !b.isSlide && !b.isJump) {
         for (let pIdx = 0; pIdx < b.planks.length; pIdx++) {
           const p = b.planks[pIdx];
           if (p && p.teamId) {
@@ -121,7 +144,24 @@ function captureWorldSnapshot() {
     }
   }
 
-  return { blocks, planks };
+  const items = [];
+  if (Array.isArray(floorItems)) {
+    for (let ii = 0; ii < floorItems.length; ii++) {
+      const it = floorItems[ii];
+      if (it && it.active && it.pos && it.stageIdx <= 2) {
+        items.push({
+          itemId: it.itemId,
+          stageIdx: it.stageIdx,
+          type: it.type,
+          x: Number(it.pos.x.toFixed(2)),
+          y: Number(it.pos.y.toFixed(2)),
+          z: Number(it.pos.z.toFixed(2))
+        });
+      }
+    }
+  }
+
+  return { blocks, planks, items };
 }
 
 /**
@@ -186,6 +226,8 @@ export const NetworkManager = {
   _pendingConsumes: [],
   _pendingBlows: [],
   _pendingScatters: [],
+
+  captureWorldSnapshot: captureWorldSnapshot,
 
   queuePlankBuild(stageIdx, laneIdx, plankIdx, teamId) {
     if (!this.isMultiplayerActive) return;
@@ -390,6 +432,9 @@ export const NetworkManager = {
         updatePlayerName(window.GRAVITY_USER_NAME);
       }
 
+      // ★ ボタン表示状態の更新通知（ホストなので表示）
+      notifyRestartButtonVisibility();
+
       this.currentSeed = (typeof createdRoomId === 'string')
         ? Math.abs(createdRoomId.split('').reduce((acc, char) => (acc << 5) - acc + char.charCodeAt(0), 0))
         : Math.floor(Math.random() * 90000000) + 10000000;
@@ -489,6 +534,9 @@ export const NetworkManager = {
       this._bindRemoteSlot(0, 'norion');
 
       safeShowGameScreen();
+
+      // ★ ボタン表示状態の更新通知（ゲストなので非表示）
+      notifyRestartButtonVisibility();
 
       return true;
     } finally {
@@ -715,6 +763,7 @@ export const NetworkManager = {
           }
           break;
 
+        // ★【Phase 1 核心】パケット内の seed と snapshot を確実に渡して世界を同期再構築
         case 'RESTART_GAME':
           if (typeof window.onRemoteRestartReceived === 'function') {
             window.onRemoteRestartReceived(packet);
@@ -762,6 +811,9 @@ export const NetworkManager = {
     }
   },
 
+  /**
+   * ホストからのスナップショット反映（ブロック・階段・アイテムの完全復元）
+   */
   _applyRoomMembersSync(syncedSlots, seed, snapshot = null) {
     if (!Array.isArray(syncedSlots)) return;
     this.slots = syncedSlots;
@@ -799,13 +851,33 @@ export const NetworkManager = {
             }
           });
         }
-      }
-    } else if (!this.isHost && snapshot && Array.isArray(snapshot.planks)) {
-      snapshot.planks.forEach(p => {
-        if (typeof window.applyRemotePlankBuilt === 'function') {
-          window.applyRemotePlankBuilt(p.stageIdx, p.laneIdx, p.plankIdx, p.teamId);
+
+        if (snapshot && Array.isArray(snapshot.items) && activeScene) {
+          snapshot.items.forEach(si => {
+            const existing = floorItems.find(li => li.active && (li.itemId === si.itemId || (li.stageIdx === si.stageIdx && li.type === si.type)));
+            if (!existing) {
+              spawnItem(activeScene, si.stageIdx, si.type);
+            }
+          });
         }
-      });
+      }
+    } else if (!this.isHost && snapshot) {
+      if (Array.isArray(snapshot.planks)) {
+        snapshot.planks.forEach(p => {
+          if (typeof window.applyRemotePlankBuilt === 'function') {
+            window.applyRemotePlankBuilt(p.stageIdx, p.laneIdx, p.plankIdx, p.teamId);
+          }
+        });
+      }
+
+      if (Array.isArray(snapshot.items) && activeScene) {
+        snapshot.items.forEach(si => {
+          const existing = floorItems.find(li => li.active && (li.itemId === si.itemId || (li.stageIdx === si.stageIdx && li.type === si.type)));
+          if (!existing) {
+            spawnItem(activeScene, si.stageIdx, si.type);
+          }
+        });
+      }
     }
 
     syncedSlots.forEach((s) => {
@@ -845,6 +917,7 @@ export const NetworkManager = {
             : this.myUser.name;
           updatePlayerName(myRealName);
         }
+        notifyRestartButtonVisibility();
         return;
       }
 
@@ -854,6 +927,8 @@ export const NetworkManager = {
         this._restoreSlotToAI(s.slot);
       }
     });
+
+    notifyRestartButtonVisibility();
   },
 
   _bindRemoteSlot(slotIndex, playerName) {
@@ -991,7 +1066,6 @@ export const NetworkManager = {
 
       const posList = [];
 
-      // ★【Phase 2 核心】自キャラのエレベーター搭乗中のみレーン番号（eLane）を同封
       const myState = getCharacterActionState(myChar);
       const myPosPayload = {
         slot: this.mySlot,
@@ -1046,7 +1120,6 @@ export const NetworkManager = {
               magnet: Boolean(charObj.magnetActive),
               invuln: Boolean(charObj.invulnerableTimer > 0)
             };
-            // ★ AIキャラのエレベーターレーンも搭乗時のみ同封
             if (aiState === 'ELEVATOR' && typeof charObj.elevatorLane === 'number') {
               aiPosPayload.e = charObj.elevatorLane;
             }
@@ -1054,7 +1127,6 @@ export const NetworkManager = {
           }
         });
 
-        // 1秒周期の TIME_SYNC パケット送信
         this._timeSyncCounter = (this._timeSyncCounter || 0) + 1;
         if (this._timeSyncCounter >= 10) {
           this._timeSyncCounter = 0;
@@ -1070,7 +1142,6 @@ export const NetworkManager = {
         }
       }
 
-      // バッファに溜まっている階段設置、ブロック取得、アイテム消費、モブ吹き飛ばし、散乱ブロック情報をアグリゲーションして同封
       const outgoingPlanks = this._pendingPlanks.length > 0 ? [...this._pendingPlanks] : undefined;
       const outgoingPicks = this._pendingPicks.length > 0 ? [...this._pendingPicks] : undefined;
       const outgoingConsumes = this._pendingConsumes.length > 0 ? [...this._pendingConsumes] : undefined;
@@ -1167,7 +1238,6 @@ export const NetworkManager = {
     targetChar.remoteActionState = packet.state || 'NORMAL';
     targetChar.lastPacketTime = performance.now();
 
-    // ★【Phase 2 核心】相手のエレベーター搭乗レーンを同期
     if (packet.state === 'ELEVATOR') {
       if (packet.e !== undefined && typeof packet.e === 'number') {
         targetChar.elevatorLane = packet.e;
@@ -1215,6 +1285,20 @@ export const NetworkManager = {
     } catch (e) {
       console.warn('[NetworkManager] sendMessage failed:', e);
     }
+  },
+
+  /**
+   * ★【Phase 1 核心】ホストが発行した新しいシード値と初期スナップショットを同封して送信
+   */
+  broadcastRestartGame(newSeed, snapshot = null) {
+    if (!this.isMultiplayerActive || !this.isHost) return;
+    const finalSnapshot = snapshot || captureWorldSnapshot();
+    this.currentSeed = newSeed;
+    this._sendCustomMessage({
+      event: 'RESTART_GAME',
+      seed: newSeed,
+      snapshot: finalSnapshot
+    });
   },
 
   broadcastSpawnBlocksBatch(stageIdx, blocksArray) {
@@ -1287,6 +1371,7 @@ export const NetworkManager = {
         });
       }
     }
+    notifyRestartButtonVisibility();
   },
 
   async exitRoom() {
@@ -1303,6 +1388,8 @@ export const NetworkManager = {
     this._seedApplied = false;
 
     this._hasRegisteredListener = false;
+
+    notifyRestartButtonVisibility();
 
     if (typeof window !== 'undefined' && window.UIController && typeof window.UIController.showLobby === 'function') {
       window.UIController.showLobby();

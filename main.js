@@ -1,12 +1,12 @@
 // main.js: ゲーム全体の起動指揮・Three.js初期化・メインループ・入力・HUD制御
-// ★ Phase 3 実装版（先行AIによる奥のコース伸長安定化 ＆ 新設ステージへの保留ボーナス消去即時適用）：
-//   1. 【先行AIに対するステージ伸長マージン適正化】
-//      手前でプレイヤーが静止・放置していても、先行AI（黄色キャラ）が奥へ進んだ際に
-//      ステージ生成遅延を起こさないよう、courseCheckTimer の伸長境界ガードを適正化（STAGES.length - 4）。
-//   2. 【ステージ生成時の保留キュー即時フラッシュ連動】
-//      extendCourse() 呼び出し直後に gimmicks.js の flushPendingBonusConsumes() を連動実行。
-//      奥の島・スロープが生成された瞬間に、先行AIが回収済みのスロープ白ブロックを100%確実に即座消去。
-//   3. 既存の4Hz伸長チェック、海面波アニメーション、リモート走者のLerp追従、100ms周期アグリゲーションは100%維持。
+// ★ Phase 2 実装版（世界再構築のシード完全同期 ＆ リスタートボタン表示権限の厳格制御）：
+//   1. 【resetGame(newSeed, snapshot) への完全同期改修】
+//      ホスト実行時：新シード値を発行して buildWorld を行い、初期配置スナップショットを添えて broadcastRestartGame を送信。
+//      ゲスト受取時：届いた seed で世界を再構築し、snapshot のアイテム・ブロック・階段を両画面で100%完全一致復元。
+//   2. 【左下リスタートボタン表示権限の厳格制御（updateRestartButtonVisibility）】
+//      シングルプレイまたはマルチホスト時のみ `display: flex`、マルチゲスト時は確実に `display: none`。
+//      結果画面のリスタートボタン（btn-restart）も同様に制御し、ゲスト側での誤爆を完全防止。
+//   3. 【先行AI伸長安定化・保留キュー即時フラッシュ・100ms周期アグリゲーションの完全維持】
 
 import { mountAllUI } from './dom.js';
 
@@ -30,12 +30,17 @@ import {
   cleanupOldData,
   manageBlockSpawns,
   extendCourse,
-  seaMesh
+  seaMesh,
+  floorBlocksByStage,
+  floorItems,
+  spawnItem
 } from './world.js';
 import {
   initParticlePools,
   spawnPuffCloud,
-  spawnSpeedStepRing
+  spawnSpeedStepRing,
+  floorBlockPool,
+  resetParticlePools
 } from './particles.js';
 import {
   setSystemCallbacks,
@@ -55,7 +60,7 @@ if (typeof window !== 'undefined') {
 // GRAVITY環境 / 通常ブラウザ（GitHub Pages）の自動判別スイッチ
 export const IS_GRAVITY_APP = typeof window !== 'undefined' && !!window.AgentSDK;
 
-// 将来のマルチプレイ同期用ステート
+// 将来のマルチプレイ同期用ステート（後方互換用）
 export const NetworkState = {
   isMultiplayer: false,
   isHost: true,
@@ -77,12 +82,44 @@ let placedPlankCount = 0;
 let lastDisplayedSec = -1;
 
 /**
+ * ★【Phase 2 核心】リスタートボタン（クイックリスタート＆結果モーダル）の表示権限更新関数
+ * シングルプレイ、またはマルチのホストのみ表示し、ゲスト端末では完全に非表示にする
+ */
+export function updateRestartButtonVisibility() {
+  const isMulti = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive);
+  const isHost = Boolean(isMulti && window.NetworkManager.isHost);
+
+  const quickRestartBtn = document.getElementById('btn-restart-quick');
+  if (quickRestartBtn) {
+    if (!isMulti || isHost) {
+      quickRestartBtn.style.setProperty('display', 'flex', 'important');
+      quickRestartBtn.classList.remove('hidden');
+    } else {
+      quickRestartBtn.style.setProperty('display', 'none', 'important');
+      quickRestartBtn.classList.add('hidden');
+    }
+  }
+
+  const resultRestartBtn = document.getElementById('btn-restart');
+  if (resultRestartBtn) {
+    if (!isMulti || isHost) {
+      resultRestartBtn.style.setProperty('display', 'block', 'important');
+    } else {
+      resultRestartBtn.style.setProperty('display', 'none', 'important');
+    }
+  }
+}
+
+if (typeof window !== 'undefined') {
+  window.updateRestartButtonVisibility = updateRestartButtonVisibility;
+}
+
+/**
  * ホストから届いた残り秒数を平滑同期
  */
 export function applyRemoteTimeSync(remoteTimeLeft) {
   if (typeof remoteTimeLeft === 'number' && !isNaN(remoteTimeLeft)) {
     const diff = Math.abs(timeLeft - remoteTimeLeft);
-    // 0.4秒以上のズレがある場合のみ滑らかに補正
     if (diff > 0.4) {
       if (diff > 2.0) {
         timeLeft = remoteTimeLeft;
@@ -109,8 +146,14 @@ if (typeof window !== 'undefined') {
   window.getGameTimeLeft = () => timeLeft;
   window.applyRemoteTimeSync = applyRemoteTimeSync;
   window.applyRemoteTimeUp = applyRemoteTimeUp;
-  window.onRemoteRestartReceived = () => {
-    resetGame();
+  
+  // ★【Phase 2 核心】ホストからリスタート指示（シード＆スナップショット同封）を受信した際の連携ハンドラ
+  window.onRemoteRestartReceived = (packet) => {
+    if (packet && packet.seed) {
+      resetGame(packet.seed, packet.snapshot);
+    } else {
+      resetGame();
+    }
   };
 }
 
@@ -123,6 +166,7 @@ export function launchGameEngine() {
   if (sound) {
     sound.init();
   }
+  updateRestartButtonVisibility();
 }
 
 if (typeof window !== 'undefined') {
@@ -226,9 +270,15 @@ export function onTimeUp() {
     resultModal.classList.remove('hidden');
     resultModal.style.display = 'flex';
   }
+  updateRestartButtonVisibility();
 }
 
-export function resetGame() {
+/**
+ * ★【Phase 2 核心】リスタート実行関数（新シード値およびスナップショットの完全同期反映）
+ * @param {number|null} remoteSeed ホストから届いた新シード値（ゲスト受取時）
+ * @param {Object|null} remoteSnapshot ホストから届いた初期島スナップショット（ブロック・アイテム・階段）
+ */
+export function resetGame(remoteSeed = null, remoteSnapshot = null) {
   const resultModal = document.getElementById('modal-result');
   if (resultModal) {
     resultModal.classList.add('hidden');
@@ -252,15 +302,79 @@ export function resetGame() {
   const timerEl = document.getElementById('hud-timer');
   if (timerEl) timerEl.classList.remove('timer-critical');
 
-  buildWorld(scene);
+  const isMulti = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive);
+  const isHost = Boolean(isMulti && window.NetworkManager.isHost);
+
+  // 1. シード値の確定
+  let targetSeed = remoteSeed;
+  if (!targetSeed) {
+    targetSeed = Math.floor(Math.random() * 90000000) + 10000000;
+  }
+
+  // 2. 新しいシード値で世界を完全再構築
+  buildWorld(scene, targetSeed);
   resetCharacters(STAGES);
 
-  camera.position.set(0, STAGES[0].y + 24, STAGES[0].z + 12);
-  camera.lookAt(0, STAGES[0].y, STAGES[0].z - 5);
+  // 3. 視点カメラの初期化
+  if (camera) {
+    camera.position.set(0, STAGES[0].y + 24, STAGES[0].z + 12);
+    camera.lookAt(0, STAGES[0].y, STAGES[0].z - 5);
+  }
 
-  for (let i = 0; i < 30; i++) manageBlockSpawns(scene, isGameOver);
+  // 4. 世界状態の復元または新規補充
+  if (!isHost && isMulti && remoteSnapshot) {
+    // 【ゲスト端末】：ホストから届いたスナップショットのブロック・階段・アイテムを完全復元
+    if (Array.isArray(remoteSnapshot.blocks)) {
+      floorBlockPool.forEach(b => {
+        b.active = false;
+        b.mesh.visible = false;
+        b.attracting = false;
+      });
+      if (floorBlocksByStage && typeof floorBlocksByStage.forEach === 'function') {
+        floorBlocksByStage.forEach(bucket => { bucket.length = 0; });
+      }
+
+      remoteSnapshot.blocks.forEach(b => {
+        if (typeof window.applyRemoteBlockSpawned === 'function') {
+          window.applyRemoteBlockSpawned(b.stageIdx, b.poolIdx, b.x, b.y, b.z, b.teamId, b.blockId);
+        }
+      });
+    }
+
+    if (Array.isArray(remoteSnapshot.planks)) {
+      remoteSnapshot.planks.forEach(p => {
+        if (typeof window.applyRemotePlankBuilt === 'function') {
+          window.applyRemotePlankBuilt(p.stageIdx, p.laneIdx, p.plankIdx, p.teamId);
+        }
+      });
+    }
+
+    if (Array.isArray(remoteSnapshot.items) && scene) {
+      remoteSnapshot.items.forEach(si => {
+        const existing = floorItems.find(li => li.active && (li.itemId === si.itemId || (li.stageIdx === si.stageIdx && li.type === si.type)));
+        if (!existing) {
+          spawnItem(scene, si.stageIdx, si.type);
+        }
+      });
+    }
+  } else {
+    // 【ホスト端末またはシングルプレイ】：ローカルで初期ブロックを補充
+    for (let i = 0; i < 30; i++) {
+      manageBlockSpawns(scene, false);
+    }
+
+    // ホスト端末の場合は、確定した新シード値と初期配置スナップショットを1通に同封して送出
+    if (isMulti && isHost && window.NetworkManager && typeof window.NetworkManager.broadcastRestartGame === 'function') {
+      const snap = (typeof window.NetworkManager.captureWorldSnapshot === 'function')
+        ? window.NetworkManager.captureWorldSnapshot()
+        : null;
+      window.NetworkManager.broadcastRestartGame(targetSeed, snap);
+    }
+  }
+
   updateHUD();
   updateTimerHUD(true);
+  updateRestartButtonVisibility();
 }
 
 export function setupControls() {
@@ -347,12 +461,6 @@ export function setupControls() {
 
   const quickRestartBtn = document.getElementById('btn-restart-quick');
   if (quickRestartBtn) {
-    if (!NetworkState.isMultiplayer || NetworkState.isHost) {
-      quickRestartBtn.style.display = 'flex';
-    } else {
-      quickRestartBtn.style.display = 'none';
-    }
-
     const onQuickRestart = (e) => {
       if (e) {
         e.preventDefault();
@@ -360,18 +468,6 @@ export function setupControls() {
       }
       sound.init();
       resetGame();
-
-      const isMulti = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive);
-      const isHost = (isMulti && window.NetworkManager.isHost);
-      if (isMulti && isHost && window.AgentSDK && window.AgentSDK.room) {
-        try {
-          window.AgentSDK.room.sendMessage({
-            message: JSON.stringify({ event: 'RESTART_GAME' })
-          });
-        } catch (err) {
-          console.warn('[main.js] Failed to broadcast RESTART_GAME:', err);
-        }
-      }
     };
     quickRestartBtn.addEventListener('click', onQuickRestart);
     quickRestartBtn.addEventListener('touchend', onQuickRestart);
@@ -423,9 +519,11 @@ export function setupControls() {
 
   const restartBtn = document.getElementById('btn-restart');
   if (restartBtn) {
-    restartBtn.addEventListener('click', resetGame);
-    restartBtn.addEventListener('touchend', resetGame);
+    restartBtn.addEventListener('click', () => resetGame());
+    restartBtn.addEventListener('touchend', () => resetGame());
   }
+
+  updateRestartButtonVisibility();
 }
 
 export function initThree() {
@@ -489,7 +587,6 @@ export function initThree() {
 let lastTime = performance.now();
 let blockSpawnTimer = 0;
 let cleanupTimer = 0;
-// ★【Phase B 最適化】ステージ伸長判定（extendCourse）の実行頻度を0.25秒に間引き
 let courseCheckTimer = 0;
 
 export function animate(currentTime) {
@@ -509,8 +606,8 @@ export function animate(currentTime) {
     const moveDirZ = input.active ? input.y : 0;
 
     const isMulti = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive);
-    const isHost = isMulti && window.NetworkManager.isHost;
-    const isGuest = isMulti && !isHost;
+    const isHost = Boolean(isMulti && window.NetworkManager.isHost);
+    const isGuest = Boolean(isMulti && !isHost);
 
     if (player) {
       if (typeof window !== 'undefined') {
@@ -717,7 +814,7 @@ export function animate(currentTime) {
       cleanupTimer = 0;
     }
 
-    // ★【Phase 3 最適化】先行AIの進行に合わせた確実なステージ伸長 ＆ 保留ボーナス消去の即時適用
+    // 先行AIの進行に合わせた確実なステージ伸長 ＆ 保留ボーナス消去の即時適用
     courseCheckTimer += dt;
     if (courseCheckTimer > 0.25) {
       courseCheckTimer = 0;
@@ -728,10 +825,8 @@ export function animate(currentTime) {
           maxStage = charStage;
         }
       }
-      // 先行AIが手前の島から先へ進んだ際、余裕を持ったマージン（-4）で早期に奥を接続
       if (maxStage >= STAGES.length - 4) {
         extendCourse(scene);
-        // 新しいステージ・橋・スロープがシーンに追加された瞬間に、未消化だった消去IDを一括適用
         flushPendingBonusConsumes();
       }
     }
