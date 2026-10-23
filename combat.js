@@ -1,12 +1,16 @@
 // combat.js: タックル衝突・ノックアウト・攻撃スキル・ブロック散乱専用モジュール
-// ★ Phase 2 実装版（被弾散乱ブロックの生通信連打停止 ＆ 100ms周期キューイング化）：
-//   1. 【散乱ブロック（SCATTER_BLOCKS）の生 sendMessage 連打停止】
-//      scatterBricks 内で起きていた生の単発 sendMessage 連射を廃止。
-//      NetworkManager.queueScatterBlocks を呼び出して 100ms 周期の POS パケットに同封させるためバッファへ蓄積。
-//   2. 【タックル時通信バースト・キュー溢れの完全根絶】
-//      激しい正面衝突や連続被弾時でも、通信呼び出しが即時連打されず、厳格な 10Hz 通信を 100% 維持。
-//   3. 【既存の衝突判定・ホスト着地確定・スキル演出の完全維持】
-//      スタック同数相打ちクラッシュ、判定マージン拡大（1.95m）、無敵時間（1.4秒）、スキル発射は100%維持。
+// ★ 確定仕様（ゼロバースト・決定論的圧縮アーキテクチャ）：
+//   1. 【スキル発射 ＆ ノックアウトの生 sendMessage 直打ち完全根絶】
+//      fireHomingCrystal / fireThunderStrike / executeSingleKnockout 内で起きていた
+//      生の単発 sendMessage 呼び出しを撤廃。NetworkManager.queueSkillFire および
+//      NetworkManager.queueKnockout へ切り替え、100ms周期の POS パケットに完全集約。
+//   2. 【ゼロレイテンシ（操作遅延0ms）の完全維持】
+//      スキル発射音、自端末での弾丸生成、カメラワーク、被弾衝撃波などのローカル演出は
+//      入力／衝突フレームで即座（0ms）に実行。相手への通知のみを10Hzキューに預ける。
+//   3. 【散乱ブロック（scatterBricks）の極小フラット配列化 ＆ 決定論的ID生成】
+//      散乱ブロックIDを [ステージ番号] + [走者スロット番号] + [短縮基点ID] + [連番] の
+//      決定論的ルールで生成し、フラットな2D座標配列 [[x, z], ...] として同封。
+//      散乱直後に拾われた場合でも、全端末で完全な O(1) 参照・消去の整合性を担保。
 
 import { TEAMS } from './constants.js';
 import {
@@ -42,6 +46,7 @@ export function setCombatCallbacks(sound, updateHUD) {
 
 /**
  * 相手端末で発生したブロック散乱（タックル・ゲート・被弾）の受取反映ハンドラ
+ * network.js で決定論的に復元された { blockId, x, z } の配列を受け取って床面に配置
  */
 export function applyRemoteScatterBlocks(stageIdx, blocks) {
   if (!Array.isArray(blocks) || blocks.length === 0) return;
@@ -86,7 +91,7 @@ export function applyRemoteScatterBlocks(stageIdx, blocks) {
     poolItem.team = TEAMS.NEUTRAL;
     poolItem.pos = poolItem.mesh.position;
     poolItem.stageIdx = stageIdx;
-    poolItem.blockId = b.blockId || `scatter_${stageIdx}_${b.x.toFixed(2)}_${b.z.toFixed(2)}`;
+    poolItem.blockId = b.blockId;
     poolItem.attracting = false;
 
     stageBlocks.push(poolItem);
@@ -95,6 +100,7 @@ export function applyRemoteScatterBlocks(stageIdx, blocks) {
 
 /**
  * リモートからノックアウト被弾通知を受信した際のリアクションハンドラ
+ * 確定着地座標へ強制移動し、直前の移動補間による引き戻し（ラバーバンド）を遮断
  */
 export function applyRemoteKnockout(loserSlot, pushX, pushZ, targetX = null, targetZ = null) {
   const loserChar = characters[loserSlot];
@@ -154,7 +160,6 @@ export function applyRemoteKnockout(loserSlot, pushX, pushZ, targetX = null, tar
   triggerLandingShockwave(loserChar.pos.x, loserChar.pos.y + 0.1, loserChar.pos.z, 2.0, 0xef4444);
 }
 
-// グローバル公開（network.js から安全に呼べるように登録）
 if (typeof window !== 'undefined') {
   window.applyRemoteScatterBlocks = applyRemoteScatterBlocks;
   window.applyRemoteKnockout = applyRemoteKnockout;
@@ -162,7 +167,7 @@ if (typeof window !== 'undefined') {
 
 /**
  * タックル被弾・ゲート通過時の所持ブロック床面散乱
- * ★【Phase 2 改善】生 sendMessage の即時乱射を撤廃し、100ms周期パケットへ相乗りさせるためキューイング
+ * 決定論的ID（s_{stage}_{slot}_{baseId}_{i}）とフラット座標配列 [[x, z], ...] を生成してキューイング
  * @param {THREE.Scene} scene 
  * @param {Object} char 
  * @param {number} countToDrop 
@@ -175,7 +180,11 @@ export function scatterBricks(scene, char, countToDrop, forceBroadcast = false) 
   const maxR = stage.r - 1.0;
   const stageBlocks = getFloorBlocksForStage(char.currentStage);
   const centerX = stage.x || 0.0;
-  const droppedBlocks = [];
+
+  const charSlot = characters.indexOf(char) >= 0 ? characters.indexOf(char) : 0;
+  // 6桁短縮タイムスタンプを基点IDとして使用
+  const baseId = Math.floor(Date.now() % 1000000);
+  const flatCoords = [];
 
   for (let i = 0; i < count; i++) {
     removeBrickFromCharacter(char, updateHUDRef);
@@ -213,7 +222,8 @@ export function scatterBricks(scene, char, countToDrop, forceBroadcast = false) 
     }
     if (!poolItem) break;
 
-    const uniqueScatterId = `s_${char.currentStage}_${Date.now().toString(36)}_${i}`;
+    // 決定論的ブロックIDの生成
+    const uniqueScatterId = `s_${char.currentStage}_${charSlot}_${baseId}_${i}`;
 
     poolItem.mesh.material = sharedMats.blockNeutral;
     poolItem.mesh.position.set(dropX, floorY, dropZ);
@@ -229,35 +239,23 @@ export function scatterBricks(scene, char, countToDrop, forceBroadcast = false) 
 
     stageBlocks.push(poolItem);
 
-    droppedBlocks.push({
-      blockId: uniqueScatterId,
-      x: Number(dropX.toFixed(2)),
-      y: Number(floorY.toFixed(2)),
-      z: Number(dropZ.toFixed(2)),
-      teamId: 'neutral'
-    });
+    // 通信用フラット2D座標配列
+    flatCoords.push([Number(dropX.toFixed(2)), Number(dropZ.toFixed(2))]);
   }
 
   const isMulti = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive);
   const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
   const shouldBroadcast = isMulti && (forceBroadcast || char.isPlayer || (isHost && char.isAI));
 
-  if (shouldBroadcast && droppedBlocks.length > 0 && typeof window !== 'undefined' && window.NetworkManager) {
-    // ★【Phase 2 核心】生の sendMessage 連打を撤廃し、100ms周期キューへ蓄積（未実装時はフォールバック送信）
+  if (shouldBroadcast && flatCoords.length > 0 && typeof window !== 'undefined' && window.NetworkManager) {
     if (typeof window.NetworkManager.queueScatterBlocks === 'function') {
-      window.NetworkManager.queueScatterBlocks(char.currentStage, droppedBlocks);
-    } else if (typeof window.NetworkManager._sendCustomMessage === 'function') {
-      window.NetworkManager._sendCustomMessage({
-        event: 'SCATTER_BLOCKS',
-        stageIdx: char.currentStage,
-        blocks: droppedBlocks
-      });
+      window.NetworkManager.queueScatterBlocks(char.currentStage, charSlot, baseId, flatCoords);
     }
   }
 }
 
 /**
- * ホーミングクリスタル発射スキル
+ * ホーミングクリスタル発射スキル（生送信を完全排除しキューイング化）
  * @param {Object} char 
  * @param {Object} forcedTarget (optional)
  * @param {boolean} isRemote (optional)
@@ -295,22 +293,12 @@ export function fireHomingCrystal(char, forcedTarget = undefined, isRemote = fal
     const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
     const shouldBroadcast = isMulti && (char.isPlayer || (isHost && char.isAI));
 
-    if (shouldBroadcast && typeof window !== 'undefined' && window.AgentSDK) {
+    if (shouldBroadcast && typeof window !== 'undefined' && window.NetworkManager) {
       const shooterSlot = characters.indexOf(char);
       const targetSlot = selectedTarget ? characters.indexOf(selectedTarget) : -1;
-      if (shooterSlot !== -1) {
-        try {
-          window.AgentSDK.room.sendMessage({
-            message: JSON.stringify({
-              event: 'FIRE_SKILL',
-              skillType: 'homing',
-              shooterSlot: shooterSlot,
-              targetSlot: targetSlot
-            })
-          });
-        } catch (err) {
-          console.warn('[combat.js] Failed to broadcast FIRE_SKILL:', err);
-        }
+      if (shooterSlot !== -1 && typeof window.NetworkManager.queueSkillFire === 'function') {
+        // 0: homing
+        window.NetworkManager.queueSkillFire(0, shooterSlot, targetSlot);
       }
     }
   }
@@ -377,7 +365,7 @@ export function fireHomingCrystal(char, forcedTarget = undefined, isRemote = fal
 }
 
 /**
- * サンダー落雷発射スキル
+ * サンダー落雷発射スキル（生送信を完全排除しキューイング化）
  * @param {THREE.Scene} scene 
  * @param {Object} userChar 
  * @param {Object} forcedTarget (optional)
@@ -402,22 +390,12 @@ export function fireThunderStrike(scene, userChar, forcedTarget = undefined, isR
     const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
     const shouldBroadcast = isMulti && (userChar.isPlayer || (isHost && userChar.isAI));
 
-    if (shouldBroadcast && typeof window !== 'undefined' && window.AgentSDK) {
+    if (shouldBroadcast && typeof window !== 'undefined' && window.NetworkManager) {
       const shooterSlot = characters.indexOf(userChar);
       const targetSlot = target ? characters.indexOf(target) : -1;
-      if (shooterSlot !== -1) {
-        try {
-          window.AgentSDK.room.sendMessage({
-            message: JSON.stringify({
-              event: 'FIRE_SKILL',
-              skillType: 'thunder',
-              shooterSlot: shooterSlot,
-              targetSlot: targetSlot
-            })
-          });
-        } catch (err) {
-          console.warn('[combat.js] Failed to broadcast FIRE_SKILL:', err);
-        }
+      if (shooterSlot !== -1 && typeof window.NetworkManager.queueSkillFire === 'function') {
+        // 1: thunder
+        window.NetworkManager.queueSkillFire(1, shooterSlot, targetSlot);
       }
     }
   }
@@ -475,7 +453,7 @@ export function fireThunderStrike(scene, userChar, forcedTarget = undefined, isR
 }
 
 /**
- * キャラクター同士のタックル衝突判定
+ * キャラクター同士のタックル衝突判定（ホスト権限調停）
  * @param {THREE.Scene} scene 
  */
 export function handleTackles(scene) {
@@ -559,7 +537,7 @@ export function tackleKnockout(scene, winner, loser) {
 }
 
 /**
- * 単一キャラクターのノックアウト確定実行ヘルパー
+ * 単一キャラクターのノックアウト確定実行ヘルパー（生送信を完全排除しキューイング化）
  * @param {THREE.Scene} scene 
  * @param {Object} charObj 
  * @param {number} pushX 
@@ -609,23 +587,17 @@ function executeSingleKnockout(scene, charObj, pushX, pushZ, stunDuration, dropC
 
   triggerLandingShockwave(finalX, charObj.pos.y + 0.1, finalZ, 2.0, 0xef4444);
 
-  if (isMulti && typeof window !== 'undefined' && window.AgentSDK) {
+  // 生 sendMessage を完全撤廃し、NetworkManager.queueKnockout へ切り替え
+  if (isMulti && typeof window !== 'undefined' && window.NetworkManager) {
     const loserSlot = characters.indexOf(charObj);
-    if (loserSlot !== -1) {
-      try {
-        window.AgentSDK.room.sendMessage({
-          message: JSON.stringify({
-            event: 'KNOCKOUT',
-            loserSlot: loserSlot,
-            pushX: Number(pushX.toFixed(2)),
-            pushZ: Number(pushZ.toFixed(2)),
-            targetX: Number(finalX.toFixed(2)),
-            targetZ: Number(finalZ.toFixed(2))
-          })
-        });
-      } catch (err) {
-        console.warn('[combat.js] Failed to broadcast KNOCKOUT:', err);
-      }
+    if (loserSlot !== -1 && typeof window.NetworkManager.queueKnockout === 'function') {
+      window.NetworkManager.queueKnockout(
+        loserSlot,
+        Number(pushX.toFixed(2)),
+        Number(pushZ.toFixed(2)),
+        Number(finalX.toFixed(2)),
+        Number(finalZ.toFixed(2))
+      );
     }
   }
 }

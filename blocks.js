@@ -1,14 +1,13 @@
-// blocks.js: 床ブロック管理・補充・スポーン・一意キー（blockId）マルチ同期専用モジュール
-// ★ Phase 2 完全準拠版（バースト送信完全根絶 ＆ 全ステージブロック一括集約 ＆ プール保護）：
-//   1. 【1フレーム1通信の厳格保証（バースト完全根絶）】
-//      manageBlockSpawns において、各ステージやチームごとに sendMessage を連打していた処理を完全廃止。
-//      全走者・全ステージで補充されたブロックを単一の配列（allNewlySpawned）に完全集約し、
-//      1回の補充サイクルにつき最大1通（数百バイト以内）の一括送信に一本化。JSBridgeのキュー溢れ・遅延を100%防止。
+// blocks.js: 床ブロック管理・補充・スポーン・決定論的一意キー（blockId）マルチ同期専用モジュール
+// ★ 確定仕様（ゼロバースト・決定論的圧縮アーキテクチャ）：
+//   1. 【ブロック補充の生 sendMessage 直打ち完全根絶】
+//      manageBlockSpawns および spawnSingleBlock 内で発生していた単発/バッチの直接送信を撤廃。
+//      NetworkManager.queueSpawnBlocks へ集約し、100ms周期の POS パケット（sp）に完全同封。
 //   2. 【現在滞在ステージの強制リサイクル強奪を完全遮断】
 //      プール枯渇時に走者が現在滞在しているステージのアクティブブロックが奥の島へ
 //      強制テレポートされて消滅する欠陥を防止。安全な非アクティブ枠・過去ステージからのみリサイクル。
-//   3. 【確定論的ブロックID ＆ 重複生成ガード】
-//      連番ID（b_${stageIdx}_${globalBlockSpawnCounter}）および近接座標判定による二重生成防止を維持。
+//   3. 【決定論的ブロックID ＆ 重複生成ガード】
+//      連番ID（b_ステージ番号_カウンター）および近接座標判定（0.45m以内）による二重生成防止を維持。
 
 import {
   BLOCK_TYPES,
@@ -283,16 +282,8 @@ export function spawnSingleBlock(scene, stageIdx, targetTeam = null, shouldBroad
   if (shouldBroadcastImmediately) {
     const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
     const isMulti = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive);
-    if (isMulti && isHost && window.NetworkManager && typeof window.NetworkManager.broadcastSpawnBlock === 'function') {
-      window.NetworkManager.broadcastSpawnBlock(
-        stageIdx,
-        blockRecord.poolIdx,
-        blockRecord.x,
-        blockRecord.y,
-        blockRecord.z,
-        blockRecord.teamId,
-        blockRecord.blockId
-      );
+    if (isMulti && isHost && window.NetworkManager && typeof window.NetworkManager.queueSpawnBlocks === 'function') {
+      window.NetworkManager.queueSpawnBlocks([blockRecord]);
     }
   }
 
@@ -301,7 +292,7 @@ export function spawnSingleBlock(scene, stageIdx, targetTeam = null, shouldBroad
 
 /**
  * 全走者の滞在ステージに応じた床ブロック定期補充
- * ★【Phase 2 核心】全ステージで湧いた新ブロックを単一の配列に集約し、最大1通のバッチパケットで送信
+ * ★【確定仕様】全ステージで湧いた新ブロックを単一の配列に集約し、100ms周期POSキューへ預ける
  */
 export function manageBlockSpawns(scene, isGameOver = false) {
   if (isGameOver) return;
@@ -361,14 +352,10 @@ export function manageBlockSpawns(scene, isGameOver = false) {
     }
   }
 
-  // ★【Phase 2 核心】ステージごとの複数回送信を完全廃止し、このフレーム全体で1回のみ送信
+  // 生送信を完全排除し、NetworkManager.queueSpawnBlocks 経由で次の100msパケットへ同封
   if (isMulti && isHost && allNewlySpawned.length > 0 && window.NetworkManager) {
-    if (typeof window.NetworkManager.broadcastSpawnBlocksBatch === 'function') {
-      window.NetworkManager.broadcastSpawnBlocksBatch(0, allNewlySpawned);
-    } else if (typeof window.NetworkManager.broadcastSpawnBlock === 'function') {
-      allNewlySpawned.forEach(b => {
-        window.NetworkManager.broadcastSpawnBlock(b.stageIdx, b.poolIdx, b.x, b.y, b.z, b.teamId, b.blockId);
-      });
+    if (typeof window.NetworkManager.queueSpawnBlocks === 'function') {
+      window.NetworkManager.queueSpawnBlocks(allNewlySpawned);
     }
   }
 }

@@ -1,15 +1,18 @@
-// network.js: AgentSDK公式仕様完全準拠 ＆ ホスト主導型ハンドシェイク同期エンジン
-// ★ Phase 1 実装版（リスタート完全同期 ＆ リスタートボタン表示権限フック連動）：
-//   1. 【リスタートパケットへのシード＆スナップショット同封】
-//      broadcastRestartGame(newSeed, snapshot) を新設し、ホストが生成した新しいシード値と
-//      初期島周辺（Stage 0〜2）のスナップショット（ブロック・階段・アイテム）を1通に完全集約して送出。
-//   2. 【受信ハンドラでの新世界情報伝達】
-//      RESTART_GAME 受信時に packet.seed と packet.snapshot を window.onRemoteRestartReceived(packet) へ伝達。
-//   3. 【左下リスタートボタン表示権限の自動更新フック連動】
-//      createRoom, joinRoom, exitRoom, およびスロット確定（_applyRoomMembersSync）時に
-//      window.updateRestartButtonVisibility() を安全にキックし、ゲスト端末での誤爆を確実に防止。
-//   4. 【既存のアイテム・エレベーター・散乱ブロック同期の完全維持】
-//      10Hz パケット集約、250ms 安全スリープ、ホスト主導型ハンドシェイクは 100% 維持。
+// network.js: AgentSDK公式仕様完全準拠 ＆ ホスト主導型10Hz通信集約・ゼロバースト同期エンジン
+// ★ 確定仕様（ゼロバースト・決定論的圧縮アーキテクチャ）：
+//   1. 【送信一本化の原則（1フレーム1通・10Hz絶対死守）】
+//      window.AgentSDK.room.sendMessage の呼び出しを 100ms周期タイマーの1箇所に完全集約。
+//      あらゆる自発的アクション（移動、階段架橋、ブロック取得、アイテム消費、モブ吹き飛ばし、
+//      スキル発射、ノックアウト被弾判定、ブロック補充、時間同期）を一時配列に蓄積し、
+//      単一の POS パケットに圧縮同封して送出。同一フレーム連打によるネイティブJSBridge破棄を根絶。
+//   2. 【極限ペイロード圧縮（キー短縮 ＆ フラット配列化）】
+//      キー名を2文字へ統一（pl, pk, co, bl, sk, ko, sc, sp）。
+//      散乱ブロックや補充ブロックをフラットな数値配列に圧縮し、最大乱戦時でも400バイト台を維持。
+//   3. 【受信ディスパッチ順序の厳格固定（ラバーバンド・判定不整合の根絶）】
+//      POS 受信時の実行順序を [list -> sc -> pk -> co -> bl -> sp -> ko -> sk -> tl] に固定。
+//      被弾時の確定着地座標による位置上書きや、散乱直後の即時回収における整合性を100%保証。
+//   4. 【決定論的散乱ブロックID復元】
+//      ホスト/発行走者のスロット番号と基点タイムスタンプ短縮値から、各端末で s_{s}_{sl}_{bid}_{i} を一意復元。
 
 import {
   player,
@@ -32,7 +35,7 @@ import {
 import { resetParticlePools, floorBlockPool } from './particles.js';
 
 /**
- * ★【公式仕様準拠】未入室時の exit() による無限保留（Promiseハング）を確実に防ぐ安全退出ヘルパー
+ * 未入室時の exit() による無限保留（Promiseハング）を確実に防ぐ安全退出ヘルパー
  * 退出完了後に意図的に 250ms の待機を挟み、親アプリ側での切断と新規接続のスレッド交差を防止
  */
 async function safeExitCurrentRoom() {
@@ -48,7 +51,7 @@ async function safeExitCurrentRoom() {
     const exitPromise = window.AgentSDK.room.exit();
     const timeoutPromise = new Promise(resolve => setTimeout(() => resolve({ timeout: true }), 700));
     await Promise.race([exitPromise, timeoutPromise]);
-    // ★ 切断完了後、250ms の安全マージンウェイトを挟む
+    // 切断完了後、250ms の安全マージンウェイトを挟む
     await new Promise(r => setTimeout(r, 250));
   } catch (e) {
     console.warn('[network.js] safeExitCurrentRoom caught:', e);
@@ -220,14 +223,19 @@ export const NetworkManager = {
   _isCreatingRoom: false,
   _isJoiningRoom: false,
 
-  // 100ms周期パケットへ相乗りさせるためのローカルアクション蓄積バッファ
-  _pendingPlanks: [],
-  _pendingPicks: [],
-  _pendingConsumes: [],
-  _pendingBlows: [],
-  _pendingScatters: [],
+  // ★ 100ms周期パケット（POS）へ完全集約するためのアクション蓄積キュー
+  _pendingPlanks: [],     // pl: 階段設置
+  _pendingPicks: [],      // pk: ブロック取得
+  _pendingConsumes: [],   // co: オブジェクト消費
+  _pendingBlows: [],      // bl: モブ吹き飛ばし
+  _pendingSkills: [],     // sk: スキル発射
+  _pendingKnockouts: [],  // ko: ノックアウト確定
+  _pendingScatters: [],   // sc: 散乱ブロック
+  _pendingSpawns: [],     // sp: 床ブロック補充（ホスト専用）
 
   captureWorldSnapshot: captureWorldSnapshot,
+
+  // --- アクション蓄積キュー登録API（通信は一切行わずキューに積むのみ） ---
 
   queuePlankBuild(stageIdx, laneIdx, plankIdx, teamId) {
     if (!this.isMultiplayerActive) return;
@@ -267,12 +275,56 @@ export const NetworkManager = {
     });
   },
 
-  queueScatterBlocks(stageIdx, blocksArray) {
+  queueSkillFire(skillTypeInt, shooterSlot, targetSlot) {
+    if (!this.isMultiplayerActive) return;
+    this._pendingSkills.push({
+      t: skillTypeInt, // 0: homing, 1: thunder
+      s: shooterSlot,
+      tg: targetSlot
+    });
+  },
+
+  queueKnockout(loserSlot, pushX, pushZ, targetX, targetZ) {
+    if (!this.isMultiplayerActive) return;
+    this._pendingKnockouts.push({
+      l: loserSlot,
+      px: Number(pushX.toFixed(2)),
+      pz: Number(pushZ.toFixed(2)),
+      tx: Number(targetX.toFixed(2)),
+      tz: Number(targetZ.toFixed(2))
+    });
+  },
+
+  queueScatterBlocks(stageIdx, slotIdx, baseId, blocksArray) {
     if (!this.isMultiplayerActive || !Array.isArray(blocksArray) || blocksArray.length === 0) return;
+    // blocksArray: [[x, z], [x, z], ...] のフラット2D座標配列
     this._pendingScatters.push({
       s: stageIdx,
+      sl: slotIdx,
+      bid: baseId,
       b: blocksArray
     });
+  },
+
+  queueSpawnBlocks(spawnedArray) {
+    if (!this.isMultiplayerActive || !this.isHost || !Array.isArray(spawnedArray) || spawnedArray.length === 0) return;
+    // spawnedArray の要素を軽量フラットオブジェクトへ変換して蓄積
+    for (let i = 0; i < spawnedArray.length; i++) {
+      const b = spawnedArray[i];
+      let tNum = 3; // neutral
+      if (b.teamId === 'blue') tNum = 0;
+      else if (b.teamId === 'red') tNum = 1;
+      else if (b.teamId === 'yellow') tNum = 2;
+
+      this._pendingSpawns.push({
+        s: b.stageIdx,
+        pi: b.poolIdx,
+        x: Number(b.x.toFixed(2)),
+        z: Number(b.z.toFixed(2)),
+        t: tNum,
+        id: b.blockId
+      });
+    }
   },
 
   async init() {
@@ -414,11 +466,15 @@ export const NetworkManager = {
       this.isMultiplayerActive = true;
       this._seedApplied = true;
 
-      this._pendingPlanks = [];
-      this._pendingPicks = [];
-      this._pendingConsumes = [];
-      this._pendingBlows = [];
-      this._pendingScatters = [];
+      // バッファ初期化
+      this._pendingPlanks.length = 0;
+      this._pendingPicks.length = 0;
+      this._pendingConsumes.length = 0;
+      this._pendingBlows.length = 0;
+      this._pendingSkills.length = 0;
+      this._pendingKnockouts.length = 0;
+      this._pendingScatters.length = 0;
+      this._pendingSpawns.length = 0;
 
       safeShowGameScreen();
 
@@ -432,7 +488,6 @@ export const NetworkManager = {
         updatePlayerName(window.GRAVITY_USER_NAME);
       }
 
-      // ★ ボタン表示状態の更新通知（ホストなので表示）
       notifyRestartButtonVisibility();
 
       this.currentSeed = (typeof createdRoomId === 'string')
@@ -510,11 +565,15 @@ export const NetworkManager = {
       this.isMultiplayerActive = true;
       this._seedApplied = false;
 
-      this._pendingPlanks = [];
-      this._pendingPicks = [];
-      this._pendingConsumes = [];
-      this._pendingBlows = [];
-      this._pendingScatters = [];
+      // バッファ初期化
+      this._pendingPlanks.length = 0;
+      this._pendingPicks.length = 0;
+      this._pendingConsumes.length = 0;
+      this._pendingBlows.length = 0;
+      this._pendingSkills.length = 0;
+      this._pendingKnockouts.length = 0;
+      this._pendingScatters.length = 0;
+      this._pendingSpawns.length = 0;
 
       this.mySlot = 1;
       this.isSlotConfirmed = false;
@@ -535,7 +594,6 @@ export const NetworkManager = {
 
       safeShowGameScreen();
 
-      // ★ ボタン表示状態の更新通知（ゲストなので非表示）
       notifyRestartButtonVisibility();
 
       return true;
@@ -580,6 +638,9 @@ export const NetworkManager = {
     }
   },
 
+  /**
+   * ★【核心】受信メッセージのパース ＆ 確定ディスパッチ順序の厳格実行
+   */
   _handleCustomMessage(data) {
     if (!data) return;
     try {
@@ -615,6 +676,122 @@ export const NetworkManager = {
       if (!packet || !packet.event) return;
 
       switch (packet.event) {
+        case 'POS':
+          // =========================================================================
+          // ★ 確定ディスパッチ順序（list -> sc -> pk -> co -> bl -> sp -> ko -> sk -> tl）
+          // =========================================================================
+
+          // 1. list (走者座標の補間目標更新)
+          if (Array.isArray(packet.list)) {
+            packet.list.forEach(p => this._handleRemotePosition(p));
+          } else if (packet.slot !== undefined) {
+            this._handleRemotePosition(packet);
+          }
+
+          // 2. sc (散乱ブロックの生成・床面配置)
+          const scattersList = packet.sc || packet.scatters;
+          if (Array.isArray(scattersList) && scattersList.length > 0) {
+            scattersList.forEach(sc => {
+              if (typeof window.applyRemoteScatterBlocks === 'function') {
+                // 短縮キー形式: { s, sl, bid, b: [[x, z], ...] }
+                if (Array.isArray(sc.b)) {
+                  const reconstructedBlocks = [];
+                  const slotNum = (sc.sl !== undefined) ? sc.sl : 0;
+                  const baseId = sc.bid || 0;
+                  for (let bi = 0; bi < sc.b.length; bi++) {
+                    const coord = sc.b[bi];
+                    reconstructedBlocks.push({
+                      blockId: `s_${sc.s}_${slotNum}_${baseId}_${bi}`,
+                      x: coord[0],
+                      z: coord[1]
+                    });
+                  }
+                  window.applyRemoteScatterBlocks(sc.s, reconstructedBlocks);
+                } else if (Array.isArray(sc.blocks)) {
+                  window.applyRemoteScatterBlocks(sc.s || sc.stageIdx, sc.blocks);
+                }
+              }
+            });
+          }
+
+          // 3. pk (ブロック取得の反映・消去)
+          const picksList = packet.pk || packet.picks;
+          if (Array.isArray(picksList) && picksList.length > 0) {
+            picksList.forEach(pk => {
+              if (typeof window.applyRemoteBlockPicked === 'function') {
+                window.applyRemoteBlockPicked(pk.s, pk.pi, pk.x, pk.z, pk.id);
+              }
+            });
+          }
+
+          // 階段設置の反映
+          const planksList = packet.pl || packet.planks;
+          if (Array.isArray(planksList) && planksList.length > 0) {
+            planksList.forEach(p => {
+              if (typeof window.applyRemotePlankBuilt === 'function') {
+                window.applyRemotePlankBuilt(p.s, p.l, p.p, p.t);
+              }
+            });
+          }
+
+          // 4. co (アイテム・ゲート・ボーナス消費)
+          const consumesList = packet.co || packet.consumes;
+          if (Array.isArray(consumesList) && consumesList.length > 0) {
+            consumesList.forEach(c => {
+              if (c.t === 'bonus' && typeof window.applyRemoteBonusConsumed === 'function') {
+                window.applyRemoteBonusConsumed(c.id);
+              } else if (typeof window.applyRemoteObjectConsumed === 'function') {
+                window.applyRemoteObjectConsumed(c.id, c.t);
+              }
+            });
+          }
+
+          // 5. bl (敵モブ吹き飛ばし演出)
+          const blowsList = packet.bl || packet.blows;
+          if (Array.isArray(blowsList) && blowsList.length > 0) {
+            blowsList.forEach(bl => {
+              if (typeof window.applyRemoteBlowMob === 'function') {
+                window.applyRemoteBlowMob(bl.m, bl.s, bl.d);
+              }
+            });
+          }
+
+          // 6. sp (ホストからのブロック補充バッチ)
+          const spawnsList = packet.sp;
+          if (Array.isArray(spawnsList) && spawnsList.length > 0 && typeof window.applyRemoteBlockSpawned === 'function') {
+            spawnsList.forEach(sp => {
+              const teamStr = (sp.t === 0) ? 'blue' : (sp.t === 1 ? 'red' : (sp.t === 2 ? 'yellow' : 'neutral'));
+              window.applyRemoteBlockSpawned(sp.s, sp.pi, sp.x, undefined, sp.z, teamStr, sp.id);
+            });
+          }
+
+          // 7. ko (ノックアウト被弾・着地座標の強制確定 ── 位置補間を確実に上書き)
+          const knockoutsList = packet.ko;
+          if (Array.isArray(knockoutsList) && knockoutsList.length > 0) {
+            knockoutsList.forEach(ko => {
+              if (typeof window.applyRemoteKnockout === 'function') {
+                window.applyRemoteKnockout(ko.l, ko.px, ko.pz, ko.tx, ko.tz);
+              }
+            });
+          }
+
+          // 8. sk (攻撃スキル弾頭生成・発射演出)
+          const skillsList = packet.sk;
+          if (Array.isArray(skillsList) && skillsList.length > 0) {
+            skillsList.forEach(sk => {
+              if (typeof window.applyRemoteFireSkill === 'function') {
+                const sType = (sk.t === 0) ? 'homing' : 'thunder';
+                window.applyRemoteFireSkill(sType, sk.s, sk.tg);
+              }
+            });
+          }
+
+          // 9. tl (タイマー同期・ホストが1秒周期で同封した場合のみ実行)
+          if (packet.tl !== undefined && !this.isHost && typeof window.applyRemoteTimeSync === 'function') {
+            window.applyRemoteTimeSync(packet.tl);
+          }
+          break;
+
         case 'ROOM_MEMBERS_SYNC':
           this._applyRoomMembersSync(packet.slots, packet.seed, packet.snapshot);
           if (!this.isHost && this.isMultiplayerActive && !this._syncIntervalId) {
@@ -665,144 +842,15 @@ export const NetworkManager = {
           }
           break;
 
-        case 'POS':
-          if (Array.isArray(packet.planks) && packet.planks.length > 0) {
-            packet.planks.forEach(p => {
-              if (typeof window.applyRemotePlankBuilt === 'function') {
-                window.applyRemotePlankBuilt(p.s, p.l, p.p, p.t);
-              }
-            });
-          }
-
-          if (Array.isArray(packet.picks) && packet.picks.length > 0) {
-            packet.picks.forEach(pk => {
-              if (typeof window.applyRemoteBlockPicked === 'function') {
-                window.applyRemoteBlockPicked(pk.s, pk.pi, pk.x, pk.z, pk.id);
-              }
-            });
-          }
-
-          if (Array.isArray(packet.consumes) && packet.consumes.length > 0) {
-            packet.consumes.forEach(c => {
-              if (c.t === 'bonus' && typeof window.applyRemoteBonusConsumed === 'function') {
-                window.applyRemoteBonusConsumed(c.id);
-              } else if (typeof window.applyRemoteObjectConsumed === 'function') {
-                window.applyRemoteObjectConsumed(c.id, c.t);
-              }
-            });
-          }
-
-          if (Array.isArray(packet.blows) && packet.blows.length > 0) {
-            packet.blows.forEach(bl => {
-              if (typeof window.applyRemoteBlowMob === 'function') {
-                window.applyRemoteBlowMob(bl.m, bl.s, bl.d);
-              }
-            });
-          }
-
-          if (Array.isArray(packet.scatters) && packet.scatters.length > 0) {
-            packet.scatters.forEach(sc => {
-              if (typeof window.applyRemoteScatterBlocks === 'function') {
-                window.applyRemoteScatterBlocks(sc.s, sc.b);
-              }
-            });
-          }
-
-          if (Array.isArray(packet.list)) {
-            packet.list.forEach(p => this._handleRemotePosition(p));
-          } else {
-            this._handleRemotePosition(packet);
-          }
-          break;
-
-        case 'BUILD_PLANK':
-          if (typeof window.applyRemotePlankBuilt === 'function') {
-            window.applyRemotePlankBuilt(packet.stageIdx, packet.laneIdx, packet.plankIdx, packet.teamId);
-          }
-          break;
-
-        case 'PICK_BLOCK':
-          if (typeof window.applyRemoteBlockPicked === 'function') {
-            window.applyRemoteBlockPicked(packet.stageIdx, packet.poolIdx, packet.x, packet.z, packet.blockId);
-          }
-          break;
-
-        case 'SPAWN_BLOCKS_BATCH':
-          if (Array.isArray(packet.blocks) && typeof window.applyRemoteBlocksBatch === 'function') {
-            window.applyRemoteBlocksBatch(packet.stageIdx, packet.blocks);
-          } else if (Array.isArray(packet.blocks) && typeof window.applyRemoteBlockSpawned === 'function') {
-            packet.blocks.forEach(b => {
-              window.applyRemoteBlockSpawned(
-                b.stageIdx !== undefined ? b.stageIdx : packet.stageIdx,
-                b.poolIdx,
-                b.x,
-                b.y,
-                b.z,
-                b.teamId,
-                b.blockId
-              );
-            });
-          }
-          break;
-
-        case 'SPAWN_BLOCK':
-          if (typeof window.applyRemoteBlockSpawned === 'function') {
-            window.applyRemoteBlockSpawned(packet.stageIdx, packet.poolIdx, packet.x, packet.y, packet.z, packet.teamId, packet.blockId);
-          }
-          break;
-
-        case 'SCATTER_BLOCKS':
-          if (typeof window.applyRemoteScatterBlocks === 'function') {
-            window.applyRemoteScatterBlocks(packet.stageIdx, packet.blocks);
-          }
-          break;
-
-        case 'KNOCKOUT':
-          if (typeof window.applyRemoteKnockout === 'function') {
-            window.applyRemoteKnockout(packet.loserSlot, packet.pushX, packet.pushZ, packet.targetX, packet.targetZ);
-          }
-          break;
-
-        // ★【Phase 1 核心】パケット内の seed と snapshot を確実に渡して世界を同期再構築
         case 'RESTART_GAME':
           if (typeof window.onRemoteRestartReceived === 'function') {
             window.onRemoteRestartReceived(packet);
           }
           break;
 
-        case 'CONSUME_OBJECT':
-          if (packet.objectType === 'bonus') {
-            if (typeof window.applyRemoteBonusConsumed === 'function') {
-              window.applyRemoteBonusConsumed(packet.objectId);
-            }
-          } else {
-            if (typeof window.applyRemoteObjectConsumed === 'function') {
-              window.applyRemoteObjectConsumed(packet.objectId, packet.objectType);
-            }
-          }
-          break;
-
-        case 'FIRE_SKILL':
-          if (typeof window.applyRemoteFireSkill === 'function') {
-            window.applyRemoteFireSkill(packet.skillType, packet.shooterSlot, packet.targetSlot);
-          }
-          break;
-
-        case 'TIME_SYNC':
-          if (!this.isHost && typeof window.applyRemoteTimeSync === 'function') {
-            window.applyRemoteTimeSync(packet.timeLeft);
-          }
-          break;
-
         case 'TIME_UP':
           if (typeof window.applyRemoteTimeUp === 'function') {
             window.applyRemoteTimeUp();
-          }
-          break;
-
-        case 'BLOW_MOB':
-          if (typeof window.applyRemoteBlowMob === 'function') {
-            window.applyRemoteBlowMob(packet.mobIndex, packet.stageIdx, packet.pushDirX);
           }
           break;
       }
@@ -1033,7 +1081,7 @@ export const NetworkManager = {
   },
 
   /**
-   * 10Hz 位置情報ブロードキャスト ＆ アクションアグリゲーション
+   * ★【核心】10Hz 完全集約ブロードキャスト（ゼロバースト設計の心臓部）
    */
   _startPositionBroadcasting() {
     if (this._syncIntervalId) clearInterval(this._syncIntervalId);
@@ -1091,6 +1139,8 @@ export const NetworkManager = {
       }
       posList.push(myPosPayload);
 
+      let currentSecForSync = undefined;
+
       if (this.isHost) {
         this.slots.forEach(s => {
           if (s.slot === this.mySlot) return;
@@ -1127,45 +1177,57 @@ export const NetworkManager = {
           }
         });
 
+        // 10カウント（1.0秒）に1回のみ tl を同封
         this._timeSyncCounter = (this._timeSyncCounter || 0) + 1;
         if (this._timeSyncCounter >= 10) {
           this._timeSyncCounter = 0;
           if (typeof window !== 'undefined' && typeof window.getGameTimeLeft === 'function') {
             const currentSec = window.getGameTimeLeft();
             if (typeof currentSec === 'number' && !isNaN(currentSec)) {
-              this._sendCustomMessage({
-                event: 'TIME_SYNC',
-                timeLeft: Number(currentSec.toFixed(1))
-              });
+              currentSecForSync = Number(currentSec.toFixed(1));
             }
           }
         }
       }
 
+      // バッファから各アクションを切り出し
       const outgoingPlanks = this._pendingPlanks.length > 0 ? [...this._pendingPlanks] : undefined;
       const outgoingPicks = this._pendingPicks.length > 0 ? [...this._pendingPicks] : undefined;
       const outgoingConsumes = this._pendingConsumes.length > 0 ? [...this._pendingConsumes] : undefined;
       const outgoingBlows = this._pendingBlows.length > 0 ? [...this._pendingBlows] : undefined;
+      const outgoingSkills = this._pendingSkills.length > 0 ? [...this._pendingSkills] : undefined;
+      const outgoingKnockouts = this._pendingKnockouts.length > 0 ? [...this._pendingKnockouts] : undefined;
       const outgoingScatters = this._pendingScatters.length > 0 ? [...this._pendingScatters] : undefined;
+      const outgoingSpawns = this._pendingSpawns.length > 0 ? [...this._pendingSpawns] : undefined;
 
+      // バッファのクリア
       this._pendingPlanks.length = 0;
       this._pendingPicks.length = 0;
       this._pendingConsumes.length = 0;
       this._pendingBlows.length = 0;
+      this._pendingSkills.length = 0;
+      this._pendingKnockouts.length = 0;
       this._pendingScatters.length = 0;
+      this._pendingSpawns.length = 0;
 
+      // 統合パケットの構築
       const posMessage = {
         event: 'POS',
-        clientId: this.clientId,
+        cid: this.clientId,
         list: posList
       };
 
-      if (outgoingPlanks) posMessage.planks = outgoingPlanks;
-      if (outgoingPicks) posMessage.picks = outgoingPicks;
-      if (outgoingConsumes) posMessage.consumes = outgoingConsumes;
-      if (outgoingBlows) posMessage.blows = outgoingBlows;
-      if (outgoingScatters) posMessage.scatters = outgoingScatters;
+      if (currentSecForSync !== undefined) posMessage.tl = currentSecForSync;
+      if (outgoingPlanks) posMessage.pl = outgoingPlanks;
+      if (outgoingPicks) posMessage.pk = outgoingPicks;
+      if (outgoingConsumes) posMessage.co = outgoingConsumes;
+      if (outgoingBlows) posMessage.bl = outgoingBlows;
+      if (outgoingSkills) posMessage.sk = outgoingSkills;
+      if (outgoingKnockouts) posMessage.ko = outgoingKnockouts;
+      if (outgoingScatters) posMessage.sc = outgoingScatters;
+      if (outgoingSpawns) posMessage.sp = outgoingSpawns;
 
+      // 厳格にこのタイマーからのみ sendMessage を実行
       this._sendCustomMessage(posMessage);
     }, 100);
   },
@@ -1273,7 +1335,7 @@ export const NetworkManager = {
   },
 
   /**
-   * 純粋送信
+   * 純粋送信（AgentSDKインターフェース）
    */
   _sendCustomMessage(msgObj) {
     if (!this.isSDKAvailable || !window.AgentSDK.room || typeof window.AgentSDK.room.sendMessage !== 'function') return;
@@ -1288,7 +1350,7 @@ export const NetworkManager = {
   },
 
   /**
-   * ★【Phase 1 核心】ホストが発行した新しいシード値と初期スナップショットを同封して送信
+   * ホストが発行した新しいシード値と初期スナップショットを同封して送信（リスタート時専用）
    */
   broadcastRestartGame(newSeed, snapshot = null) {
     if (!this.isMultiplayerActive || !this.isHost) return;
@@ -1301,41 +1363,25 @@ export const NetworkManager = {
     });
   },
 
+  // --- 後方互換・外部呼び出し対応（即時送信ではなくキューへ委譲） ---
+
   broadcastSpawnBlocksBatch(stageIdx, blocksArray) {
-    if (!this.isMultiplayerActive || !Array.isArray(blocksArray) || blocksArray.length === 0) return;
-    this._sendCustomMessage({
-      event: 'SPAWN_BLOCKS_BATCH',
-      stageIdx: stageIdx,
-      blocks: blocksArray
-    });
+    this.queueSpawnBlocks(blocksArray);
   },
 
   broadcastSpawnBlock(stageIdx, poolIdx, x, y, z, teamId, blockId) {
-    if (!this.isMultiplayerActive) return;
-    this._sendCustomMessage({
-      event: 'SPAWN_BLOCK',
-      stageIdx: stageIdx,
-      poolIdx: poolIdx,
-      x: Number(x.toFixed(2)),
-      y: Number(y.toFixed(2)),
-      z: Number(z.toFixed(2)),
-      teamId: teamId,
-      blockId: blockId
-    });
+    this.queueSpawnBlocks([{ stageIdx, poolIdx, x, y, z, teamId, blockId }]);
   },
 
   broadcastPickBlock(blockId, stageIdx, poolIdx, x, z) {
-    if (!this.isMultiplayerActive) return;
     this.queueBlockPick(blockId, stageIdx, poolIdx, x, z);
   },
 
   broadcastConsumeObject(objectId, objectType) {
-    if (!this.isMultiplayerActive) return;
     this.queueConsumeObject(objectId, objectType);
   },
 
   broadcastBlowMob(mobIndex, stageIdx, pushDirX) {
-    if (!this.isMultiplayerActive) return;
     this.queueBlowMob(mobIndex, stageIdx, pushDirX);
   },
 

@@ -1,9 +1,9 @@
 // systems.js: 物理移動判定・スカイウォーク歩行開放・ハッチ進入同期・リュック収納アニメーション連動・シームレス風音連携・スカイダイブ＆スライダーボーナス回収・合流島安全着地完全整合・お邪魔キャラ衝突判定・下層島誤ワープ完全防止・階段/床ブロック取得リアルタイム同期
-// ★ Phase 1 実装版（直線スライダーボーナスブロック回収時ブロードキャスト追加 ＆ GC最適化）：
-//   1. 【直線スライダーの回収時ブロードキャスト追加】
-//      直線スライダー滑走時のボーナス回収ループ（370行目付近）に、欠落していた
-//      NetworkManager.broadcastConsumeObject(blk.bonusId, 'bonus') を追加。
-//      取得した瞬間に 100ms周期の POS パケット（consumes）へ同封して相手端末へ自動同期。
+// ★ 確定仕様（ゼロバースト・決定論的圧縮アーキテクチャ）：
+//   1. 【残存生送信フォールバックの完全撤廃】
+//      階段設置、ブロック取得、アイテム消費、モブ吹き飛ばしにおいて残存していた
+//      ループ内の _sendCustomMessage 生送信フォールバックを完全撤廃。
+//      NetworkManager の一時バッファ（queuePlankBuild, queueBlockPick, queueConsumeObject, queueBlowMob）へ完全集約。
 //   2. 【localBridges 配列生成のゼロアロケーション化】
 //      毎フレーム new Array されていた localBridges を静的再利用バッファへ切り替え、
 //      60fps/120fps 移動時のGCスパイク（画面の一瞬のカクつき）を根絶。
@@ -244,8 +244,9 @@ export function checkGateCollisions(scene, char) {
       disposeHierarchy(gate.meshGroup);
       scene.remove(gate.meshGroup);
 
-      if (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive && gate.gateId) {
-        window.NetworkManager.broadcastConsumeObject(gate.gateId, 'gate');
+      const isMulti = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive);
+      if (isMulti && gate.gateId && typeof window.NetworkManager.queueConsumeObject === 'function') {
+        window.NetworkManager.queueConsumeObject(gate.gateId, 'gate');
       }
 
       if (gate.opType === 'multiply') {
@@ -302,8 +303,8 @@ export function checkObstacleMobCollisions(scene, char) {
         const isMulti = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive);
         const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
         const shouldBroadcast = isMulti && (char.isPlayer || (isHost && char.isAI));
-        if (shouldBroadcast && window.NetworkManager && typeof window.NetworkManager.broadcastBlowMob === 'function') {
-          window.NetworkManager.broadcastBlowMob(i, mob.stageIdx, pushDirX);
+        if (shouldBroadcast && window.NetworkManager && typeof window.NetworkManager.queueBlowMob === 'function') {
+          window.NetworkManager.queueBlowMob(i, mob.stageIdx, pushDirX);
         }
 
         scatterBricks(scene, char, 0);
@@ -612,7 +613,7 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
           char.onSlide = true;
           char.lastPlankIdx = plankIdx;
 
-          // ★【Phase 1 核心改善】直線スライダー上のボーナスブロック回収 ＆ ブロードキャスト
+          // 直線スライダー上のボーナスブロック回収 ＆ キューイング
           if (scene && onBridge.bonusBlocks && onBridge.bonusBlocks.length > 0) {
             for (let sbi = 0; sbi < onBridge.bonusBlocks.length; sbi++) {
               const blk = onBridge.bonusBlocks[sbi];
@@ -625,12 +626,11 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
                     soundRef.playCollect(1.2 + blk.prog * 0.6);
                   }
 
-                  // 相手端末へ消去イベントをブロードキャスト（100ms周期キューへ同封）
                   const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
                   const shouldBroadcastBonus = char.isPlayer || (isHost && char.isAI);
                   if (shouldBroadcastBonus && typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive) {
-                    if (blk.bonusId) {
-                      window.NetworkManager.broadcastConsumeObject(blk.bonusId, 'bonus');
+                    if (blk.bonusId && typeof window.NetworkManager.queueConsumeObject === 'function') {
+                      window.NetworkManager.queueConsumeObject(blk.bonusId, 'bonus');
                     }
                   }
                 }
@@ -691,21 +691,13 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
                   }
                 }
 
-                // for ループ内での生 sendMessage 連射を完全廃止し、NetworkManager の一時バッファへキューイング
+                // 生送信フォールバックを完全撤廃し、queuePlankBuild へ一本化
                 const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
                 const shouldBroadcastPlank = char.isPlayer || (isHost && char.isAI);
 
                 if (shouldBroadcastPlank && typeof window !== 'undefined' && window.NetworkManager) {
                   if (typeof window.NetworkManager.queuePlankBuild === 'function') {
                     window.NetworkManager.queuePlankBuild(onBridge.stageIdx, onBridge.laneIdx, pIndex, char.team.id);
-                  } else if (typeof window.NetworkManager._sendCustomMessage === 'function') {
-                    window.NetworkManager._sendCustomMessage({
-                      event: 'BUILD_PLANK',
-                      stageIdx: onBridge.stageIdx,
-                      laneIdx: onBridge.laneIdx,
-                      plankIdx: pIndex,
-                      teamId: char.team.id
-                    });
                   }
                 }
 
@@ -890,7 +882,6 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
           const dx = char.pos.x - blk.pos.x;
           const dz = char.pos.z - blk.pos.z;
           if (dx * dx + dz * dz < magnetRadiusSq && Math.abs(char.pos.y - blk.pos.y) < 3.2) {
-            // indexOf の全件線形探索を撤廃し、O(1) で即座にインデックスを参照
             const poolIdx = (blk.poolIdx !== undefined) ? blk.poolIdx : floorBlockPool.indexOf(blk);
             const blockX = blk.pos.x;
             const blockZ = blk.pos.z;
@@ -911,14 +902,12 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
               duration: 0.55
             });
 
-            // 100ms周期アグリゲーションキューへ蓄積
+            // 生送信を完全排除し、queueBlockPick へ集約
             const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
             const shouldBroadcastMagnet = char.isPlayer || (isHost && char.isAI);
             if (shouldBroadcastMagnet && typeof window !== 'undefined' && window.NetworkManager) {
               if (typeof window.NetworkManager.queueBlockPick === 'function') {
                 window.NetworkManager.queueBlockPick(blockId, char.currentStage, poolIdx, blockX, blockZ);
-              } else if (typeof window.NetworkManager.broadcastPickBlock === 'function') {
-                window.NetworkManager.broadcastPickBlock(blockId, char.currentStage, poolIdx, blockX, blockZ);
               }
             }
           }
@@ -1136,7 +1125,6 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
         const dx = char.pos.x - blk.pos.x;
         const dz = char.pos.z - blk.pos.z;
         if (dx * dx + dz * dz < 2.25) {
-          // 足元ブロック拾い時も indexOf の線形探索を撤廃（O(1)化）
           const poolIdx = (blk.poolIdx !== undefined) ? blk.poolIdx : floorBlockPool.indexOf(blk);
           const blockX = blk.pos.x;
           const blockZ = blk.pos.z;
@@ -1148,14 +1136,12 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
           stageBlocks.splice(i, 1);
           addBrickToCharacter(char, char.team, 1, soundRef, updateHUDRef);
 
-          // 100ms周期アグリゲーションキューへ蓄積
+          // 生送信を完全排除し、queueBlockPick へ集約
           const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
           const shouldBroadcastPick = char.isPlayer || (isHost && char.isAI);
           if (shouldBroadcastPick && typeof window !== 'undefined' && window.NetworkManager) {
             if (typeof window.NetworkManager.queueBlockPick === 'function') {
               window.NetworkManager.queueBlockPick(blockId, char.currentStage, poolIdx, blockX, blockZ);
-            } else if (typeof window.NetworkManager.broadcastPickBlock === 'function') {
-              window.NetworkManager.broadcastPickBlock(blockId, char.currentStage, poolIdx, blockX, blockZ);
             }
           }
         }
@@ -1179,8 +1165,8 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
           const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
           const shouldBroadcastPick = char.isPlayer || (isHost && char.isAI);
           if (shouldBroadcastPick && typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive) {
-            if (removedItem.itemId) {
-              window.NetworkManager.broadcastConsumeObject(removedItem.itemId, 'item');
+            if (removedItem.itemId && typeof window.NetworkManager.queueConsumeObject === 'function') {
+              window.NetworkManager.queueConsumeObject(removedItem.itemId, 'item');
             }
           }
 

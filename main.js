@@ -1,12 +1,14 @@
 // main.js: ゲーム全体の起動指揮・Three.js初期化・メインループ・入力・HUD制御
-// ★ Phase 2 実装版（世界再構築のシード完全同期 ＆ リスタートボタン表示権限の厳格制御）：
-//   1. 【resetGame(newSeed, snapshot) への完全同期改修】
-//      ホスト実行時：新シード値を発行して buildWorld を行い、初期配置スナップショットを添えて broadcastRestartGame を送信。
+// ★ 確定仕様（ゼロバースト・決定論的圧縮アーキテクチャ対応版）：
+//   1. 【ホスト主導型 1秒周期 tl 同期ハンドラの最適化】
+//      単独の TIME_SYNC パケットを完全撤廃し、10Hz POS パケットへ1.0秒に1回同封される tl プロパティから
+//      残り秒数を滑らかに平滑補正。不要なDOM更新・クラス付け替えを遮断し、低負荷かつ高精度な時間同期を実現。
+//   2. 【リスタート完全同期 ＆ 権限制御の完全維持】
+//      ホスト実行時：新シード値を発行して buildWorld を行い、初期配置スナップショットを添えて broadcastRestartGame を送出。
 //      ゲスト受取時：届いた seed で世界を再構築し、snapshot のアイテム・ブロック・階段を両画面で100%完全一致復元。
-//   2. 【左下リスタートボタン表示権限の厳格制御（updateRestartButtonVisibility）】
-//      シングルプレイまたはマルチホスト時のみ `display: flex`、マルチゲスト時は確実に `display: none`。
-//      結果画面のリスタートボタン（btn-restart）も同様に制御し、ゲスト側での誤爆を完全防止。
-//   3. 【先行AI伸長安定化・保留キュー即時フラッシュ・100ms周期アグリゲーションの完全維持】
+//      クイックリスタートボタンおよび結果画面リスタートボタンは、ホストのみ表示（ゲストは確実に非表示）。
+//   3. 【全5モジュール（network / combat / blocks / systems / main）の完全整合】
+//      先行AI進行に応じたステージ伸長、保留ボーナス消去の即時フラッシュ、10Hzアグリゲーションを100%維持。
 
 import { mountAllUI } from './dom.js';
 
@@ -82,7 +84,7 @@ let placedPlankCount = 0;
 let lastDisplayedSec = -1;
 
 /**
- * ★【Phase 2 核心】リスタートボタン（クイックリスタート＆結果モーダル）の表示権限更新関数
+ * リスタートボタン（クイックリスタート＆結果モーダル）の表示権限更新関数
  * シングルプレイ、またはマルチのホストのみ表示し、ゲスト端末では完全に非表示にする
  */
 export function updateRestartButtonVisibility() {
@@ -115,7 +117,7 @@ if (typeof window !== 'undefined') {
 }
 
 /**
- * ホストから届いた残り秒数を平滑同期
+ * ホストから 10Hz POS パケット（tl キー）で届いた残り秒数を平滑同期
  */
 export function applyRemoteTimeSync(remoteTimeLeft) {
   if (typeof remoteTimeLeft === 'number' && !isNaN(remoteTimeLeft)) {
@@ -147,7 +149,7 @@ if (typeof window !== 'undefined') {
   window.applyRemoteTimeSync = applyRemoteTimeSync;
   window.applyRemoteTimeUp = applyRemoteTimeUp;
   
-  // ★【Phase 2 核心】ホストからリスタート指示（シード＆スナップショット同封）を受信した際の連携ハンドラ
+  // ホストからリスタート指示（シード＆スナップショット同封）を受信した際の連携ハンドラ
   window.onRemoteRestartReceived = (packet) => {
     if (packet && packet.seed) {
       resetGame(packet.seed, packet.snapshot);
@@ -274,7 +276,7 @@ export function onTimeUp() {
 }
 
 /**
- * ★【Phase 2 核心】リスタート実行関数（新シード値およびスナップショットの完全同期反映）
+ * リスタート実行関数（新シード値およびスナップショットの完全同期反映）
  * @param {number|null} remoteSeed ホストから届いた新シード値（ゲスト受取時）
  * @param {Object|null} remoteSnapshot ホストから届いた初期島スナップショット（ブロック・アイテム・階段）
  */
