@@ -1,18 +1,21 @@
-// network.js: AgentSDK公式仕様完全準拠 ＆ ホスト主導型10Hz通信集約・ゼロバースト同期・自律ホスト昇格（Host Migration）エンジン
-// ★ 確定仕様（スロット不変型ホスト昇格 ＆ AI自律復帰 ＆ 再入室完全同期）：
-//   1. 【フロントエンド独自ウォッチドッグタイマー（2.5秒無通信検知）】
-//      タスクキルや通信切断によるホスト離脱時、ネイティブイベントの数十秒〜数分遅延に依存せず、
-//      2.5秒間パケットが途絶えた時点でゲスト端末（端末B）が自律的に promoteToHost() をキック。
-//   2. 【スロット不変型ホスト昇格（チーム色・架橋占有権の100%維持）】
-//      端末Bはスロット番号（Slot 1 / 赤チーム / YOU）を変えずにホスト権限のみを昇格。
-//      自分が今まで架けてきた階段が「敵の階段」扱いになる致命的事故を根絶。
-//   3. 【AI自律思考の完全復帰（硬直・フリーズの根絶）】
-//      昇格時、_restoreAllVacantSlotsToAI() により人間が搭乗していない全スロットの
-//      targetNetPos を破棄し、isRemote = false, isAI = true, aiState = 'COLLECT' を再始動。
-//      元ホストA（青）もCPU 2（黄）も、その場から即座に自律走行を再開。
-//   4. 【パケット破棄・自分判定ハードコードの完全汎用化】
-//      ホスト＝スロット0固定コードを撤廃し、packet.slot === this.mySlot 準拠へ刷新。
-//      元ホスト端末Aが再入室してきた際、空いている Slot 0（または Slot 2）を即座に再割り当て。
+// network.js: AgentSDK公式仕様完全準拠 ＆ ホスト主導型セマンティック・タイムスライス同期・自律ホスト昇格（Host Migration）エンジン
+// ★ 確定仕様（入室同期・セマンティック・チャンキング ＆ ウォッチドッグ2段階緩和完全対応版）：
+//   1. 【ハンドシェイクの完全受動化（公式回答第3項準拠）】
+//      joinRoom() 完了直後の能動送信（REQUEST_ROOM_SYNC）を完全撤廃。
+//      ゲストは入室直後は一切送信せず、ホストからのパケットを受け取って初めて 10Hz POS 送信ループを安全始動。
+//   2. 【時分割スナップショット（可変長バッチ・チャンキング）】
+//      進行中の全ステージ（maxStage）を網羅した階段・ブロック・アイテムデータを最大25〜30件単位に自動スライス。
+//      ホストの aitools_game_joinroom を起点に _snapshotQueue へ順次キューイング。
+//   3. 【POSパケットへの snap 相乗り送信（1フレーム1通の絶対死守）】
+//      100ms周期タイマー内で通常POSパケットに _snapshotQueue のタスクを1件ずつ同封（posMessage.snap）。
+//      同一フレーム（16ms以内）の複数送信が物理的にゼロとなり、ネイティブ層のパケット破棄を100%防止。
+//   4. 【受信ディスパッチ ＆ ホストタイマー即時リフレッシュ】
+//      POS 受信時、packet.snap を検知して即座に該当ハンドラへ転送。
+//      チャンク受信毎に _lastHostPacketTime を更新し、分割同期中の誤爆を完全根絶。
+//   5. 【ウォッチドッグの2段階安全緩和】
+//      初回パケット受信待ち: 猶予 6.0秒、通常対戦中: 3.5秒。電波揺らぎによるスプリットブレイン事故を防止。
+//   6. 【退出時のスロット0初期化】
+//      exitRoom() 内で bindLocalPlayerSlot(0) を確実にキックし、ソロプレイ時の色残存を根絶。
 
 import {
   player,
@@ -106,14 +109,25 @@ function notifyRestartButtonVisibility() {
 }
 
 /**
- * ホスト端末の世界状態を軽量収集（Stage 0〜2周辺のブロック、階段、およびアイテム）
+ * ホスト端末の全進行ステージを網羅した完全世界状態を収集
+ * 配列が巨大な場合でも、後続のキューイングで可変長バッチに自動スライスされる
  */
-function captureWorldSnapshot() {
+function captureFullWorldSnapshot() {
+  let maxStage = 0;
+  if (Array.isArray(characters)) {
+    characters.forEach(c => {
+      if (c && typeof c.currentStage === 'number' && c.currentStage > maxStage) {
+        maxStage = c.currentStage;
+      }
+    });
+  }
+  const allowedStageLimit = Math.max(2, maxStage + 2);
+
   const blocks = [];
   if (Array.isArray(floorBlockPool)) {
     for (let idx = 0; idx < floorBlockPool.length; idx++) {
       const b = floorBlockPool[idx];
-      if (b && b.active && !b.attracting && b.pos && (b.stageIdx === 0 || b.stageIdx === 1 || b.stageIdx === 2)) {
+      if (b && b.active && !b.attracting && b.pos && b.stageIdx <= allowedStageLimit) {
         blocks.push({
           poolIdx: idx,
           stageIdx: b.stageIdx || 0,
@@ -131,7 +145,7 @@ function captureWorldSnapshot() {
   if (Array.isArray(bridges)) {
     for (let bi = 0; bi < bridges.length; bi++) {
       const b = bridges[bi];
-      if (b && (b.stageIdx === 0 || b.stageIdx === 1 || b.stageIdx === 2) && Array.isArray(b.planks) && !b.isSlide && !b.isJump) {
+      if (b && b.stageIdx <= allowedStageLimit && Array.isArray(b.planks) && !b.isSlide && !b.isJump) {
         for (let pIdx = 0; pIdx < b.planks.length; pIdx++) {
           const p = b.planks[pIdx];
           if (p && p.teamId) {
@@ -151,7 +165,7 @@ function captureWorldSnapshot() {
   if (Array.isArray(floorItems)) {
     for (let ii = 0; ii < floorItems.length; ii++) {
       const it = floorItems[ii];
-      if (it && it.active && it.pos && it.stageIdx <= 2) {
+      if (it && it.active && it.pos && it.stageIdx <= allowedStageLimit) {
         items.push({
           itemId: it.itemId,
           stageIdx: it.stageIdx,
@@ -223,10 +237,14 @@ export const NetworkManager = {
   _isCreatingRoom: false,
   _isJoiningRoom: false,
 
-  // ★ ハートビート（無通信監視）タイマー関連
+  // ★ ハートビート（無通信監視）タイマー関連（2段階安全緩和）
   _lastHostPacketTime: 0,
   _watchdogIntervalId: null,
+  _hasReceivedFirstHostPacket: false,
   _isPromoting: false,
+
+  // ★ スナップショット時分割送信キュー（1通あたり最大25〜30件にスライス）
+  _snapshotQueue: [],
 
   // ★ 100ms周期パケット（POS）へ完全集約するためのアクション蓄積キュー
   _pendingPlanks: [],     // pl: 階段設置
@@ -238,7 +256,7 @@ export const NetworkManager = {
   _pendingScatters: [],   // sc: 散乱ブロック
   _pendingSpawns: [],     // sp: 床ブロック補充（ホスト専用）
 
-  captureWorldSnapshot: captureWorldSnapshot,
+  captureWorldSnapshot: captureFullWorldSnapshot,
 
   // --- アクション蓄積キュー登録API（通信は一切行わずキューに積むのみ） ---
 
@@ -302,7 +320,6 @@ export const NetworkManager = {
 
   queueScatterBlocks(stageIdx, slotIdx, baseId, blocksArray) {
     if (!this.isMultiplayerActive || !Array.isArray(blocksArray) || blocksArray.length === 0) return;
-    // blocksArray: [[x, z], [x, z], ...] のフラット2D座標配列
     this._pendingScatters.push({
       s: stageIdx,
       sl: slotIdx,
@@ -313,7 +330,6 @@ export const NetworkManager = {
 
   queueSpawnBlocks(spawnedArray) {
     if (!this.isMultiplayerActive || !this.isHost || !Array.isArray(spawnedArray) || spawnedArray.length === 0) return;
-    // spawnedArray の要素を軽量フラットオブジェクトへ変換して蓄積
     for (let i = 0; i < spawnedArray.length; i++) {
       const b = spawnedArray[i];
       let tNum = 3; // neutral
@@ -386,12 +402,14 @@ export const NetworkManager = {
   },
 
   /**
-   * ★【核心】ハートビート監視ウォッチドッグタイマーの開始
-   * ゲスト端末時、ホストからのパケットが2.5秒間途絶えた場合に自動昇格
+   * ★【2段階緩和】ハートビート監視ウォッチドッグタイマー
+   * 1. 入室直後（初回ホストパケット受信前）: 猶予 6.0秒（通信確立・ロード待ちを保護）
+   * 2. 通常対戦中（初回パケット受信後）: 3.5秒（電波揺らぎ・一時遅延による誤昇格を根絶）
    */
   _startHostWatchdog() {
     this._stopHostWatchdog();
     this._lastHostPacketTime = performance.now();
+    this._hasReceivedFirstHostPacket = false;
 
     this._watchdogIntervalId = setInterval(() => {
       if (!this.isMultiplayerActive || this.isHost) {
@@ -400,9 +418,10 @@ export const NetworkManager = {
       }
 
       const elapsed = performance.now() - this._lastHostPacketTime;
-      // 2.5秒以上ホストからの通信が途絶した場合に自律昇格
-      if (elapsed > 2500) {
-        console.warn(`[NetworkManager] Host packet timeout (${Math.round(elapsed)}ms). Promoting to Host...`);
+      const timeoutThreshold = this._hasReceivedFirstHostPacket ? 3500 : 6000;
+
+      if (elapsed > timeoutThreshold) {
+        console.warn(`[NetworkManager] Host packet timeout (${Math.round(elapsed)}ms, threshold: ${timeoutThreshold}ms). Promoting to Host...`);
         this.promoteToHost();
       }
     }, 500);
@@ -446,25 +465,23 @@ export const NetworkManager = {
    */
   _restoreAllVacantSlotsToAI() {
     for (let i = 0; i < this.slots.length; i++) {
-      if (i === this.mySlot) continue; // 自分自身は除外
+      if (i === this.mySlot) continue;
 
       const slotData = this.slots[i];
       const char = characters[i];
       if (!slotData || !char) continue;
 
-      // スロットメタデータのリセット
       slotData.isAI = true;
       slotData.clientId = null;
       slotData.userId = null;
       slotData.name = (i === 0) ? 'CPU 0' : (i === 1 ? 'CPU 1' : 'CPU 2');
 
-      // キャラクター物理・AIフラグの完全初期化（shouldRunAI を確実に通過させる）
       char.isPlayer = false;
       char.isAI = true;
       char.isRemote = false;
-      char.targetNetPos = null;        // ★ 補間目標をクリアすることで shouldRunAI が true に！
+      char.targetNetPos = null;
       char.netVelocity = { x: 0, z: 0 };
-      char.aiState = 'COLLECT';         // 思考ルーチンを再始動
+      char.aiState = 'COLLECT';
       char.searchCooldown = 0;
       char.unstuckTimer = 0;
       char.stuckCheckTimer = 0;
@@ -475,7 +492,6 @@ export const NetworkManager = {
 
       refreshCharacterStackVisuals(char);
 
-      // ネームプレートの更新
       if (char.nameplateSprite) {
         char.name = slotData.name;
         if (char.nameplateSprite.material) {
@@ -579,6 +595,7 @@ export const NetworkManager = {
       this._seedApplied = true;
 
       this._stopHostWatchdog();
+      this._snapshotQueue.length = 0;
 
       // バッファ初期化
       this._pendingPlanks.length = 0;
@@ -635,6 +652,11 @@ export const NetworkManager = {
     }
   },
 
+  /**
+   * ★【完全受動型ハンドシェイク】ゲスト入室処理
+   * 公式回答第3項に基づき、入室完了直後の REQUEST_ROOM_SYNC 能動送信を完全廃止。
+   * ホストからの初回 ROOM_MEMBERS_SYNC パケットを受信して初めて 10Hz 送信ループを始動する。
+   */
   async joinRoom(roomId) {
     if (!roomId) return false;
     if (this._isCreatingRoom || this._isJoiningRoom) {
@@ -679,6 +701,13 @@ export const NetworkManager = {
       this.isMultiplayerActive = true;
       this._seedApplied = false;
 
+      // 送信ループはまだ起動しない（ホストからの初弾パケットを受け取るまで完全受動待機）
+      if (this._syncIntervalId) {
+        clearInterval(this._syncIntervalId);
+        this._syncIntervalId = null;
+      }
+      this._snapshotQueue.length = 0;
+
       // バッファ初期化
       this._pendingPlanks.length = 0;
       this._pendingPicks.length = 0;
@@ -707,10 +736,9 @@ export const NetworkManager = {
       this._bindRemoteSlot(0, 'norion');
 
       safeShowGameScreen();
-
       notifyRestartButtonVisibility();
 
-      // ★ ゲスト入室完了と同時にホスト監視ウォッチドッグタイマーを開始
+      // ★ 6.0秒猶予の入室監視ウォッチドッグを開始
       this._startHostWatchdog();
 
       return true;
@@ -722,7 +750,8 @@ export const NetworkManager = {
   },
 
   /**
-   * ★【核心】新規入室者のスロット割り当て（スロット0も対象に探索し、元ホストも正常復帰）
+   * ★【核心】新規入室者の検知 ＆ セマンティック・タイムスライス分割キューの構築
+   * 巨大スナップショットを1通で送らず、最優先パケット（即時）＋10Hz POS相乗りキューにスライス
    */
   _handleUserJoined(data) {
     if (!data) return;
@@ -732,10 +761,8 @@ export const NetworkManager = {
     if (this.isHost) {
       const guestName = (data.name && data.name !== 'ゲスト') ? data.name : (data.user_name || 'ゲスト');
       
-      // 既存ユーザーの再突合
       let targetSlot = this.slots.findIndex(s => s.userId && String(s.userId) === userId);
 
-      // 空いているスロットを探索（Slot 0 も対象に含める）
       if (targetSlot === -1) {
         for (let i = 0; i < this.slots.length; i++) {
           if (i !== this.mySlot && this.slots[i].isAI) {
@@ -756,11 +783,78 @@ export const NetworkManager = {
         this._bindRemoteSlot(targetSlot, guestName);
       }
 
+      // 1. 最優先パケット（即時）：スロット確定とワールドシードのみ（約220B）
       this._sendCustomMessage({
         event: 'ROOM_MEMBERS_SYNC',
         slots: this.slots,
         seed: this.currentSeed,
-        snapshot: captureWorldSnapshot()
+        hasChunks: true
+      });
+
+      // 2. 世界状態のスナップショットを収集し、可変長バッチ（最大25〜30件単位）にスライスしてキューへ登録
+      const fullSnapshot = captureFullWorldSnapshot();
+      this._snapshotQueue.length = 0; // 既存キューをリフレッシュ
+
+      // 階段データのスライシング（1チャンク最大30段）
+      if (Array.isArray(fullSnapshot.planks) && fullSnapshot.planks.length > 0) {
+        const BATCH_SIZE = 30;
+        for (let i = 0; i < fullSnapshot.planks.length; i += BATCH_SIZE) {
+          this._snapshotQueue.push({
+            t: 'planks',
+            list: fullSnapshot.planks.slice(i, i + BATCH_SIZE)
+          });
+        }
+      }
+
+      // 床ブロックデータのスライシング（1チャンク最大25個）
+      if (Array.isArray(fullSnapshot.blocks) && fullSnapshot.blocks.length > 0) {
+        const BATCH_SIZE = 25;
+        for (let i = 0; i < fullSnapshot.blocks.length; i += BATCH_SIZE) {
+          this._snapshotQueue.push({
+            t: 'blocks',
+            list: fullSnapshot.blocks.slice(i, i + BATCH_SIZE)
+          });
+        }
+      }
+
+      // アイテムデータのスライシング（1チャンク最大20個）
+      if (Array.isArray(fullSnapshot.items) && fullSnapshot.items.length > 0) {
+        const BATCH_SIZE = 20;
+        for (let i = 0; i < fullSnapshot.items.length; i += BATCH_SIZE) {
+          this._snapshotQueue.push({
+            t: 'items',
+            list: fullSnapshot.items.slice(i, i + BATCH_SIZE)
+          });
+        }
+      }
+    }
+  },
+
+  /**
+   * 受信した分割スナップショット（階段・ブロック・アイテム）の順不同・自律即時展開
+   */
+  _applySnapshotChunk(chunk) {
+    if (!chunk || !chunk.t || !Array.isArray(chunk.list)) return;
+    const activeScene = (typeof window !== 'undefined' && window.currentSceneRef) ? window.currentSceneRef : null;
+
+    if (chunk.t === 'planks') {
+      chunk.list.forEach(p => {
+        if (typeof window.applyRemotePlankBuilt === 'function') {
+          window.applyRemotePlankBuilt(p.stageIdx, p.laneIdx, p.plankIdx, p.teamId);
+        }
+      });
+    } else if (chunk.t === 'blocks') {
+      chunk.list.forEach(b => {
+        if (typeof window.applyRemoteBlockSpawned === 'function') {
+          window.applyRemoteBlockSpawned(b.stageIdx, b.poolIdx, b.x, b.y, b.z, b.teamId, b.blockId);
+        }
+      });
+    } else if (chunk.t === 'items' && activeScene) {
+      chunk.list.forEach(si => {
+        const existing = floorItems.find(li => li.active && (li.itemId === si.itemId || (li.stageIdx === si.stageIdx && li.type === si.type)));
+        if (!existing) {
+          spawnItem(activeScene, si.stageIdx, si.type);
+        }
       });
     }
   },
@@ -802,11 +896,21 @@ export const NetworkManager = {
 
       if (!packet || !packet.event) return;
 
-      // 受信時刻を更新（ホスト生存シグナル）
+      // 受信時刻を更新（ホスト生存シグナル ＆ 初回パケット受信フラグの確定）
       this._lastHostPacketTime = performance.now();
+      if (!this._hasReceivedFirstHostPacket) {
+        this._hasReceivedFirstHostPacket = true;
+      }
 
       switch (packet.event) {
         case 'POS':
+          // =========================================================================
+          // ★ 0. snap（POSに相乗りして届いた分割スナップショットの即時反映）
+          // =========================================================================
+          if (packet.snap) {
+            this._applySnapshotChunk(packet.snap);
+          }
+
           // =========================================================================
           // ★ 確定ディスパッチ順序（list -> sc -> pk -> co -> bl -> sp -> ko -> sk -> tl）
           // =========================================================================
@@ -923,52 +1027,9 @@ export const NetworkManager = {
 
         case 'ROOM_MEMBERS_SYNC':
           this._applyRoomMembersSync(packet.slots, packet.seed, packet.snapshot);
+          // 初回パケット受信をもってゲスト側の 10Hz 送信ループを安全に始動！
           if (!this.isHost && this.isMultiplayerActive && !this._syncIntervalId) {
             this._startPositionBroadcasting();
-          }
-          break;
-
-        case 'REQUEST_ROOM_SYNC':
-          if (this.isHost) {
-            const reqClientId = packet.clientId;
-            const reqUserId = String(packet.userId || '');
-            const reqName = (packet.name && packet.name !== 'ゲスト' && packet.name !== 'YOU') ? packet.name : 'ゲスト1';
-
-            let targetSlot = -1;
-            if (reqClientId) {
-              targetSlot = this.slots.findIndex(s => s.clientId === reqClientId);
-            }
-
-            if (targetSlot === -1 && reqUserId && reqUserId !== 'local_user') {
-              targetSlot = this.slots.findIndex(s => s.userId && String(s.userId) === reqUserId);
-            }
-
-            if (targetSlot === -1) {
-              for (let i = 0; i < this.slots.length; i++) {
-                if (i !== this.mySlot && this.slots[i].isAI) {
-                  targetSlot = i;
-                  break;
-                }
-              }
-            }
-
-            if (targetSlot !== -1) {
-              this.slots[targetSlot] = {
-                slot: targetSlot,
-                clientId: reqClientId,
-                userId: reqUserId || this.slots[targetSlot].userId,
-                name: reqName,
-                isAI: false
-              };
-              this._bindRemoteSlot(targetSlot, reqName);
-            }
-
-            this._sendCustomMessage({
-              event: 'ROOM_MEMBERS_SYNC',
-              slots: this.slots,
-              seed: this.currentSeed,
-              snapshot: captureWorldSnapshot()
-            });
           }
           break;
 
@@ -1005,6 +1066,7 @@ export const NetworkManager = {
         resetParticlePools();
         buildWorld(activeScene, seed);
 
+        // 単一パケット同封スナップショット（リスタート時等）の復元
         if (snapshot && Array.isArray(snapshot.blocks)) {
           floorBlockPool.forEach(b => {
             b.active = false;
@@ -1039,29 +1101,11 @@ export const NetworkManager = {
           });
         }
       }
-    } else if (!this.isHost && snapshot) {
-      if (Array.isArray(snapshot.planks)) {
-        snapshot.planks.forEach(p => {
-          if (typeof window.applyRemotePlankBuilt === 'function') {
-            window.applyRemotePlankBuilt(p.stageIdx, p.laneIdx, p.plankIdx, p.teamId);
-          }
-        });
-      }
-
-      if (Array.isArray(snapshot.items) && activeScene) {
-        snapshot.items.forEach(si => {
-          const existing = floorItems.find(li => li.active && (li.itemId === si.itemId || (li.stageIdx === si.stageIdx && li.type === si.type)));
-          if (!existing) {
-            spawnItem(activeScene, si.stageIdx, si.type);
-          }
-        });
-      }
     }
 
     syncedSlots.forEach((s) => {
       let isMyClient = false;
 
-      // ★ 修正：ホスト＝スロット0固定を撤廃し、自身のスロット番号で正確に照合
       if (this.isHost) {
         isMyClient = (s.slot === this.mySlot);
       } else {
@@ -1173,7 +1217,7 @@ export const NetworkManager = {
     targetChar.isAI = true;
     targetChar.isRemote = false;
     targetChar.aiState = 'COLLECT';
-    targetChar.targetNetPos = null; // ★ リモート目標を破棄しAI思考を通過させる
+    targetChar.targetNetPos = null;
     targetChar.name = (slotIndex === 0) ? 'CPU 0' : (slotIndex === 1 ? 'CPU 1' : 'CPU 2');
 
     targetChar.netVelocity = { x: 0, z: 0 };
@@ -1208,7 +1252,8 @@ export const NetworkManager = {
   },
 
   /**
-   * ★【核心】10Hz 完全集約ブロードキャスト（ゼロバースト設計の心臓部）
+   * ★【核心】10Hz 完全集約ブロードキャスト（時分割 snap 相乗り送信エンジン）
+   * 分割キューに残存タスクがあれば posMessage.snap に1件同封。同一フレーム複数送信を物理的に根絶。
    */
   _startPositionBroadcasting() {
     if (this._syncIntervalId) clearInterval(this._syncIntervalId);
@@ -1355,7 +1400,12 @@ export const NetworkManager = {
       if (outgoingScatters) posMessage.sc = outgoingScatters;
       if (outgoingSpawns) posMessage.sp = outgoingSpawns;
 
-      // 厳格にこのタイマーからのみ sendMessage を実行
+      // ★ 分割スナップショットキューに残存タスクがあれば、このPOSパケットに1件だけ同封
+      if (this.isHost && this._snapshotQueue.length > 0) {
+        posMessage.snap = this._snapshotQueue.shift();
+      }
+
+      // 厳格にこのタイマーからのみ sendMessage を実行（1フレーム1通を死守）
       this._sendCustomMessage(posMessage);
     }, 100);
   },
@@ -1364,7 +1414,6 @@ export const NetworkManager = {
    * ★【核心】リモート座標の反映（スロット0固定破棄の完全撤廃）
    */
   _handleRemotePosition(packet) {
-    // 修正：自分自身のスロットからのパケットのみを正確に破棄
     if (packet.slot === this.mySlot) return;
 
     const targetChar = characters[packet.slot];
@@ -1482,7 +1531,7 @@ export const NetworkManager = {
    */
   broadcastRestartGame(newSeed, snapshot = null) {
     if (!this.isMultiplayerActive || !this.isHost) return;
-    const finalSnapshot = snapshot || captureWorldSnapshot();
+    const finalSnapshot = snapshot || captureFullWorldSnapshot();
     this.currentSeed = newSeed;
     this._sendCustomMessage({
       event: 'RESTART_GAME',
@@ -1542,7 +1591,6 @@ export const NetworkManager = {
 
       this._restoreSlotToAI(exitedSlotIdx);
 
-      // ホストが抜けた場合は即座に自律昇格
       if (isExitedSlotHost) {
         console.warn(`[NetworkManager] Host (Slot 0) exited room. Promoting to Host...`);
         this.promoteToHost();
@@ -1551,19 +1599,25 @@ export const NetworkManager = {
           event: 'ROOM_MEMBERS_SYNC',
           slots: this.slots,
           seed: this.currentSeed,
-          snapshot: captureWorldSnapshot()
+          hasChunks: false
         });
       }
     }
     notifyRestartButtonVisibility();
   },
 
+  /**
+   * ★【修正】ルーム退出処理
+   * 自キャラの操作権限をデフォルトの青（スロット0）へ確実に復元し、ソロプレイ時の色残存を根絶
+   */
   async exitRoom() {
     this._stopHostWatchdog();
     if (this._syncIntervalId) {
       clearInterval(this._syncIntervalId);
       this._syncIntervalId = null;
     }
+    this._snapshotQueue.length = 0;
+
     await safeExitCurrentRoom();
     this.currentRoomId = null;
     this.isHost = false;
@@ -1571,8 +1625,16 @@ export const NetworkManager = {
     this.mySlot = 0;
     this.isSlotConfirmed = false;
     this._seedApplied = false;
+    this._hasReceivedFirstHostPacket = false;
 
     this._hasRegisteredListener = false;
+
+    // 自キャラの操作権限をデフォルトの青（スロット0）へ確実に復元
+    if (typeof bindLocalPlayerSlot === 'function') {
+      bindLocalPlayerSlot(0);
+    } else if (typeof window.bindLocalPlayerSlot === 'function') {
+      window.bindLocalPlayerSlot(0);
+    }
 
     notifyRestartButtonVisibility();
 
