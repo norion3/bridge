@@ -1,9 +1,14 @@
 // dom.js: 画面UI・HUD・ロビー・待機室の動的生成モジュール
-// ★ Phase 1 復旧版（画像1最新青空ロビー外観の復元 ＆ ボタンID再配線）：
-//   1. patchExistingLobbyLabels() を完全復元：GRAVITY側HTMLの黒い旧ロビー（#test-lobby-overlay）を画像1の青空デザインへ即座に上書き整形
-//   2. 「▶ 1人で遊ぶ」ボタンを最上部へ再配置し、公開/プライベートルーム作成ボタンに正しいID（#btn-create-public, #btn-create-private）とスタイルを付与
-//   3. network.js の通信フック（hookLobbyNetworkEvents）がボタンを確実に検知・バインドできるように再接続
-//   4. 提案内容以外の不要な改変は一切行わず、既存の安定ロジックを100%維持
+// ★ 公開ルーム一覧 独立スクロール化 ＆ 1行Ellipsis対応版：
+//   1. 【#room-list-container の独立スクロール化】
+//      max-height: 210px; overflow-y: auto; -webkit-overflow-scrolling: touch; を定義。
+//      部屋が多数並んだ場合でもロビー全体が縦に伸びず、枠内だけで滑らかに慣性スクロール。
+//   2. 【薄型シアンのカスタムスクロールバー】
+//      4px幅の半透明シアン色スクロールバーをCSSに定義し、青空・マリンデザインに調和。
+//   3. 【.gravity-room-item の Flexbox ガード】
+//      長いIDでも「参加」ボタンを画面外に押し出さず、テキスト領域が安全に伸縮するレイアウト基盤を整備。
+//   4. 【既存ロビー外観の完全維持】
+//      「▶ 1人で遊ぶ」ボタンや青空フロストデザインの整合性を100%維持。
 
 import { updatePlayerName } from './character.js';
 
@@ -137,16 +142,39 @@ export function injectStyles() {
       margin-top: 6px;
     }
 
+    /* 公開ルーム一覧コンテナの独立スクロール領域 */
+    #room-list-container {
+      max-height: 210px;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      padding-right: 4px;
+      margin-top: 8px;
+    }
+
+    /* 薄型シアンのカスタムスクロールバー */
+    #room-list-container::-webkit-scrollbar {
+      width: 4px;
+    }
+    #room-list-container::-webkit-scrollbar-track {
+      background: rgba(255, 255, 255, 0.05);
+      border-radius: 4px;
+    }
+    #room-list-container::-webkit-scrollbar-thumb {
+      background: rgba(56, 189, 248, 0.4);
+      border-radius: 4px;
+    }
+
     .gravity-room-item {
       width: 100%;
       background: rgba(255, 255, 255, 0.12);
       border: 1px solid rgba(255, 255, 255, 0.2);
       border-radius: 12px;
-      padding: 12px 16px;
+      padding: 12px 14px;
       display: flex;
       align-items: center;
       justify-content: space-between;
       margin-bottom: 8px;
+      gap: 10px;
     }
     .gravity-member-slot {
       background: rgba(255, 255, 255, 0.1);
@@ -222,7 +250,7 @@ export async function syncGravityUserName() {
 }
 
 /**
- * ★【Phase 1 復元】既存のHTML要素（#test-lobby-overlay）を画像1の最新青空ロビーへ完全上書き整形
+ * 既存のHTML要素（#test-lobby-overlay）を最新青空ロビーへ完全上書き整形
  */
 export function patchExistingLobbyLabels() {
   const overlay = document.getElementById('test-lobby-overlay');

@@ -1713,11 +1713,11 @@ export function hookLobbyNetworkEvents() {
         item.className = 'gravity-room-item';
         const strRoomId = String(r.room_id);
         item.innerHTML = `
-          <div style="display: flex; flex-direction: column; gap: 2px;">
-            <span style="font-weight: 800; color: #ffffff; font-size: 14px;">ROOM #${strRoomId}</span>
-            <span style="font-size: 12px; color: #bae6fd;">走者: ${r.gamer_num || 1} / 3名</span>
+          <div style="min-width: 0; flex: 1; margin-right: 10px; display: flex; flex-direction: column; gap: 2px;">
+            <span style="font-weight: 800; color: #ffffff; font-size: 13px; letter-spacing: 0.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">ROOM #${strRoomId}</span>
+            <span style="font-size: 12px; color: #bae6fd;">走者: ${r.gamer_num || 1} / ${r.max_players || 3}名</span>
           </div>
-          <button type="button" class="gravity-btn-green" style="width: auto; padding: 6px 14px; font-size: 13px; border-radius: 8px;">参加</button>
+          <button type="button" class="gravity-btn-green" style="flex-shrink: 0; width: auto; padding: 6px 14px; font-size: 13px; border-radius: 8px;">参加</button>
         `;
         const joinBtn = item.querySelector('button');
 
