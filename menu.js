@@ -1,55 +1,77 @@
-// menu.js: ボトムシートメニュー・右下サイドMENUボタン・親指下部チャット・製作者プロフィール安全キック・参加者履歴管理
-// ★ Package 1 アトミック分割・スリム化司令塔版（menu_styles.js 統合）
-//   1. 【CSS完全外部委託によるコード半減】
-//      長大なインラインスタイル定義を menu_styles.js へ移管し、ロジックのみを約280行へスリム化。
-//   2. 【右上「いいね誘導」吹き出しの精密最適化】
-//      自然な左詰め（text-align: left）、8px快適余白、33pxボタン中心一致を完全維持。
-//   3. 【走者重複・3名増殖の完全根絶（動的ID自動マージ）】
-//      仮キー（host_slot_0 / guest_slot_*）と実IDの自動統合により、何人出入りしても1人1行を保証。
-//   4. 【公式推奨：非表示iframeによる安全ネイティブキック（真っ黒画面完全根絶）】
-//      deepLink を動的生成した非表示 iframe へ流し込み、ゲームのアンロード事故を 100% 防止。
-//   5. 【「ルーム招待 ⇧」ボタン被り完全解消】
-//      スクロール領域下部に 96px 安全余白を確保し、最下部ボタンを快適にタップ可能。
+// menu.js: ボトムシートメニュー・右下サイドMENUボタン・親指下部チャット・製作者プロフィール公式フック・参加者履歴管理
+// ★ GRAVITY公式回答完全準拠 ＆ ネイティブプロフィール直接起動版：
+//   1. 【公式推奨 方式A：公式URLトップレベル遷移によるネイティブフック起動】
+//      slme://internal?type=5（ブラウザ起動ラッパー）によるネットワークエラー画面を完全撤廃。
+//      公式短縮URL（api.gravity.place/gravity/url/...）および公式ユーザーURL（gravity.place/user/xxx）を
+//      window.top.location.href へキックし、アプリ側のネイティブインターセプトを直接発動。
+//      ゲーム画面をリロードさせることなく、ネイティブのマイページを綺麗にオーバーレイ表示させます。
+//   2. 【本垢・サブ垢・走者一覧の全導線完全対応】
+//      製作者ボタンでは公式短縮URL（yH2Wc / IH2Wc）を優先使用し、走者一覧では動的ユーザーIDから公式URLを自動生成。
+//   3. 【分割後アーキテクチャ（menu_styles.js 連携）の完全維持】
+//      スタイルシートは menu_styles.js へ外注し、可読性と保守性を維持。
+//   4. 【走者重複根絶 ＆ ルーム招待被り96px余白の完全維持】
 
 import { injectMenuStyles } from './menu_styles.js';
 
+// 製作者アカウント定数定義（公式短縮URL対応）
+export const CREATOR_ACCOUNTS = {
+  main: {
+    id: '2736445531',
+    shareUrl: 'https://api.gravity.place/gravity/url/yH2Wc',
+    title: '👤 製作者の本アカウントを見る ↗',
+    subtitle: 'メインの活動・交流・フォローはこちら'
+  },
+  sub: {
+    id: '887811163',
+    shareUrl: 'https://api.gravity.place/gravity/url/IH2Wc',
+    title: '🛠️ 開発・ご要望用アカウントを見る ↗',
+    subtitle: 'ゲームの要望やコメントはこちらへどうぞ'
+  }
+};
+
 /**
  * GRAVITYアプリ内ネイティブ画面遷移ルーター
- * ★【GRAVITY公式サポート推奨】非表示 iframe 経由の安全キックエンジン
+ * ★【GRAVITY公式推奨 方式A】公式プロフィールURLによるネイティブフック起動
  */
 export const GravityRouter = {
-  openProfile(userId) {
-    if (!userId) return;
-    const cleanId = String(userId).trim();
-    if (!cleanId || cleanId === 'local_user' || cleanId === 'null') return;
+  openProfile(userIdOrUrl) {
+    if (!userIdOrUrl) return;
+    const target = String(userIdOrUrl).trim();
+    if (!target || target === 'local_user' || target === 'null') return;
 
     try {
-      // 1. ネイティブへ渡すコマンドとパラメータの構築
-      const paramObj = {
-        uid: Number(cleanId) || cleanId,
-        selectedIndex: 0,
-        web_url: 'https://www.gravity.place/user/' + cleanId,
-        s: 'web',
-        b: 'user'
-      };
-      const encodedJson = encodeURIComponent(JSON.stringify(paramObj));
-      const innerUrl = 'usercenter?0=' + encodedJson;
-      const deepLink = 'slme://internal?type=5&ani=1&url=' + encodeURIComponent(innerUrl);
+      let finalUrl = '';
+      if (target.startsWith('http://') || target.startsWith('https://')) {
+        // 公式短縮URL（Universal Link）が渡された場合
+        finalUrl = target;
+      } else {
+        // ユーザーID（数字等）が渡された場合は公式プロフィールURLを生成
+        finalUrl = `https://www.gravity.place/user/${target}`;
+      }
 
-      // 2. 非表示 iframe を用いた安全キック（メイン画面の URL 遷移を物理遮断）
-      const iframe = document.createElement('iframe');
-      iframe.style.cssText = 'position:absolute;width:0;height:0;opacity:0;pointer-events:none;border:none;display:none;';
-      iframe.src = deepLink;
-      document.body.appendChild(iframe);
+      console.log('[GravityRouter] 公式URLネイティブフックをキック:', finalUrl);
 
-      // 3. クリーンアップ（1秒後に安全にDOMから除去）
-      setTimeout(() => {
-        if (document.body.contains(iframe)) {
-          document.body.removeChild(iframe);
+      // ★ 公式推奨方式A: アプリがこのURL遷移を検知し、Web遷移をキャンセルしてネイティブ画面をオーバーレイ起動
+      if (typeof window !== 'undefined') {
+        if (window.top && window.top.location) {
+          window.top.location.href = finalUrl;
+        } else {
+          window.location.href = finalUrl;
         }
-      }, 1000);
+      }
     } catch (err) {
-      console.warn('[GravityRouter] Navigation failed gracefully:', err);
+      console.warn('[GravityRouter] ネイティブフック起動失敗、フォールバックを試行:', err);
+      // 万一の例外時のみ方式B（直接スキーム）をフォールバック実行
+      try {
+        const cleanId = String(userIdOrUrl).replace(/[^0-9]/g, '');
+        if (cleanId) {
+          const ifr = document.createElement('iframe');
+          ifr.style.cssText = 'position:absolute;width:0;height:0;opacity:0;pointer-events:none;border:none;display:none;';
+          ifr.src = `slme://usercenter?uid=${cleanId}`;
+          document.body.appendChild(ifr);
+          setTimeout(() => { if (document.body.contains(ifr)) document.body.removeChild(ifr); }, 1000);
+        }
+      } catch (e) {}
     }
   }
 };
@@ -57,20 +79,6 @@ export const GravityRouter = {
 if (typeof window !== 'undefined') {
   window.GravityRouter = GravityRouter;
 }
-
-// 製作者アカウント定数定義
-export const CREATOR_ACCOUNTS = {
-  main: {
-    id: '2736445531',
-    title: '👤 製作者の本アカウントを見る ↗',
-    subtitle: 'メインの活動・交流・フォローはこちら'
-  },
-  sub: {
-    id: '887811163',
-    title: '🛠️ 開発・ご要望用アカウントを見る ↗',
-    subtitle: 'ゲームの要望やコメントはこちらへどうぞ'
-  }
-};
 
 // 参加者履歴キャッシュ（セッション中に参加した全ユーザー）
 const sessionParticipants = new Map();
@@ -168,7 +176,7 @@ function renderParticipantsList() {
       <div class="participant-jump-icon">↗</div>
     `;
 
-    // 走者タップ時も安全な iframe キックでマイページを開く
+    // 走者タップ時：公式プロフィールURLによるネイティブフック起動
     row.addEventListener('click', () => {
       GravityRouter.openProfile(p.userId);
     });
@@ -249,7 +257,6 @@ function handleSendMessage(customText = null) {
     onSendChatCallback(safeText);
   }
 
-  // 視界確保のため閉じる
   GameMenu.close();
 }
 
@@ -272,7 +279,7 @@ function escapeHtml(str) {
 export function initGameMenuDOM() {
   injectMenuStyles();
 
-  // 1. 右下サイド MENUボタン（スワイプエリア完全解放・英語カプセル）
+  // 1. 右下サイド MENUボタン
   if (!document.getElementById('btn-open-game-menu')) {
     const menuBtn = document.createElement('button');
     menuBtn.id = 'btn-open-game-menu';
@@ -288,7 +295,7 @@ export function initGameMenuDOM() {
     document.body.appendChild(menuBtn);
   }
 
-  // 2. 右上「いいね誘導」アンカー（左詰め・8px余白・33px中央アライメント最適化版）
+  // 2. 右上「いいね誘導」アンカー
   if (!document.getElementById('like-guide-anchor')) {
     const likeAnchor = document.createElement('div');
     likeAnchor.id = 'like-guide-anchor';
@@ -327,7 +334,7 @@ export function initGameMenuDOM() {
         <button type="button" class="menu-tab-btn" data-tab="creator">✦ 製作者</button>
       </div>
 
-      <!-- 1. チャットタブ（親指下部入力 ＆ 定型文8種） -->
+      <!-- 1. チャットタブ -->
       <div id="menu-tab-chat" class="menu-tab-content active">
         <div class="chat-tab-container">
           <div class="chat-top-section">
@@ -355,7 +362,7 @@ export function initGameMenuDOM() {
         <div id="menu-participants-list" class="participants-container"></div>
       </div>
 
-      <!-- 3. 製作者タブ（安全iframeキック・ルーム招待被り解消） -->
+      <!-- 3. 製作者タブ（公式短縮URL・ネイティブフック直結） -->
       <div id="menu-tab-creator" class="menu-tab-content">
         <div class="creator-section-container">
           <div class="creator-message-card">
@@ -408,14 +415,14 @@ export function initGameMenuDOM() {
       });
     });
 
-    // 製作者プロフィール直結ボタン（公式推奨の安全iframeキック）
+    // ★ 製作者プロフィール直結ボタン：公式短縮URLを直接キックしてネイティブフックを発動
     document.getElementById('btn-jump-creator-main')?.addEventListener('click', (e) => {
       e.stopPropagation();
-      GravityRouter.openProfile(CREATOR_ACCOUNTS.main.id);
+      GravityRouter.openProfile(CREATOR_ACCOUNTS.main.shareUrl);
     });
     document.getElementById('btn-jump-creator-sub')?.addEventListener('click', (e) => {
       e.stopPropagation();
-      GravityRouter.openProfile(CREATOR_ACCOUNTS.sub.id);
+      GravityRouter.openProfile(CREATOR_ACCOUNTS.sub.shareUrl);
     });
   }
 }
