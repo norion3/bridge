@@ -1,13 +1,16 @@
 // blocks.js: 床ブロック管理・補充・スポーン・決定論的一意キー（blockId）マルチ同期専用モジュール
-// ★ 確定仕様（ゼロバースト・決定論的圧縮アーキテクチャ）：
-//   1. 【ブロック補充の生 sendMessage 直打ち完全根絶】
-//      manageBlockSpawns および spawnSingleBlock 内で発生していた単発/バッチの直接送信を撤廃。
+// ★ Phase 5 最適化版（床ブロック補充座標ゼロアロケーション化 ＆ プール保護完全維持）：
+//   1. 【床ブロック補充レコードのゼロアロケーション純粋算術丸め化】
+//      spawnSingleBlock および applyRemoteBlockSpawned で使用されていた Number(val.toFixed(2)) を
+//      CPUレジスタ内で完結する round2(val) へ完全置換。
+//      ブロック補充バッチが走った際の一時文字列（String）オブジェクト生成をゼロにし、GC負荷を根絶。
+//   2. 【ブロック補充の生 sendMessage 直打ち完全根絶の維持】
 //      NetworkManager.queueSpawnBlocks へ集約し、100ms周期の POS パケット（sp）に完全同封。
-//   2. 【現在滞在ステージの強制リサイクル強奪を完全遮断】
+//   3. 【現在滞在ステージの強制リサイクル強奪を完全遮断】
 //      プール枯渇時に走者が現在滞在しているステージのアクティブブロックが奥の島へ
 //      強制テレポートされて消滅する欠陥を防止。安全な非アクティブ枠・過去ステージからのみリサイクル。
-//   3. 【決定論的ブロックID ＆ 重複生成ガード】
-//      連番ID（b_ステージ番号_カウンター）および近接座標判定（0.45m以内）による二重生成防止を維持。
+//   4. 【決定論的ブロックID ＆ 重複生成ガードの維持】
+//      連番ID（b_ステージ番号_カウンター）および近接座標判定（0.45m以内）による二重生成防止を100%維持。
 
 import {
   BLOCK_TYPES,
@@ -30,6 +33,9 @@ import {
   activeMagnetBlocks,
   seededRandom
 } from './world.js';
+
+// --- 高速・ゼロアロケーション純粋算術丸めヘルパー（文字列インスタンス生成ゼロ） ---
+const round2 = (val) => Math.round(val * 100) / 100;
 
 export const floorBlocksByStage = new Map();
 
@@ -96,13 +102,14 @@ function findSafePoolItem() {
 
 /**
  * ホストから新ブロック補充パケット（blockId付き）を受信した際の反映ハンドラ（単体）
+ * ★ round2 による純粋算術丸めで文字列オブジェクト生成を完全排除
  */
 export function applyRemoteBlockSpawned(stageIdx, poolIdx, x, y, z, teamId, blockId = null) {
   const stageInfo = STAGES[stageIdx];
   if (!stageInfo) return;
 
   const stageBlocks = getFloorBlocksForStage(stageIdx);
-  const resolvedBlockId = blockId || `b_${stageIdx}_${x.toFixed(2)}_${z.toFixed(2)}`;
+  const resolvedBlockId = blockId || `b_${stageIdx}_${round2(x)}_${round2(z)}`;
 
   // 1. 同一 blockId が既にアクティブに存在している場合は二重生成を防止
   for (let i = 0; i < stageBlocks.length; i++) {
@@ -174,6 +181,7 @@ if (typeof window !== 'undefined') {
 
 /**
  * 単一床ブロックの出現位置判定および内部配置
+ * ★ round2 による純粋算術丸めで文字列オブジェクト生成を完全排除
  */
 export function spawnSingleBlock(scene, stageIdx, targetTeam = null, shouldBroadcastImmediately = true) {
   const stageInfo = STAGES[stageIdx];
@@ -269,12 +277,13 @@ export function spawnSingleBlock(scene, stageIdx, targetTeam = null, shouldBroad
 
   stageBlocks.push(poolItem);
 
+  // ★ 純粋算術丸め（round2）により一時文字列オブジェクト生成を完全ゼロ化
   const blockRecord = {
     stageIdx: stageIdx,
     poolIdx: floorBlockPool.indexOf(poolItem),
-    x: Number(validPos.x.toFixed(2)),
-    y: Number(spawnY.toFixed(2)),
-    z: Number(validPos.z.toFixed(2)),
+    x: round2(validPos.x),
+    y: round2(spawnY),
+    z: round2(validPos.z),
     teamId: team.id,
     blockId: uniqueBlockId
   };

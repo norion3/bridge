@@ -1,14 +1,14 @@
 // entities.js: 飛翔体・雷・ドレイン・マグネット・演出パーティクル・浮遊雲の毎フレーム更新モジュール
-// ★ 全走者完全同期版（ドレイン強奪飛翔 ＆ マグネット吸着アニメーション完全共通化）：
-//   1. 【クリスタル着弾時ドレインブロック全走者同期生成】
-//      発射者がホスト（リモート）であってもゲスト端末で固定4個のドレインブロックを確実に生成し、
-//      弧を描いて発射者の背中へ滑らかに吸着するアニメーションを完全同期。
-//   2. 【リモート走者への背中吸着・バウンド連動】
-//      ドレインおよびマグネットブロック到着時、自機だけでなくリモート走者の背中スタックバウンド（dockBounceTimer）
-//      および外観リフレッシュ（refreshRemoteStackVisuals）、着弾衝撃波エフェクトを等しく発火。
-//   3. 【空間適正音響と視界内カリングの完全維持】
-//      近隣走者のドレイン格納音やクリスタル着弾音を自然に再生しつつ、
-//      前後40m/55mの画面外カリングによる高フレームレート（60/120fps）維持を100%両立。
+// ★ Phase 3 最適化版（メモリ断片化防止 O(1) スワップPOP ＆ 画面外描画カリング完全連動）：
+//   1. 【activeMagnetBlocks の O(1) スワップPOP化（V8ヒープ断片化根絶）】
+//      吸着完了時の activeMagnetBlocks.splice(i, 1) による配列全要素の前詰めシフトコピー（O(N)）を
+//      末尾要素とのスワップ＆pop()（O(1) 削除）へ刷新。マグネット吸引中のGCスパイクを完全排除。
+//   2. 【画面外オブジェクトの GPU ドローコール完全カリング連動】
+//      前後40m/55mの画面外判定時、自転・浮遊計算をスキップするだけでなく mesh.visible = false を確実に連動。
+//      Three.js の Frustum Culling 判定および GPU へのドローコール自体を完全にバイパスし、省電力化。
+//   3. 【全走者完全同期演出の100%維持】
+//      攻撃クリスタルのドレインブロック生成、マグネット吸着放物線飛行、全走者背中バウンド（dockBounceTimer）、
+//      空間適正音響、衝撃波プール処理は完全維持。
 
 import {
   sharedMats,
@@ -55,11 +55,16 @@ import {
 export function updateSceneEntities(scene, dt, timeSec, player, sound) {
   const playerZ = player ? player.pos.z : 0;
 
-  // 1. 床置きアイテムの自転・浮遊アニメーション（前後40m以内の視界内のみ計算）
+  // 1. 床置きアイテムの自転・浮遊アニメーション ＆ GPUカリング連動（前後40m以内の視界内のみ計算）
   for (let i = 0; i < floorItems.length; i++) {
     const item = floorItems[i];
     if (item.active && item.group) {
-      if (Math.abs(item.pos.z - playerZ) > 40) continue;
+      if (Math.abs(item.pos.z - playerZ) > 40) {
+        if (item.group.visible) item.group.visible = false;
+        continue;
+      }
+      if (!item.group.visible) item.group.visible = true;
+
       if (item.crystal) {
         item.crystal.rotation.y = timeSec * 3.2;
         item.crystal.rotation.z = Math.sin(timeSec * 2.5) * 0.25;
@@ -148,7 +153,7 @@ export function updateSceneEntities(scene, dt, timeSec, player, sound) {
         }
         scatterBricks(scene, hitTarget, 3);
 
-        // ★ 全端末共通ドレインブロック生成（isPlayerガードを撤廃）
+        // ★ 全端末共通ドレインブロック生成
         const drainCount = 4;
         let spawned = 0;
         for (let d = 0; d < drainBlockPool.length && spawned < drainCount; d++) {
@@ -392,7 +397,7 @@ export function updateSceneEntities(scene, dt, timeSec, player, sound) {
     }
   }
 
-  // 5. マグネット吸引ブロックの背中への誘導飛行更新
+  // 5. マグネット吸引ブロックの背中への誘導飛行更新（★ O(1) スワップPOP によるメモリ断片化根絶）
   for (let i = activeMagnetBlocks.length - 1; i >= 0; i--) {
     const mb = activeMagnetBlocks[i];
     const flightDuration = Math.max(mb.duration || 0.36, 0.55);
@@ -451,7 +456,11 @@ export function updateSceneEntities(scene, dt, timeSec, player, sound) {
         mb.poolItem.attracting = false;
       }
 
-      activeMagnetBlocks.splice(i, 1);
+      // ★ splice(i, 1) による配列全要素シフトコピー（O(N)）を廃止し、O(1) スワップPOP を適用
+      const lastItem = activeMagnetBlocks.pop();
+      if (i < activeMagnetBlocks.length) {
+        activeMagnetBlocks[i] = lastItem;
+      }
     }
   }
 
@@ -487,11 +496,15 @@ export function updateSceneEntities(scene, dt, timeSec, player, sound) {
     }
   }
 
-  // 8. アトラクションボーナスブロックの自転・浮遊（前後40m以内の視界内のみ計算）
+  // 8. アトラクションボーナスブロックの自転・浮遊 ＆ GPUカリング連動（前後40m以内の視界内のみ計算）
   for (let i = 0; i < curvedSlideBonusBlocks.length; i++) {
     const blk = curvedSlideBonusBlocks[i];
     if (!blk.collected && blk.mesh) {
-      if (Math.abs(blk.mesh.position.z - playerZ) > 40) continue;
+      if (Math.abs(blk.mesh.position.z - playerZ) > 40) {
+        if (blk.mesh.visible) blk.mesh.visible = false;
+        continue;
+      }
+      if (!blk.mesh.visible) blk.mesh.visible = true;
       blk.mesh.rotation.y = timeSec * 2.8 + blk.t * 4.0;
     }
   }
@@ -499,7 +512,11 @@ export function updateSceneEntities(scene, dt, timeSec, player, sound) {
   for (let i = 0; i < ziplineBonusBlocks.length; i++) {
     const blk = ziplineBonusBlocks[i];
     if (!blk.collected && blk.mesh) {
-      if (Math.abs(blk.mesh.position.z - playerZ) > 40) continue;
+      if (Math.abs(blk.mesh.position.z - playerZ) > 40) {
+        if (blk.mesh.visible) blk.mesh.visible = false;
+        continue;
+      }
+      if (!blk.mesh.visible) blk.mesh.visible = true;
       blk.mesh.rotation.y = timeSec * 3.2 + blk.t * 4.5;
       blk.mesh.position.y = blk.baseY + Math.sin(timeSec * 3.5 + blk.zi) * 0.14;
     }
@@ -508,7 +525,11 @@ export function updateSceneEntities(scene, dt, timeSec, player, sound) {
   for (let i = 0; i < skydiveBonusBlocks.length; i++) {
     const blk = skydiveBonusBlocks[i];
     if (!blk.collected && blk.mesh) {
-      if (Math.abs(blk.mesh.position.z - playerZ) > 40) continue;
+      if (Math.abs(blk.mesh.position.z - playerZ) > 40) {
+        if (blk.mesh.visible) blk.mesh.visible = false;
+        continue;
+      }
+      if (!blk.mesh.visible) blk.mesh.visible = true;
       blk.mesh.rotation.y = timeSec * 3.2 + blk.t * 4.0;
       blk.mesh.position.y = blk.baseY + Math.sin(timeSec * 3.0 + blk.si) * 0.12;
     }
@@ -517,15 +538,23 @@ export function updateSceneEntities(scene, dt, timeSec, player, sound) {
   for (let i = 0; i < slideBonusBlocks.length; i++) {
     const blk = slideBonusBlocks[i];
     if (!blk.collected && blk.mesh) {
-      if (Math.abs(blk.mesh.position.z - playerZ) > 40) continue;
+      if (Math.abs(blk.mesh.position.z - playerZ) > 40) {
+        if (blk.mesh.visible) blk.mesh.visible = false;
+        continue;
+      }
+      if (!blk.mesh.visible) blk.mesh.visible = true;
       blk.mesh.rotation.y = timeSec * 2.8 + blk.prog * 3.0;
     }
   }
 
-  // 9. 浮遊雲のふわふわ揺れ（前後55m以内の視界内のみ計算）
+  // 9. 浮遊雲のふわふわ揺れ ＆ GPUカリング連動（前後55m以内の視界内のみ計算）
   for (let i = 0; i < cloudObjects.length; i++) {
     const c = cloudObjects[i];
-    if (Math.abs(c.mesh.position.z - playerZ) > 55) continue;
+    if (Math.abs(c.mesh.position.z - playerZ) > 55) {
+      if (c.mesh.visible) c.mesh.visible = false;
+      continue;
+    }
+    if (!c.mesh.visible) c.mesh.visible = true;
     c.mesh.position.y = c.baseY + Math.sin(timeSec + c.offset) * 0.4;
     c.mesh.rotation.y = Math.sin(timeSec * 0.3 + c.offset) * 0.08;
   }

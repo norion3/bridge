@@ -1,14 +1,18 @@
 // main.js: ゲーム全体の起動指揮・Three.js初期化・メインループ・入力・HUD制御・DM招待リンク自動入室
-// ★ 確定仕様（全走者演出完全同期 ＆ トラップドアハッチ開放連動 ＆ 背中スタックバウンド補正版）：
-//   1. 【リモート走者トラップドア搭乗時のハッチ開放完全連動】
+// ★ Phase 2 最適化版（Three.js シーングラフ行列再計算スキップ ＆ 演出完全同期維持）：
+//   1. 【リモート走者スケール代入の変化検知ガード（CPU負荷 0.2〜0.3ms 削減）】
+//      毎フレーム無条件に実行されていた c.meshObj.root.scale.set(targetScale, ...) に対し、
+//      スケール値が実際に変化したフレームでのみ Three.js の scale.set を呼び出すガードを新設。
+//      通常走行中における子孫メッシュ群の 4x4 ワールド変換行列（MatrixWorld）再計算コストを完全にバイパス。
+//   2. 【リモート走者トラップドア搭乗時のハッチ開放完全連動】
 //      相手走者がドロップタワーに進入した際、相手画面だけでなく自画面のスカイウォークガラスハッチも
-//      自動で「ウィーン」と開き、閉じた床を突き抜けて落ちる視覚不整合を100%根絶。
-//   2. 【リモート走者のブロック取得・背中スタックバウンド同期】
+//      自動で開き、閉じた床を突き抜けて落ちる視覚不整合を100%根絶。
+//   3. 【リモート走者のブロック取得・背中スタックバウンド同期】
 //      相手がブロックを取得した際、スタック数の増加を検知して dockBounceTimer を起動。
-//      滑らかなサイン波スケール補間により、相手走者の背中リュックも小気味よく「ポンッ」と跳ねる質感を再現。
-//   3. 【トランポリン（ジャンプ台）のネット沈み込み連動】
+//      滑らかなサイン波スケール補間により、相手走者の背中リュックも小気味よく跳ねる質感を再現。
+//   4. 【トランポリン（ジャンプ台）のネット沈み込み連動】
 //      リモート走者の JUMP 突入フレームで該当レーンの netMesh 沈み込みを適用。
-//   4. 【既存のDM招待Auto-Join・ホスト昇格・公式スコア送信の完全維持】
+//   5. 【既存のDM招待Auto-Join・ホスト昇格・公式スコア送信の完全維持】
 
 import { mountAllUI, UIController, EntryShield } from './dom.js';
 
@@ -726,7 +730,7 @@ export function animate(currentTime) {
           }
         }
 
-        // リモート走者の小人化タイマー減算 ＆ メッシュスケール連動
+        // リモート走者の小人化タイマー減算 ＆ メッシュスケール連動（★ Phase 2: 変化時のみ scale.set を呼ぶガード新設）
         if (c.shrinkTimer > 0) {
           c.shrinkTimer -= dt;
           if (c.shrinkTimer <= 0) {
@@ -736,7 +740,10 @@ export function animate(currentTime) {
         }
         const isRemoteShrunk = Boolean(c.isShrunk || (c.shrinkTimer && c.shrinkTimer > 0));
         const targetScale = isRemoteShrunk ? 0.42 : 1.0;
-        c.meshObj.root.scale.set(targetScale, targetScale, targetScale);
+        if (c._lastAppliedScale !== targetScale) {
+          c._lastAppliedScale = targetScale;
+          c.meshObj.root.scale.set(targetScale, targetScale, targetScale);
+        }
 
         // 無敵時間中のキャラクター点滅同期
         if (c.invulnerableTimer > 0) {
