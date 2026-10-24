@@ -1,17 +1,14 @@
-// network.js: AgentSDK公式仕様完全準拠 ＆ 極小タプルパッカー ＆ スマートDelta送信 ＆ ゼロアロケーション純粋算術丸めエンジン ＆ チャット・参加者履歴同期
-// ★ チャット・弾幕テキスト・参加者一覧完全統合版（構文エラー・ガード完全修復版）：
-//   1. 【SyntaxError修復（_idleKeepAliveCounter のコロン指定）】
-//      オブジェクトリテラル内のプロパティ代入指定ミスを修正し、スクリプトクラッシュを完全解決。
-//   2. 【safeExitCurrentRoom の環境ガード正常化】
-//      window チェックの論理演算子不整合を修復し、SDK通信セッションを正常に維持。
-//   3. 【チャットメッセージの10Hz POSパケット相乗り送信（ch キー）】
-//      menu.js の入力欄からの送信をフックし、メモリバッファへ蓄積。
-//      100ms周期パケットに { s: slot, m: text } として同封送出（通信バースト完全ゼロ）。
-//   4. 【ニコニコ風弾幕テキスト（danmaku.js）の全端末発火連動】
-//      自機送信時は即座にローカル描画（遅延ゼロ）、相手端末からの受信時は即座に spawnDanmaku をキック。
-//   5. 【参加者履歴（menu.js: recordParticipant）の自動登録・更新】
-//      入室・同期・退出イベントと連動し、セッション参加者のアイコン・名前・ステータスを自動更新。
-//   6. 【既存の全最適化・完全同期の100%維持】
+// network.js: AgentSDK公式仕様完全準拠 ＆ 極小タプルパッカー ＆ スマートDelta送信 ＆ ゼロアロケーション純粋算術丸めエンジン ＆ チャット・参加者履歴・アバター完全同期
+// ★ 走者タブホストアイコン非同期完全解消版（Phase 2）：
+//   1. 【ホスト側 slots[0] への portrait プロパティ保持】
+//      部屋作成時（createRoom）およびゲスト入室検知時（_handleUserJoined）に、
+//      slots 配列へ各ユーザーのアバター画像URL（portrait）を確実に格納。
+//   2. 【ROOM_MEMBERS_SYNC 受信時のホストアバターURL同期バインド】
+//      _applyRoomMembersSync 内で recordParticipant を呼び出す際、空文字 '' のハードコードを撤廃し、
+//      パケット内の s.portrait || '' を確実に伝達。ゲスト端末の走者タブでもホスト（norion）の黒髪アイコンが100%完全表示。
+//   3. 【チャット・弾幕テキスト・参加者一覧完全連動の維持】
+//      10Hz POS パケット相乗り（ch キー）、自機0ms発火、ニコニコ風弾幕テキスト（danmaku.js）連携を完全維持。
+//   4. 【既存の全最適化・通信安全性の100%維持】
 //      ボーナスブロック完全網羅スナップショット、5HzスマートDelta、11要素タプル、ゼロアロケーション算術丸めは完全維持。
 
 import {
@@ -331,9 +328,9 @@ export const NetworkManager = {
   myUser: { name: 'YOU', user_id: 'local_user', portrait: '' },
   
   slots: [
-    { slot: 0, clientId: null, userId: null, name: 'norion', isAI: false },
-    { slot: 1, clientId: null, userId: null, name: 'CPU 1', isAI: true },
-    { slot: 2, clientId: null, userId: null, name: 'CPU 2', isAI: true }
+    { slot: 0, clientId: null, userId: null, name: 'norion', portrait: '', isAI: false },
+    { slot: 1, clientId: null, userId: null, name: 'CPU 1', portrait: '', isAI: true },
+    { slot: 2, clientId: null, userId: null, name: 'CPU 2', portrait: '', isAI: true }
   ],
   
   isHost: false,
@@ -599,6 +596,7 @@ export const NetworkManager = {
       slotData.isAI = true;
       slotData.clientId = null;
       slotData.userId = null;
+      slotData.portrait = '';
       slotData.name = (i === 0) ? 'CPU 0' : (i === 1 ? 'CPU 1' : 'CPU 2');
 
       char.isPlayer = false;
@@ -758,9 +756,17 @@ export const NetworkManager = {
         ? Math.abs(createdRoomId.split('').reduce((acc, char) => (acc << 5) - acc + char.charCodeAt(0), 0))
         : Math.floor(Math.random() * 90000000) + 10000000;
 
-      this.slots[0] = { slot: 0, clientId: this.clientId, userId: this.myUser.user_id, name: this.myUser.name, isAI: false };
-      this.slots[1] = { slot: 1, clientId: null, userId: null, name: 'CPU 1', isAI: true };
-      this.slots[2] = { slot: 2, clientId: null, userId: null, name: 'CPU 2', isAI: true };
+      // ★【核心改修】ホスト自身の portrait を slots[0] に確実に格納
+      this.slots[0] = {
+        slot: 0,
+        clientId: this.clientId,
+        userId: this.myUser.user_id,
+        name: this.myUser.name,
+        portrait: this.myUser.portrait || '',
+        isAI: false
+      };
+      this.slots[1] = { slot: 1, clientId: null, userId: null, name: 'CPU 1', portrait: '', isAI: true };
+      this.slots[2] = { slot: 2, clientId: null, userId: null, name: 'CPU 2', portrait: '', isAI: true };
 
       // 自機を参加者履歴に登録
       recordParticipant(this.myUser.user_id, this.myUser.name, this.myUser.portrait, 'blue', true);
@@ -905,17 +911,24 @@ export const NetworkManager = {
       }
 
       if (targetSlot !== -1) {
+        // ★【核心改修】参加者の portrait を slots に保存
         this.slots[targetSlot] = {
           slot: targetSlot,
           clientId: data.clientId || this.slots[targetSlot].clientId || null,
           userId: userId,
           name: guestName,
+          portrait: portrait,
           isAI: false
         };
         this._bindRemoteSlot(targetSlot, guestName);
 
-        // ★ 参加者履歴に登録
+        // 参加者履歴に登録
         recordParticipant(userId, guestName, portrait, getTeamIdBySlot(targetSlot), true);
+      }
+
+      // ホスト自身の portrait も確実に slots[0] に保証してパケット送出
+      if (this.slots[0]) {
+        this.slots[0].portrait = this.myUser.portrait || this.slots[0].portrait || '';
       }
 
       this._sendCustomMessage({
@@ -1063,7 +1076,7 @@ export const NetworkManager = {
       const outgoingKnockouts = this._pendingKnockouts.length > 0 ? [...this._pendingKnockouts] : undefined;
       const outgoingScatters = this._pendingScatters.length > 0 ? [...this._pendingScatters] : undefined;
       const outgoingSpawns = this._pendingSpawns.length > 0 ? [...this._pendingSpawns] : undefined;
-      // ★ チャットメッセージ切り出し
+      // チャットメッセージ切り出し
       const outgoingChats = this._pendingChats.length > 0 ? [...this._pendingChats] : undefined;
 
       const hasPendingActions = Boolean(
@@ -1124,7 +1137,6 @@ export const NetworkManager = {
       if (outgoingKnockouts) posMessage.ko = outgoingKnockouts;
       if (outgoingScatters) posMessage.sc = outgoingScatters;
       if (outgoingSpawns) posMessage.sp = outgoingSpawns;
-      // ★ チャット同封
       if (outgoingChats) posMessage.ch = outgoingChats;
 
       if (this.isHost && this._snapshotQueue.length > 0) {
@@ -1194,7 +1206,7 @@ export const NetworkManager = {
           this._handleRemotePosition(packet);
         }
 
-        // ★ ch (チャットメッセージ着信・ニコニコ風弾幕発火)
+        // ch (チャットメッセージ着信・ニコニコ風弾幕発火)
         const chatsList = packet.ch;
         if (Array.isArray(chatsList) && chatsList.length > 0) {
           chatsList.forEach(c => {
@@ -1441,9 +1453,10 @@ export const NetworkManager = {
 
       if (!s.isAI && (s.clientId || s.userId || (!this.isHost && s.slot === 0))) {
         this._bindRemoteSlot(s.slot, s.name);
-        // リモート参加者も一覧に登録
+        // ★【核心改修】パケットに格納されたアバター画像（s.portrait）を確実に参加者履歴へ同期
         if (s.userId) {
-          recordParticipant(s.userId, s.name, '', getTeamIdBySlot(s.slot), true);
+          const avatarUrl = s.portrait || (s.slot === 0 ? (s.portrait || '') : '');
+          recordParticipant(s.userId, s.name, avatarUrl, getTeamIdBySlot(s.slot), true);
         }
       } else if (s.isAI) {
         this._restoreSlotToAI(s.slot);
@@ -1714,12 +1727,13 @@ export const NetworkManager = {
         clientId: null,
         userId: null,
         name: (exitedSlotIdx === 0) ? 'CPU 0' : (exitedSlotIdx === 1 ? 'CPU 1' : 'CPU 2'),
+        portrait: '',
         isAI: true
       };
 
       this._restoreSlotToAI(exitedSlotIdx);
 
-      // ★ 参加者リスト上の退室状態を更新
+      // 参加者リスト上の退室状態を更新
       markParticipantInactive(userId);
 
       if (isExitedSlotHost) {

@@ -1,17 +1,17 @@
-// menu.js: ボトムシートメニュー・チャット入力・2アカウント製作者カード（本垢＆サブ垢）・いいね誘導・参加者一覧・GRAVITYプロフィールジャンプ
-// ★ 製作者情報動的フェッチ＆2アカウント並列表示対応版：
-//   1. 【本垢（2736445531）＆ サブ垢（887811163）の2カード同時表示】
-//      画像7（なむぴょん様参考画面）の優れたレイアウトを踏襲し、本垢（メイン活動・交流）とサブ垢（AIアプリ開発・要望受付）の
-//      役割を明記した2枚の独立カードを「製作者」タブ内に並列配置。
-//   2. 【負荷ゼロ・オンデマンド動的プロフィール解決】
-//      3Dレース走行中には一切通信を行わず、メニューの「製作者」タブが開かれた瞬間（またはユーザー操作時）にのみ
-//      バックグラウンドで非同期フェッチ／キャッシュ解決を実行。TTL（キャッシュ有効期限）管理により無駄な通信を防止。
-//   3. 【堅牢な自動フォールバック機能】
-//      電波不調時や外部通信制限時でも、各アカウントのデフォルト名（norion / のりおん ✦）と
-//      ネオンカラー（シアン / エメラルド）のスタイリッシュなグラデーションアバターへ自動フォールバック（画面崩れゼロ）。
-//   4. 【ワンタップネイティブプロフィールジャンプ（GravityRouter）】
-//      各カードの「プロフィールを開く ↗」ボタン、またはアバターをタップすると、
-//      slme://internal スキーム（usercenter）により相手のネイティブプロフィール画面が常に最新状態で瞬時に立ち上がる。
+// menu.js: ボトムシートメニュー・右下サイドMENUボタン・親指下部チャット・製作者プロフィール直結ボタン・ネオンいいね誘導
+// ★ UI/UX全面刷新 ＆ 崩れリスク物理ゼロ版：
+//   1. 【MENUボタンの英語化 ＆ 右下親指サイド配置】
+//      画面中央下部から撤退し、スワイプ操作エリアを全面開放。
+//      右下「サウンド（🔊）」ボタンの真上にスリムな半角英字「MENU」ボタンを配置し誤爆をゼロ化。
+//   2. 【いいね誘導のネオンシアン配色維持 ＆ 被り・本文矢印解消】
+//      上部ネイティブヘッダーとの重なりを解消し、本文内の「↗」を削除。上向きパルス矢印（▲）のみで直感誘導。
+//   3. 【製作者タブ：ボタン特化型スリムUI（崩れリスク物理ゼロ）】
+//      外部API取得や画像読み込みを全廃し、本アカウント（2736445531）と開発サブ垢（887811163）へ
+//      ワンタップで確実にジャンプする2大専用ボタンへ刷新。
+//   4. 【ハート絵文字の適正化 ＆ メッセージ1行完結】
+//      タブや装飾のハートを全廃（✦ 製作者）。ハート（❤️）は「いいね」の文脈でのみ上品に使用。
+//   5. 【チャットタブ：親指下部配置 ＆ 定型文8種への拡充 ＆ 説明文削除】
+//      不要な説明文を全廃。ボトムシート最下部に入力欄と送信ボタンを配置し、タップ即送信のクイックチップを拡充。
 
 /**
  * GRAVITYアプリ内ネイティブ画面遷移ルーター
@@ -63,37 +63,19 @@ if (typeof window !== 'undefined') {
   window.GravityRouter = GravityRouter;
 }
 
-// 製作者アカウント定義（本垢＆開発サブ垢）
-export const CREATOR_PROFILES = [
-  {
-    key: 'main',
+// 製作者アカウント定数
+export const CREATOR_ACCOUNTS = {
+  main: {
     id: '2736445531',
-    roleBadge: '本アカウント',
-    badgeClass: 'badge-main',
-    name: 'norion',
-    subtitle: 'メインの活動・交流拠点はこちら！',
-    description: '『Bridge Dash 3D』を遊んでくれてありがとうございます！楽しんでいただけたらぜひ本アカウントのフォローやいいねをお願いします✨',
-    avatarUrl: null,
-    avatarBorder: '#38bdf8',
-    buttonClass: 'btn-main-account'
+    title: '👤 製作者の本アカウントを見る ↗',
+    subtitle: 'メインの活動・交流・フォローはこちら'
   },
-  {
-    key: 'sub',
+  sub: {
     id: '887811163',
-    roleBadge: '開発・要望用',
-    badgeClass: 'badge-sub',
-    name: 'のりおん ✦',
-    subtitle: 'AIアプリ開発・ゲーム要望受付用！',
-    description: 'グラビティのAIアプリ開発用アカウントです。新機能のご意見・ご要望や感想コメントはぜひこちらへお寄せください！',
-    avatarUrl: null,
-    avatarBorder: '#10b981',
-    buttonClass: 'btn-sub-account'
+    title: '🛠️ 開発・ご要望用アカウントを見る ↗',
+    subtitle: 'ゲームの要望やコメントはこちらへどうぞ'
   }
-];
-
-// 動的取得ステート管理
-let isCreatorFetched = false;
-let isFetchingCreators = false;
+};
 
 // 参加者履歴キャッシュ（セッション中に参加した全ユーザー）
 const sessionParticipants = new Map();
@@ -143,72 +125,81 @@ function injectMenuStyles() {
   const style = document.createElement('style');
   style.id = 'gravity-game-menu-styles';
   style.textContent = `
-    /* 下部中央 台形メニューボタン */
+    /* ★ 右下サイド MENUボタン（親指誤爆ゼロ・英語カプセル） */
     #btn-open-game-menu {
       position: fixed;
-      bottom: max(16px, env(safe-area-inset-bottom, 16px));
-      left: 50%;
-      transform: translateX(-50%);
-      z-index: 25;
-      height: 42px;
-      padding: 0 24px;
-      background: linear-gradient(180deg, rgba(14, 165, 233, 0.90) 0%, rgba(2, 132, 199, 0.95) 100%);
+      right: 16px;
+      bottom: max(68px, env(safe-area-inset-bottom, 16px) + 52px);
+      z-index: 45;
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, rgba(14, 165, 233, 0.92) 0%, rgba(2, 132, 199, 0.98) 100%);
       color: #ffffff;
-      font-size: 13px;
+      font-size: 11px;
       font-weight: 900;
-      letter-spacing: 0.05em;
-      border: 1px solid rgba(255, 255, 255, 0.4);
-      border-bottom: none;
-      clip-path: polygon(8% 0%, 92% 0%, 100% 100%, 0% 100%);
-      box-shadow: 0 -4px 18px rgba(2, 132, 199, 0.5), inset 0 1px 1px rgba(255, 255, 255, 0.6);
+      letter-spacing: 0.04em;
+      border: 1.5px solid rgba(255, 255, 255, 0.45);
+      box-shadow: 0 4px 14px rgba(2, 132, 199, 0.45), 0 0 10px rgba(56, 189, 248, 0.35);
       display: flex;
+      flex-direction: column;
       align-items: center;
       justify-content: center;
-      gap: 6px;
+      gap: 1px;
       cursor: pointer;
       transition: transform 0.12s ease, filter 0.12s ease;
       touch-action: manipulation;
     }
     #btn-open-game-menu:active {
-      transform: translateX(-50%) scale(0.94);
+      transform: scale(0.92);
       filter: brightness(0.9);
+    }
+    #btn-open-game-menu .menu-icon-mini {
+      font-size: 13px;
+      line-height: 1;
+    }
+    #btn-open-game-menu .menu-text-mini {
+      font-size: 9px;
+      font-weight: 900;
+      letter-spacing: 0.02em;
+      line-height: 1;
     }
 
     /* ボトムシート オーバーレイ（背景暗転） */
     #game-menu-backdrop {
       position: fixed;
       inset: 0;
-      background: rgba(15, 23, 42, 0.55);
+      background: rgba(15, 23, 42, 0.60);
       backdrop-filter: blur(4px);
       -webkit-backdrop-filter: blur(4px);
       z-index: 80;
       opacity: 0;
       pointer-events: none;
-      transition: opacity 0.28s ease;
+      transition: opacity 0.25s ease;
     }
     #game-menu-backdrop.open {
       opacity: 1;
       pointer-events: auto;
     }
 
-    /* ボトムシート メインパネル（ぬるっとスライドアップ） */
+    /* ボトムシート メインパネル */
     #game-menu-sheet {
       position: fixed;
       bottom: 0;
       left: 0;
       right: 0;
-      max-width: 480px;
+      max-width: 460px;
       margin: 0 auto;
-      height: 75vh;
-      max-height: 580px;
+      height: 70vh;
+      max-height: 520px;
       background: radial-gradient(circle at 50% 0%, rgba(14, 165, 233, 0.96) 0%, rgba(15, 23, 42, 0.98) 100%);
       border: 1px solid rgba(255, 255, 255, 0.25);
       border-bottom: none;
-      border-radius: 24px 24px 0 0;
+      border-radius: 22px 22px 0 0;
       box-shadow: 0 -10px 35px rgba(0, 0, 0, 0.6), inset 0 1px 2px rgba(255, 255, 255, 0.4);
       z-index: 85;
       transform: translateY(105%);
-      transition: transform 0.38s cubic-bezier(0.16, 1, 0.3, 1);
+      transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
       display: flex;
       flex-direction: column;
       overflow: hidden;
@@ -221,31 +212,31 @@ function injectMenuStyles() {
 
     /* パネル上部グラブバー＆ヘッダー */
     .menu-sheet-grabber {
-      width: 40px;
-      height: 5px;
+      width: 36px;
+      height: 4px;
       background: rgba(255, 255, 255, 0.35);
-      border-radius: 3px;
-      margin: 10px auto 4px auto;
+      border-radius: 2px;
+      margin: 8px auto 2px auto;
       flex-shrink: 0;
     }
     .menu-sheet-header {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 6px 18px 10px 18px;
+      padding: 6px 16px 8px 16px;
       border-bottom: 1px solid rgba(255, 255, 255, 0.12);
       flex-shrink: 0;
     }
     .menu-sheet-title {
-      font-size: 16px;
+      font-size: 15px;
       font-weight: 900;
-      letter-spacing: 0.04em;
+      letter-spacing: 0.05em;
       color: #ffffff;
       text-shadow: 0 1px 4px rgba(0,0,0,0.4);
     }
     .menu-sheet-close {
-      width: 30px;
-      height: 30px;
+      width: 28px;
+      height: 28px;
       border-radius: 50%;
       background: rgba(255, 255, 255, 0.15);
       border: 1px solid rgba(255, 255, 255, 0.25);
@@ -253,7 +244,7 @@ function injectMenuStyles() {
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 16px;
+      font-size: 15px;
       cursor: pointer;
     }
 
@@ -262,15 +253,15 @@ function injectMenuStyles() {
       display: flex;
       background: rgba(0, 0, 0, 0.25);
       padding: 4px;
-      margin: 10px 16px;
+      margin: 8px 14px;
       border-radius: 12px;
       gap: 4px;
       flex-shrink: 0;
     }
     .menu-tab-btn {
       flex: 1;
-      padding: 8px 4px;
-      font-size: 13px;
+      padding: 7px 4px;
+      font-size: 12.5px;
       font-weight: 800;
       color: #bae6fd;
       background: transparent;
@@ -291,7 +282,8 @@ function injectMenuStyles() {
       flex: 1;
       overflow-y: auto;
       -webkit-overflow-scrolling: touch;
-      padding: 8px 18px 24px 18px;
+      padding: 8px 16px;
+      padding-bottom: max(16px, env(safe-area-inset-bottom, 12px));
       display: none;
     }
     .menu-tab-content.active {
@@ -299,35 +291,63 @@ function injectMenuStyles() {
       flex-direction: column;
     }
 
-    /* 1. チャットタブ UI */
+    /* ★ 1. チャットタブ UI（親指下部配置 ＆ 定型文拡充） */
     .chat-tab-container {
       display: flex;
       flex-direction: column;
-      gap: 12px;
+      justify-content: space-between;
       height: 100%;
+      gap: 10px;
     }
-    .chat-desc {
-      font-size: 12px;
-      color: #bae6fd;
-      line-height: 1.5;
-      background: rgba(255, 255, 255, 0.08);
-      padding: 10px 12px;
+    .chat-top-section {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .chat-section-label {
+      font-size: 11px;
+      font-weight: 800;
+      color: #7dd3fc;
+      letter-spacing: 0.03em;
+    }
+    .quick-chat-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 6px;
+    }
+    .chat-chip {
+      background: rgba(255, 255, 255, 0.10);
+      border: 1px solid rgba(255, 255, 255, 0.20);
+      color: #e0f2fe;
+      padding: 10px 8px;
       border-radius: 10px;
+      font-size: 13px;
+      font-weight: 800;
+      cursor: pointer;
+      text-align: center;
+      transition: background 0.12s ease, transform 0.1s ease;
     }
-    .chat-input-row {
+    .chat-chip:active {
+      background: rgba(56, 189, 248, 0.35);
+      transform: scale(0.97);
+    }
+
+    /* 親指で最も押しやすい最下部入力バー */
+    .chat-input-bottom-bar {
+      margin-top: auto;
       display: flex;
       gap: 8px;
-      margin-top: 6px;
+      padding-top: 6px;
     }
     .chat-input-field {
       flex: 1;
-      height: 44px;
-      background: rgba(15, 23, 42, 0.65);
+      height: 42px;
+      background: rgba(15, 23, 42, 0.75);
       border: 1px solid rgba(56, 189, 248, 0.5);
       border-radius: 12px;
-      padding: 0 14px;
+      padding: 0 12px;
       color: #ffffff;
-      font-size: 14px;
+      font-size: 13.5px;
       font-weight: 700;
       outline: none;
     }
@@ -336,8 +356,8 @@ function injectMenuStyles() {
       box-shadow: 0 0 10px rgba(56, 189, 248, 0.4);
     }
     .chat-send-btn {
-      width: 72px;
-      height: 44px;
+      width: 68px;
+      height: 42px;
       background: linear-gradient(135deg, #38bdf8 0%, #0284c7 100%);
       color: #ffffff;
       font-size: 13px;
@@ -345,194 +365,80 @@ function injectMenuStyles() {
       border: none;
       border-radius: 12px;
       cursor: pointer;
-      box-shadow: 0 4px 12px rgba(2, 132, 199, 0.4);
+      box-shadow: 0 3px 10px rgba(2, 132, 199, 0.4);
+      flex-shrink: 0;
     }
     .chat-send-btn:active {
       transform: scale(0.95);
     }
 
-    /* 定型文チップ */
-    .quick-chat-chips {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 6px;
-      margin-top: 8px;
-    }
-    .chat-chip {
-      background: rgba(255, 255, 255, 0.12);
-      border: 1px solid rgba(255, 255, 255, 0.2);
-      color: #e0f2fe;
-      padding: 6px 10px;
-      border-radius: 8px;
-      font-size: 12px;
-      font-weight: 700;
-      cursor: pointer;
-    }
-    .chat-chip:active {
-      background: rgba(56, 189, 248, 0.3);
-    }
-
-    /* 2. 製作者タブ UI（2アカウント並列表示カード） */
+    /* ★ 2. 製作者タブ UI（ボタン特化型スリムUI・崩れリスク物理ゼロ） */
     .creator-section-container {
       display: flex;
       flex-direction: column;
-      gap: 14px;
+      gap: 12px;
+      padding-top: 4px;
     }
-
-    /* 参考画面（画像7）踏襲の挨拶メッセージバー */
-    .creator-app-thanks-banner {
-      background: rgba(15, 23, 42, 0.65);
+    .creator-message-card {
+      background: rgba(15, 23, 42, 0.60);
       border: 1px solid rgba(56, 189, 248, 0.35);
       border-radius: 14px;
       padding: 12px 14px;
-      font-size: 12.5px;
-      line-height: 1.55;
-      color: #bae6fd;
-      text-align: center;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
       box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
     }
-    .creator-app-thanks-banner b {
-      color: #fde047;
-    }
-
-    /* 2アカウント個別カード */
-    .creator-profile-card {
-      background: rgba(255, 255, 255, 0.09);
-      border: 1px solid rgba(255, 255, 255, 0.20);
-      border-radius: 16px;
-      padding: 14px 16px;
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
-      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
-      position: relative;
+    .creator-message-line {
+      font-size: 12.5px;
+      line-height: 1.45;
+      color: #e0f2fe;
+      white-space: nowrap;
       overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .creator-message-line.highlight {
+      color: #fde047;
+      font-weight: 800;
     }
 
-    .creator-profile-card.card-main {
-      border-left: 4px solid #38bdf8;
-      background: linear-gradient(135deg, rgba(2, 132, 199, 0.18) 0%, rgba(15, 23, 42, 0.35) 100%);
-    }
-
-    .creator-profile-card.card-sub {
-      border-left: 4px solid #10b981;
-      background: linear-gradient(135deg, rgba(16, 185, 129, 0.18) 0%, rgba(15, 23, 42, 0.35) 100%);
-    }
-
-    .creator-card-header {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-    }
-
-    .creator-card-avatar-wrap {
-      position: relative;
-      flex-shrink: 0;
+    /* 本垢・サブ垢の2大アクションボタン */
+    .creator-action-btn-card {
+      width: 100%;
+      border-radius: 14px;
+      padding: 12px 14px;
       cursor: pointer;
-    }
-
-    .creator-card-avatar {
-      width: 54px;
-      height: 54px;
-      border-radius: 50%;
-      object-fit: cover;
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
-      background: #0284c7;
-      display: block;
-    }
-
-    .creator-card-info {
       display: flex;
       flex-direction: column;
-      gap: 2px;
-      min-width: 0;
-      flex: 1;
+      gap: 3px;
+      transition: transform 0.12s ease, filter 0.12s ease;
+      touch-action: manipulation;
+      text-align: left;
     }
-
-    .creator-card-name-row {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      flex-wrap: wrap;
+    .creator-action-btn-card:active {
+      transform: scale(0.98);
+      filter: brightness(0.92);
     }
-
-    .creator-card-name {
-      font-size: 15px;
+    .creator-action-btn-card.card-main {
+      background: linear-gradient(135deg, rgba(2, 132, 199, 0.85) 0%, rgba(3, 105, 161, 0.95) 100%);
+      border: 1.5px solid #38bdf8;
+      box-shadow: 0 4px 16px rgba(2, 132, 199, 0.4), 0 0 10px rgba(56, 189, 248, 0.25);
+    }
+    .creator-action-btn-card.card-sub {
+      background: linear-gradient(135deg, rgba(16, 185, 129, 0.85) 0%, rgba(5, 150, 105, 0.95) 100%);
+      border: 1.5px solid #34d399;
+      box-shadow: 0 4px 16px rgba(16, 185, 129, 0.35), 0 0 10px rgba(52, 211, 153, 0.25);
+    }
+    .creator-btn-title {
+      font-size: 14px;
       font-weight: 900;
       color: #ffffff;
       letter-spacing: 0.02em;
     }
-
-    .creator-card-badge {
-      font-size: 10px;
-      font-weight: 800;
-      padding: 2px 7px;
-      border-radius: 9999px;
-      color: #ffffff;
-      white-space: nowrap;
-    }
-    .badge-main {
-      background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
-      border: 1px solid #38bdf8;
-    }
-    .badge-sub {
-      background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-      border: 1px solid #34d399;
-    }
-
-    .creator-card-id {
-      font-size: 11px;
-      color: #94a3b8;
-      font-family: monospace;
-    }
-
-    .creator-card-subtitle {
+    .creator-btn-subtitle {
       font-size: 11.5px;
-      color: #bae6fd;
-      line-height: 1.35;
-    }
-
-    .creator-card-desc {
-      font-size: 12px;
-      color: #e2e8f0;
-      line-height: 1.5;
-      background: rgba(0, 0, 0, 0.22);
-      padding: 8px 10px;
-      border-radius: 8px;
-    }
-
-    /* 参考画像（画像7）踏襲の丸みボタン */
-    .creator-open-btn {
-      width: 100%;
-      padding: 10px 14px;
-      border-radius: 9999px;
-      font-size: 13px;
-      font-weight: 800;
-      border: 1.5px solid transparent;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 6px;
-      transition: transform 0.12s ease, filter 0.12s ease;
-      touch-action: manipulation;
-    }
-    .creator-open-btn:active {
-      transform: scale(0.97);
-    }
-
-    .btn-main-account {
-      background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
-      color: #ffffff;
-      border-color: #38bdf8;
-      box-shadow: 0 4px 14px rgba(2, 132, 199, 0.4);
-    }
-
-    .btn-sub-account {
-      background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-      color: #ffffff;
-      border-color: #34d399;
-      box-shadow: 0 4px 14px rgba(16, 185, 129, 0.4);
+      color: #e0f2fe;
+      font-weight: 600;
     }
 
     /* 3. 参加者一覧タブ UI */
@@ -540,7 +446,7 @@ function injectMenuStyles() {
       display: flex;
       flex-direction: column;
       gap: 8px;
-      max-height: 320px;
+      max-height: 300px;
       overflow-y: auto;
       padding-right: 4px;
     }
@@ -598,15 +504,15 @@ function injectMenuStyles() {
       font-weight: 700;
     }
     .participant-jump-icon {
-      font-size: 16px;
+      font-size: 15px;
       color: #38bdf8;
       flex-shrink: 0;
     }
 
-    /* ★ 右上「いいね誘導」ネオンアロー＆吹き出し演出 */
+    /* ★ 右上「いいね誘導」ネオンシアン配色維持 ＆ 被り・本文矢印解消 */
     #like-guide-anchor {
       position: fixed;
-      top: max(48px, env(safe-area-inset-top, 24px) + 38px);
+      top: max(56px, env(safe-area-inset-top, 24px) + 42px);
       right: 14px;
       z-index: 95;
       display: flex;
@@ -614,8 +520,8 @@ function injectMenuStyles() {
       align-items: flex-end;
       pointer-events: none;
       opacity: 0;
-      transform: translateY(-8px);
-      transition: opacity 0.25s ease, transform 0.25s ease;
+      transform: translateY(-6px);
+      transition: opacity 0.22s ease, transform 0.22s ease;
     }
     #like-guide-anchor.show {
       opacity: 1;
@@ -624,158 +530,30 @@ function injectMenuStyles() {
     .like-guide-arrow {
       width: 0;
       height: 0;
-      border-left: 8px solid transparent;
-      border-right: 8px solid transparent;
-      border-bottom: 10px solid #38bdf8;
+      border-left: 7px solid transparent;
+      border-right: 7px solid transparent;
+      border-bottom: 9px solid #38bdf8;
       margin-right: 18px;
-      animation: likeArrowPulse 0.9s ease-in-out infinite alternate;
+      animation: likeArrowPulse 0.8s ease-in-out infinite alternate;
     }
     .like-guide-bubble {
-      background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
-      border: 2px solid #38bdf8;
+      background: linear-gradient(135deg, rgba(2, 132, 199, 0.95) 0%, rgba(3, 105, 161, 0.98) 100%);
+      border: 1.5px solid #38bdf8;
       border-radius: 14px;
-      padding: 8px 12px;
+      padding: 8px 14px;
       color: #ffffff;
       font-size: 12px;
-      font-weight: 900;
-      letter-spacing: 0.02em;
-      box-shadow: 0 4px 18px rgba(56, 189, 248, 0.6);
+      font-weight: 800;
+      box-shadow: 0 4px 18px rgba(2, 132, 199, 0.5), 0 0 10px rgba(56, 189, 248, 0.4);
       text-align: right;
-      line-height: 1.35;
-      animation: likeBubbleGlow 1.4s ease-in-out infinite alternate;
+      line-height: 1.4;
     }
     @keyframes likeArrowPulse {
       0% { transform: translateY(0); }
-      100% { transform: translateY(-5px); }
-    }
-    @keyframes likeBubbleGlow {
-      0% { box-shadow: 0 0 10px rgba(56, 189, 248, 0.4); }
-      100% { box-shadow: 0 0 20px rgba(56, 189, 248, 0.85); }
+      100% { transform: translateY(-4px); }
     }
   `;
   document.head.appendChild(style);
-}
-
-/**
- * 2アカウント（本垢＆サブ垢）製作者カードの動的HTMLレンダリング
- */
-function renderCreatorCards() {
-  const container = document.getElementById('menu-creator-cards-wrapper');
-  if (!container) return;
-
-  container.innerHTML = '';
-
-  CREATOR_PROFILES.forEach((creator) => {
-    const card = document.createElement('div');
-    card.className = `creator-profile-card card-${creator.key}`;
-
-    const fallbackBg = (creator.key === 'main') ? '%230284c7' : '%2310b981';
-    const initialChar = (creator.key === 'main') ? 'N' : '✦';
-    const fallbackSvg = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 60"><circle cx="30" cy="30" r="30" fill="${fallbackBg}"/><text x="30" y="36" font-size="20" font-weight="bold" fill="white" text-anchor="middle">${initialChar}</text></svg>`;
-    const avatarSrc = creator.avatarUrl || fallbackSvg;
-
-    card.innerHTML = `
-      <div class="creator-card-header">
-        <div class="creator-card-avatar-wrap" data-uid="${creator.id}">
-          <img class="creator-card-avatar" style="border: 2.5px solid ${creator.avatarBorder};" src="${avatarSrc}" onerror="this.src='${fallbackSvg}'">
-        </div>
-        <div class="creator-card-info">
-          <div class="creator-card-name-row">
-            <span class="creator-card-name">${escapeHtml(creator.name)}</span>
-            <span class="creator-card-badge ${creator.badgeClass}">${creator.roleBadge}</span>
-          </div>
-          <span class="creator-card-id">ID: ${creator.id}</span>
-          <span class="creator-card-subtitle">${escapeHtml(creator.subtitle)}</span>
-        </div>
-      </div>
-      <div class="creator-card-desc">
-        ${escapeHtml(creator.description)}
-      </div>
-      <button type="button" class="creator-open-btn ${creator.buttonClass}" data-uid="${creator.id}">
-        👤 プロフィールを開く ↗
-      </button>
-    `;
-
-    // アバタータップまたはボタンタップでプロフィール遷移
-    const triggerElements = card.querySelectorAll('[data-uid]');
-    triggerElements.forEach(el => {
-      el.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const uid = el.dataset.uid;
-        GravityRouter.openProfile(uid);
-      });
-    });
-
-    container.appendChild(card);
-  });
-}
-
-/**
- * 製作者情報の動的解決（レース走行負荷完全ゼロ・オンデマンド取得）
- */
-async function fetchCreatorProfilesIfNeeded() {
-  if (isCreatorFetched || isFetchingCreators) return;
-  isFetchingCreators = true;
-
-  try {
-    for (const creator of CREATOR_PROFILES) {
-      // 1. 製作者本人がログインして操作している場合の自動検知
-      if (window.NetworkManager?.myUser?.user_id === creator.id) {
-        if (window.NetworkManager.myUser.name) {
-          creator.name = window.NetworkManager.myUser.name;
-        }
-        if (window.NetworkManager.myUser.portrait) {
-          creator.avatarUrl = window.NetworkManager.myUser.portrait;
-        }
-        continue;
-      }
-
-      // 2. セッションストレージキャッシュの確認（API無駄打ち防止）
-      const cacheKey = `creator_cache_${creator.id}`;
-      const cached = sessionStorage.getItem(cacheKey);
-      if (cached) {
-        try {
-          const parsed = JSON.parse(cached);
-          if (parsed && (Date.now() - parsed.timestamp < 1000 * 60 * 30)) {
-            if (parsed.name) creator.name = parsed.name;
-            if (parsed.avatarUrl) creator.avatarUrl = parsed.avatarUrl;
-            continue;
-          }
-        } catch (e) {}
-      }
-
-      // 3. 公開Webプロフィール/エンドポイントからの動的取得トライ（タイムアウト付き）
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 2000);
-
-      const res = await fetch(`https://www.gravity.place/api/user/profile?uid=${creator.id}`, {
-        signal: controller.signal
-      }).catch(() => null);
-      clearTimeout(timeoutId);
-
-      if (res && res.ok) {
-        const data = await res.json().catch(() => null);
-        if (data && data.data) {
-          if (data.data.name) creator.name = data.data.name;
-          if (data.data.portrait || data.data.avatar) {
-            creator.avatarUrl = data.data.portrait || data.data.avatar;
-          }
-          // キャッシュ保存
-          sessionStorage.setItem(cacheKey, JSON.stringify({
-            name: creator.name,
-            avatarUrl: creator.avatarUrl,
-            timestamp: Date.now()
-          }));
-        }
-      }
-    }
-  } catch (err) {
-    console.warn('[menu.js] Dynamic creator resolution fallback used:', err);
-  } finally {
-    isCreatorFetched = true;
-    isFetchingCreators = false;
-    renderCreatorCards();
-  }
 }
 
 /**
@@ -805,11 +583,16 @@ function renderParticipantsList() {
     row.className = 'participant-row';
     const statusText = p.isActive ? '● プレイ中' : '退室済み';
     const statusClass = p.isActive ? 'participant-status status-active' : 'participant-status';
-    const avatarSrc = p.portrait || 'https://norion3.github.io/bridge/assets/avatar_placeholder.png';
+    const avatarSrc = p.portrait || '';
+
+    // アバター描画：画像があればimg、なければフォールバック青丸
+    const avatarHtml = avatarSrc
+      ? `<img class="participant-avatar" src="${avatarSrc}" onerror="this.style.display='none';this.nextElementSibling.style.display='block';"><div class="participant-avatar" style="display:none;background:#0284c7;"></div>`
+      : `<div class="participant-avatar" style="background:#0284c7;"></div>`;
 
     row.innerHTML = `
       <div class="participant-left">
-        <img class="participant-avatar" src="${avatarSrc}" onerror="this.src='data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 40 40%22><circle cx=%2220%22 cy=%2220%22 r=%2220%22 fill=%22%230284c7%22/></svg>'">
+        ${avatarHtml}
         <div class="participant-info">
           <span class="participant-name">${escapeHtml(p.name)}</span>
           <span class="${statusClass}">${statusText}</span>
@@ -818,7 +601,6 @@ function renderParticipantsList() {
       <div class="participant-jump-icon">↗</div>
     `;
 
-    // タップでGRAVITYプロフィールへジャンプ
     row.addEventListener('click', () => {
       GravityRouter.openProfile(p.userId);
     });
@@ -842,10 +624,9 @@ function switchTab(tabId) {
     content.classList.toggle('active', content.id === `menu-tab-${tabId}`);
   });
 
-  // 製作者タブ選択時：右上のいいね誘導を表示 ＆ 必要なら動的フェッチを実行
+  // 製作者タブ選択時：右上のいいね誘導を表示
   if (tabId === 'creator') {
     if (likeGuide) likeGuide.classList.add('show');
-    fetchCreatorProfilesIfNeeded();
   } else {
     if (likeGuide) likeGuide.classList.remove('show');
   }
@@ -867,9 +648,6 @@ export const GameMenu = {
     const sheet = document.getElementById('game-menu-sheet');
     if (backdrop) backdrop.classList.add('open');
     if (sheet) sheet.classList.add('open');
-
-    // 開いた時点でバックグラウンド動的取得を緩やかに開始
-    fetchCreatorProfilesIfNeeded();
   },
 
   close() {
@@ -891,21 +669,20 @@ export const GameMenu = {
 /**
  * チャット送信処理（最大15文字）
  */
-function handleSendMessage() {
+function handleSendMessage(customText = null) {
   const inputEl = document.getElementById('menu-chat-input');
-  if (!inputEl) return;
-
-  const rawText = inputEl.value.trim();
+  const textToSend = customText || (inputEl ? inputEl.value : '');
+  const rawText = String(textToSend).trim();
   if (!rawText) return;
 
   const safeText = rawText.slice(0, 15);
-  inputEl.value = '';
+  if (inputEl) inputEl.value = '';
 
   if (typeof onSendChatCallback === 'function') {
     onSendChatCallback(safeText);
   }
 
-  // 送信後、ゲーム画面を見渡せるようメニューを自動クローズ
+  // 送信後、視界確保のためメニューを閉じる
   GameMenu.close();
 }
 
@@ -928,12 +705,15 @@ function escapeHtml(str) {
 export function initGameMenuDOM() {
   injectMenuStyles();
 
-  // 1. 下部中央の台形メニューボタン
+  // 1. 右下サイド MENUボタン（スワイプ誤爆ゼロ・英語カプセル）
   if (!document.getElementById('btn-open-game-menu')) {
     const menuBtn = document.createElement('button');
     menuBtn.id = 'btn-open-game-menu';
     menuBtn.type = 'button';
-    menuBtn.innerHTML = `💬 MENU`;
+    menuBtn.innerHTML = `
+      <span class="menu-icon-mini">💬</span>
+      <span class="menu-text-mini">MENU</span>
+    `;
     menuBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       GameMenu.toggle();
@@ -941,14 +721,14 @@ export function initGameMenuDOM() {
     document.body.appendChild(menuBtn);
   }
 
-  // 2. 右上「いいね誘導」アンカー
+  // 2. 右上「いいね誘導」アンカー（ネオンシアン・矢印重複排除）
   if (!document.getElementById('like-guide-anchor')) {
     const likeAnchor = document.createElement('div');
     likeAnchor.id = 'like-guide-anchor';
     likeAnchor.innerHTML = `
       <div class="like-guide-arrow"></div>
       <div class="like-guide-bubble">
-        ここから<br>いいねしてね！↗
+        メニューから<br>「❤️いいね」してね！
       </div>
     `;
     document.body.appendChild(likeAnchor);
@@ -975,28 +755,30 @@ export function initGameMenuDOM() {
 
       <!-- タブ切り替えボタン -->
       <div class="menu-tab-bar">
-        <button type="button" class="menu-tab-btn active" data-tab="chat">💬 チャット</button>
+        <button type="button" class="menu-tab-btn active" data-tab="chat">💬 CHAT</button>
         <button type="button" class="menu-tab-btn" data-tab="participants">👥 走者 <span id="menu-tab-participants-count">(0)</span></button>
-        <button type="button" class="menu-tab-btn" data-tab="creator">💖 製作者</button>
+        <button type="button" class="menu-tab-btn" data-tab="creator">✦ 製作者</button>
       </div>
 
-      <!-- 1. チャットタブ -->
+      <!-- 1. チャットタブ（親指下部配置 ＆ 定型文8種 ＆ 説明文削除） -->
       <div id="menu-tab-chat" class="menu-tab-content active">
         <div class="chat-tab-container">
-          <div class="chat-desc">
-            送ったメッセージは画面上にニコニコ風に流れます！（最大15文字）
+          <div class="chat-top-section">
+            <span class="chat-section-label">タップで即送信</span>
+            <div class="quick-chat-grid">
+              <button type="button" class="chat-chip" data-msg="よろしく！">よろしく！</button>
+              <button type="button" class="chat-chip" data-msg="ナイス！">ナイス！</button>
+              <button type="button" class="chat-chip" data-msg="ありがとう！">ありがとう！</button>
+              <button type="button" class="chat-chip" data-msg="ごめんね！">ごめんね！</button>
+              <button type="button" class="chat-chip" data-msg="まってー！">まってー！</button>
+              <button type="button" class="chat-chip" data-msg="おつかれさま！">おつかれさま！</button>
+              <button type="button" class="chat-chip" data-msg="ドンマイ！">ドンマイ！</button>
+              <button type="button" class="chat-chip" data-msg="もう1回！">もう1回！</button>
+            </div>
           </div>
-          <div class="chat-input-row">
-            <input type="text" id="menu-chat-input" class="chat-input-field" maxlength="15" placeholder="メッセージを入力（最大15文字）">
+          <div class="chat-input-bottom-bar">
+            <input type="text" id="menu-chat-input" class="chat-input-field" maxlength="15" placeholder="メッセージを入力...">
             <button type="button" id="btn-send-chat" class="chat-send-btn">送信</button>
-          </div>
-          <div class="quick-chat-chips">
-            <button type="button" class="chat-chip" data-msg="よろしく！">よろしく！</button>
-            <button type="button" class="chat-chip" data-msg="ナイス！">ナイス！</button>
-            <button type="button" class="chat-chip" data-msg="まってー！">まってー！</button>
-            <button type="button" class="chat-chip" data-msg="おつかれさま！">おつかれさま！</button>
-            <button type="button" class="chat-chip" data-msg="階段奪うねｗ">階段奪うねｗ</button>
-            <button type="button" class="chat-chip" data-msg="サンダー撃つよ！">サンダー撃つよ！</button>
           </div>
         </div>
       </div>
@@ -1006,25 +788,30 @@ export function initGameMenuDOM() {
         <div id="menu-participants-list" class="participants-container"></div>
       </div>
 
-      <!-- 3. 製作者の声タブ（本垢＆サブ垢 2カード並列表示） -->
+      <!-- 3. 製作者タブ（ボタン特化型スリムUI・崩れリスク物理ゼロ） -->
       <div id="menu-tab-creator" class="menu-tab-content">
         <div class="creator-section-container">
-          <!-- 参考画像（画像7）完全踏襲の感謝＆いいねメッセージ -->
-          <div class="creator-app-thanks-banner">
-            『Bridge Dash 3D』を遊んでくれてありがとう！✨<br>
-            楽しかったら右上の［<b>…</b>］ボタンから❤️<b>いいね</b>を押してね。<br>
-            ゲームの感想や要望コメントをくれるとめちゃくちゃ喜びます！
+          <div class="creator-message-card">
+            <div class="creator-message-line">遊んでくれてありがとうございます！</div>
+            <div class="creator-message-line highlight">楽しかったら右上の［…］から いいね を押してね</div>
+            <div class="creator-message-line">ご意見やご要望もお気軽にどうぞ！</div>
           </div>
 
-          <!-- 2アカウントカードラッパー -->
-          <div id="menu-creator-cards-wrapper" style="display: flex; flex-direction: column; gap: 12px;"></div>
+          <!-- 本アカウント直結ボタン -->
+          <div class="creator-action-btn-card card-main" id="btn-jump-creator-main">
+            <span class="creator-btn-title">${CREATOR_ACCOUNTS.main.title}</span>
+            <span class="creator-btn-subtitle">${CREATOR_ACCOUNTS.main.subtitle}</span>
+          </div>
+
+          <!-- 開発・要望用サブ垢直結ボタン -->
+          <div class="creator-action-btn-card card-sub" id="btn-jump-creator-sub">
+            <span class="creator-btn-title">${CREATOR_ACCOUNTS.sub.title}</span>
+            <span class="creator-btn-subtitle">${CREATOR_ACCOUNTS.sub.subtitle}</span>
+          </div>
         </div>
       </div>
     `;
     document.body.appendChild(sheet);
-
-    // 初期カード描画
-    renderCreatorCards();
 
     // イベントバインド
     document.getElementById('btn-close-game-menu')?.addEventListener('click', () => GameMenu.close());
@@ -1038,22 +825,28 @@ export function initGameMenuDOM() {
     // チャット送信
     const sendBtn = document.getElementById('btn-send-chat');
     const inputEl = document.getElementById('menu-chat-input');
-    sendBtn?.addEventListener('click', handleSendMessage);
+    sendBtn?.addEventListener('click', () => handleSendMessage());
     inputEl?.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
         handleSendMessage();
       }
     });
 
-    // 定型文チップ
+    // 定型文チップ（タップ即送信）
     const chips = sheet.querySelectorAll('.chat-chip');
     chips.forEach(chip => {
       chip.addEventListener('click', () => {
-        if (inputEl) {
-          inputEl.value = chip.dataset.msg || '';
-          handleSendMessage();
-        }
+        const msg = chip.dataset.msg;
+        if (msg) handleSendMessage(msg);
       });
+    });
+
+    // 製作者プロフィール直結ボタン
+    document.getElementById('btn-jump-creator-main')?.addEventListener('click', () => {
+      GravityRouter.openProfile(CREATOR_ACCOUNTS.main.id);
+    });
+    document.getElementById('btn-jump-creator-sub')?.addEventListener('click', () => {
+      GravityRouter.openProfile(CREATOR_ACCOUNTS.sub.id);
     });
   }
 }
