@@ -1,14 +1,13 @@
 // world.js: コース伸長・浮島・橋・スライド・ジップライン・エレベーター・スカイダイブ・ドロップタワー施設・二股分岐＆合流・目鼻なし愛嬌お邪魔キャラ
-// ★ Phase 3 完全統合版（ボーナス消去ハンドラ一元化 ＆ 保留キュー連動 ＆ 決定論的ゲート同期）：
-//   1. 【applyRemoteBonusConsumed の一元化 ＆ 保留キュー（pendingConsumedBonusIds）保護】
-//      world.js と gimmicks.js に存在した同名定義の競合を根絶。
-//      未バインドステージのブロックIDを確実に保留キューへ保持し、extendCourse 時の即時消化（flushPendingBonusConsumes）と完全連動。
-//   2. 【修飾ゲート生成の完全決定論化（player.stackCount依存の完全撤廃）】
-//      stageIdx と currentWorldSeed の固定数学ハッシュ（gateHash）から一意決定。
-//   3. 【お邪魔モブ出現判定の数学的ハッシュ化】
-//      seededRandom() の消費ズレを防止するため、モブ出現および初期方向も stageIdx 固有ハッシュで決定。
-//   4. 【幾何構造・通常ステージ・お掃除処理の完全維持】
-//      決定論的コース形状生成、全アトラクション物理用データ構造、cleanupOldData は100%維持。
+// ★ Phase 1 実装版（二股分岐における左右レーン番号の明確な分離 ＆ laneIdx 重複衝突根絶）：
+//   1. 【createBridgeLinks に laneIdxOverride 引数を追加】
+//      単一レーン生成（singleLaneOnly: true）時、デフォルトの 1 だけでなく、指定のレーン番号（0 または 2）を強制指定可能に改修。
+//   2. 【二股分岐（Fork Pattern B）の左右の橋を laneIdx: 0 と laneIdx: 2 へ明確に分離】
+//      分岐元（forkIdx）から出る左ルートの橋を laneIdx: 0、右ルートの橋を laneIdx: 2 として登録。
+//      同じ stageIdx 内に laneIdx: 1 が2本重複して存在していた構造的欠陥を完全解消。
+//      これにより、ゲストが右側の階段を踏んだパケット（laneIdx: 2）が左側の階段（laneIdx: 0）を誤認上書きする現象を根本から防止。
+//   3. 【ボーナス消去ハンドラ一元化・決定論的ゲート・お邪魔モブ判定の完全維持】
+//      前フェーズまでに確立した PRNG 汚染遮断、保留キュー保護、ゼロアロケーション構造は100%維持。
 
 import {
   TRAMPOLINE_TIERS,
@@ -157,8 +156,7 @@ function getNextAscentGimmick() {
 }
 
 /**
- * ★【核心改修】リモート走者が回収したアトラクションボーナスブロック（白ブロック）の消去ハンドラ
- * gimmicks.js の pendingConsumedBonusIds と完全統合し、未生成ステージの回収IDも失われずに保留
+ * リモート走者が回収したアトラクションボーナスブロック（白ブロック）の消去ハンドラ
  */
 export function applyRemoteBonusConsumed(bonusId) {
   if (!bonusId) return;
@@ -184,7 +182,6 @@ export function applyRemoteBonusConsumed(bonusId) {
     if (found) break;
   }
 
-  // 自端末の配列にまだ存在していなかった場合（未生成の奥のステージ）は保留キューへ保管
   if (!found) {
     pendingConsumedBonusIds.add(bonusId);
   } else {
@@ -398,7 +395,13 @@ export function updateObstacleMobs(dt, scene) {
   }
 }
 
-export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, nextIslandZ, prevR, nextR, startY, endY, type, islandCenterX = 0.0, singleLaneOnly = false) {
+/**
+ * 橋・アトラクション接続リンクの生成
+ * ★【Phase 1 改善】laneIdxOverride 引数を追加し、二股分岐で左右の橋に固有レーン番号（左: 0, 右: 2）を付与可能に
+ */
+export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, nextIslandZ, prevR, nextR, startY, endY, type, islandCenterX = 0.0, singleLaneOnly = false, laneIdxOverride = null) {
+  const actualSingleLaneIdx = (laneIdxOverride !== null && laneIdxOverride !== undefined) ? laneIdxOverride : 1;
+
   if (type === 'skydive') {
     const startZ = prevIslandZ - prevR + 1.2;
     const endZ = nextIslandZ + nextR - 1.2;
@@ -406,7 +409,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     const catapult = createSkydiveCatapultStructure(scene, islandCenterX, startY, startZ);
 
     const skydiveBridge = {
-      stageIdx, nextStageIdx, laneIdx: 1, planks: [],
+      stageIdx, nextStageIdx, laneIdx: actualSingleLaneIdx, planks: [],
       visualMeshes: [catapult.group],
       startZ, endZ, startY, endY,
       launchPoint: catapult.launchPoint,
@@ -471,7 +474,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     scene.add(landingPad);
 
     const trapdoorBridge = {
-      stageIdx, nextStageIdx, laneIdx: 1, planks: [],
+      stageIdx, nextStageIdx, laneIdx: actualSingleLaneIdx, planks: [],
       visualMeshes: [hatch.group, landingPad],
       startZ: targetDropZ,
       endZ: targetDropZ,
@@ -497,7 +500,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     const endZ = nextIslandZ + nextR - 1.2;
 
     const elevatorBridge = {
-      stageIdx, nextStageIdx, laneIdx: 1, planks: [], visualMeshes: [],
+      stageIdx, nextStageIdx, laneIdx: actualSingleLaneIdx, planks: [], visualMeshes: [],
       startZ, endZ, startY, endY,
       isSkydive: false, isTrapdoor: false, isElevator: true, isZipline: false,
       isCurvedSlide: false, isSlide: false, isJump: false, isVertical: false,
@@ -565,7 +568,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     scene.add(stationTrolley);
 
     const ziplineBridge = {
-      stageIdx, nextStageIdx, laneIdx: 1, planks: [],
+      stageIdx, nextStageIdx, laneIdx: actualSingleLaneIdx, planks: [],
       visualMeshes: [depPylon, arrPylon, cableMesh, stationTrolley],
       startZ, endZ, startPt, endPt, cableLen,
       isSkydive: false, isTrapdoor: false, isElevator: false, isZipline: true,
@@ -698,7 +701,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     }
 
     const curvedBridge = {
-      stageIdx, nextStageIdx, laneIdx: 1, planks: [],
+      stageIdx, nextStageIdx, laneIdx: actualSingleLaneIdx, planks: [],
       visualMeshes: [troughMesh, leftRailMesh, rightRailMesh],
       startZ, endZ,
       isSkydive: false, isTrapdoor: false, isElevator: false, isZipline: false,
@@ -757,7 +760,10 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
     }
   }
 
-  const laneIndices = singleLaneOnly ? [1] : [0, 1, 2];
+  // ★【Phase 1 核心】laneIdxOverride が渡されている場合はそのレーン番号のみを生成配列とする
+  const laneIndices = (laneIdxOverride !== null && laneIdxOverride !== undefined)
+    ? [laneIdxOverride]
+    : (singleLaneOnly ? [1] : [0, 1, 2]);
 
   for (let lIdx = 0; lIdx < laneIndices.length; lIdx++) {
     const laneIdx = laneIndices[lIdx];
@@ -947,6 +953,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
 
 /**
  * 二股分岐パターンB（Fork Pattern B）の完全決定論ハッシュ化
+ * ★【Phase 1 核心】左右の橋にそれぞれ laneIdx: 0 と laneIdx: 2 を割り当てて識別子衝突を根絶
  */
 export function extendCourseForkPatternB(scene) {
   const forkIdx = STAGES.length;
@@ -1045,7 +1052,8 @@ export function extendCourseForkPatternB(scene) {
   stageMeshes.push({ meshGroup: leftMesh, stageIdx: leftStageIdx });
 
   CONNECTIONS.push({ from: forkIdx, to: leftStageIdx, type: leftTheme.connType, branch: 'left' });
-  createBridgeLinks(scene, forkIdx, leftStageIdx, forkZ, leftMidZ, forkR, leftMidR, forkY, leftMidY, leftTheme.connType, leftMidX, true);
+  // ★ 左側の橋に固有レーン番号 0 を割り当て（重複を排除）
+  createBridgeLinks(scene, forkIdx, leftStageIdx, forkZ, leftMidZ, forkR, leftMidR, forkY, leftMidY, leftTheme.connType, leftMidX, true, 0);
 
   const leftGates = getForkThemeGates(leftTheme.role);
   if ((forkHash >> 5) % 2 === 1) {
@@ -1082,7 +1090,8 @@ export function extendCourseForkPatternB(scene) {
   stageMeshes.push({ meshGroup: rightMesh, stageIdx: rightStageIdx });
 
   CONNECTIONS.push({ from: forkIdx, to: rightStageIdx, type: rightTheme.connType, branch: 'right' });
-  createBridgeLinks(scene, forkIdx, rightStageIdx, forkZ, rightMidZ, forkR, rightMidR, forkY, rightMidY, rightTheme.connType, rightMidX, true);
+  // ★ 右側の橋に固有レーン番号 2 を割り当て（重複を排除）
+  createBridgeLinks(scene, forkIdx, rightStageIdx, forkZ, rightMidZ, forkR, rightMidR, forkY, rightMidY, rightTheme.connType, rightMidX, true, 2);
 
   const rightGates = getForkThemeGates(rightTheme.role);
   if ((forkHash >> 6) % 2 === 1) {
@@ -1118,10 +1127,12 @@ export function extendCourseForkPatternB(scene) {
   stageMeshes.push({ meshGroup: mergeMeshGroup, stageIdx: mergeStageIdx });
 
   CONNECTIONS.push({ from: leftStageIdx, to: mergeStageIdx, type: leftTheme.exitType, branch: 'left' });
-  createBridgeLinks(scene, leftStageIdx, mergeStageIdx, leftMidZ, mergeZ, leftMidR, mergeR, leftMidY, mergeY, leftTheme.exitType, leftMidX, true);
+  // 左中継島から合流島への橋もレーン番号 0 を付与
+  createBridgeLinks(scene, leftStageIdx, mergeStageIdx, leftMidZ, mergeZ, leftMidR, mergeR, leftMidY, mergeY, leftTheme.exitType, leftMidX, true, 0);
 
   CONNECTIONS.push({ from: rightStageIdx, to: mergeStageIdx, type: rightTheme.exitType, branch: 'right' });
-  createBridgeLinks(scene, rightStageIdx, mergeStageIdx, rightMidZ, mergeZ, rightMidR, mergeR, rightMidY, mergeY, rightTheme.exitType, rightMidX, true);
+  // 右中継島から合流島への橋もレーン番号 2 を付与
+  createBridgeLinks(scene, rightStageIdx, mergeStageIdx, rightMidZ, mergeZ, rightMidR, mergeR, rightMidY, mergeY, rightTheme.exitType, rightMidX, true, 2);
 
   spawnGatesOnIsland(scene, mergeStageIdx, mergeZ, mergeY, 0.0);
   spawnItem(scene, mergeStageIdx);

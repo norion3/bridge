@@ -1,16 +1,13 @@
 // systems.js: 物理移動判定・スカイウォーク歩行開放・ハッチ進入同期・リュック収納アニメーション連動・シームレス風音連携・スカイダイブ＆スライダーボーナス回収・合流島安全着地完全整合・お邪魔キャラ衝突判定・下層島誤ワープ完全防止・階段/床ブロック取得リアルタイム同期
-// ★ 全走者マグネット吸着完全同期版（Phase 2）：
-//   1. 【リモート走者のマグネット吸着アニメーション完全再現】
-//      applyRemoteBlockPicked 受信時、該当ステージにマグネット発動中の走者がいる場合、
-//      ブロックを即時非表示にせず activeMagnetBlocks へ登録。
-//      ホストが吸い寄せたブロックもゲスト画面で美しい放物線を描いてホストの背中へ吸着。
-//   2. 【残存生送信フォールバックの完全撤廃】
-//      NetworkManager の一時バッファ（queuePlankBuild, queueBlockPick, queueConsumeObject, queueBlowMob）へ完全集約。
-//   3. 【localBridges 配列生成のゼロアロケーション化】
-//      静的再利用バッファ reusableLocalBridges により 60fps/120fps 移動時のGCスパイクを根絶。
-//   4. 【CPU負荷 O(1)化 ＆ 既存の物理・アトラクション同期の完全維持】
-//      マグネット・足元ブロック回収時の blk.poolIdx による O(1) 参照、
-//      階段設置・ブロック取得の100ms集約、衝突判定は100%維持。
+// ★ Phase 2 完全整合版（二股分岐における左右階段の識別子分離＆色化け不具合根絶）：
+//   1. 【applyRemotePlankBuilt の左右橋一意マッチング保証】
+//      world.js で分離された laneIdx（左: 0, 右: 2）に基づき、localBridges.find(b => b.laneIdx === laneIdx) が
+//      左右の階段を 100% 誤認なく特定。ゲストが右階段（laneIdx: 2）を踏んだパケットで左階段が塗られる現象を完全根絶。
+//   2. 【単一レーン分岐階段の actualBridgeX 基準進入・架橋判定の完全整合】
+//      二股分岐の左右の橋（laneIdx: 0 または 2）に進入・架橋する際、レーン番号に依存せず
+//      橋固有のワールドX座標（actualBridgeX: -6.5 / +6.5）を基準に正確な段板生成・登攀判定を維持。
+//   3. 【残存生送信フォールバック完全撤廃・マグネット全走者吸着・O(1)参照の完全維持】
+//      100ms周期POSパケット集約、ゼロアロケーションバッファ、衝突判定は100%維持。
 
 import {
   TRAMPOLINE_TIERS,
@@ -86,9 +83,11 @@ export function setSystemCallbacks(sound, updateHUD, onPlankPlaced = null) {
 
 /**
  * リモートプレイヤーが階段を設置した際の受信ハンドラ（段板カラー即時同期 ＆ スタック整合）
+ * ★【Phase 2 核心】二股分岐の左右の橋（左: laneIdx 0, 右: laneIdx 2）を誤認なく一意に特定
  */
 export function applyRemotePlankBuilt(stageIdx, laneIdx, plankIdx, teamId) {
   const localBridges = bridgesByStage.get(stageIdx) || [];
+  // 左右で分離された laneIdx (左=0, 右=2, 通常3レーン=0,1,2) により確実に目的の橋がヒット
   const onBridge = localBridges.find(b => b.laneIdx === laneIdx);
   if (!onBridge || !onBridge.solidMesh || !onBridge.ghostMesh) return;
 
@@ -101,7 +100,7 @@ export function applyRemotePlankBuilt(stageIdx, laneIdx, plankIdx, teamId) {
   const bCenterX = fromStg ? (fromStg.x || 0.0) : 0.0;
   const currentLaneX = (onBridge.actualBridgeX !== undefined)
     ? onBridge.actualBridgeX
-    : (bCenterX + LANES[onBridge.laneIdx]);
+    : (bCenterX + (LANES[onBridge.laneIdx] !== undefined ? LANES[onBridge.laneIdx] : 0.0));
 
   // ゴースト非表示
   dummyPlankObj.position.set(currentLaneX, currentP.y, currentP.z);
@@ -133,7 +132,6 @@ export function applyRemotePlankBuilt(stageIdx, laneIdx, plankIdx, teamId) {
 
 /**
  * リモートプレイヤーまたはホスト側AIが床ブロックを拾った際の受信ハンドラ
- * ★ マグネット吸着完全同期：発動中の走者がいれば即時蒸発させず activeMagnetBlocks へ投入
  */
 export function applyRemoteBlockPicked(stageIdx, poolIdx, x, z, blockId = null) {
   const stageBlocks = getFloorBlocksForStage(stageIdx);
@@ -164,7 +162,7 @@ export function applyRemoteBlockPicked(stageIdx, poolIdx, x, z, blockId = null) 
   if (targetBlock) {
     // 該当ステージ内でマグネットを発動しているキャラクターを探索
     let magnetChar = null;
-    let minCharDistSq = 9.5 * 9.5; // マグネット有効半径（7m）+ 通信マージン
+    let minCharDistSq = 9.5 * 9.5;
 
     for (let c = 0; c < characters.length; c++) {
       const ch = characters[c];
@@ -180,7 +178,6 @@ export function applyRemoteBlockPicked(stageIdx, poolIdx, x, z, blockId = null) 
     }
 
     if (magnetChar && !targetBlock.attracting) {
-      // ★ 相手端末でもマグネット吸引キューに登録し、背中への滑らかな放物線飛行を完全再現
       targetBlock.attracting = true;
       targetBlock.active = false;
       const sIdx = stageBlocks.indexOf(targetBlock);
@@ -199,7 +196,6 @@ export function applyRemoteBlockPicked(stageIdx, poolIdx, x, z, blockId = null) 
         duration: 0.55
       });
     } else {
-      // 通常歩行回収、またはマグネット範囲外の場合は即時非表示化
       targetBlock.active = false;
       targetBlock.mesh.visible = false;
       targetBlock.attracting = false;
@@ -263,7 +259,7 @@ export function applyRemoteBlowMob(mobIndex, stageIdx, pushDirX = 1.0) {
   }
 }
 
-// グローバル公開（network.js から安全に呼べるように登録）
+// グローバル公開
 if (typeof window !== 'undefined') {
   window.applyRemotePlankBuilt = applyRemotePlankBuilt;
   window.applyRemoteBlockPicked = applyRemoteBlockPicked;
@@ -400,7 +396,7 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
     // 1. スカイダイブ進入判定
     const skyB = localBridges.find(b => b.isSkydive && b.stageIdx === char.currentStage);
     if (skyB && char.slideCooldown <= 0) {
-      const launchX = skyB.launchPoint ? skyB.launchPoint.x : centerX;
+      const launchX = skyB.launchPoint ? skyB.launchPoint.x : (skyB.actualBridgeX !== undefined ? skyB.actualBridgeX : centerX);
       const distToCatapult = Math.hypot(nextX - launchX, nextZ - skyB.startZ);
       if (distToCatapult < 2.8 && isForwardIntent) {
         char.onSkydive = true;
@@ -422,7 +418,7 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
     if (trapB && char.slideCooldown <= 0) {
       const approachStart = trapB.approachStartZ !== undefined ? trapB.approachStartZ : (trapB.startZ + 14.0);
       const hatchCenterZ = trapB.startZ;
-      const hatchX = trapB.hatchCenter ? trapB.hatchCenter.x : centerX;
+      const hatchX = trapB.hatchCenter ? trapB.hatchCenter.x : (trapB.actualBridgeX !== undefined ? trapB.actualBridgeX : centerX);
 
       const inSkywalkX = Math.abs(nextX - hatchX) <= 1.7;
       const inSkywalkZ = (nextZ <= approachStart + 0.6) && (nextZ >= hatchCenterZ - 1.8);
@@ -456,7 +452,7 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
     // 3. ジップライン進入判定
     const zipB = localBridges.find(b => b.isZipline && b.stageIdx === char.currentStage);
     if (zipB && char.slideCooldown <= 0) {
-      const startPtX = zipB.startPt ? zipB.startPt.x : centerX;
+      const startPtX = zipB.startPt ? zipB.startPt.x : (zipB.actualBridgeX !== undefined ? zipB.actualBridgeX : centerX);
       const distToStart = Math.hypot(nextX - startPtX, nextZ - zipB.startZ);
       if (distToStart < 3.2 && isForwardIntent) {
         char.onZipline = true;
@@ -469,11 +465,12 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
     // 4. S字カーブスライダー進入判定
     const curvedB = localBridges.find(b => b.isCurvedSlide && b.stageIdx === char.currentStage);
     if (curvedB && char.slideCooldown <= 0) {
-      const distToStart = Math.hypot(nextX - centerX, nextZ - curvedB.startZ);
+      const cBridgeX = (curvedB.actualBridgeX !== undefined) ? curvedB.actualBridgeX : centerX;
+      const distToStart = Math.hypot(nextX - cBridgeX, nextZ - curvedB.startZ);
       if (distToStart < 3.2 && isForwardIntent) {
         char.onCurvedSlide = true;
         char.curvedSlideProgress = 0;
-        char.curvedSlideOffset = Math.max(-1.5, Math.min(1.5, nextX - centerX));
+        char.curvedSlideOffset = Math.max(-1.5, Math.min(1.5, nextX - cBridgeX));
         char.activeCurvedBridge = curvedB;
         if (!char.isPlayer) {
           char.botSlideOffsetTarget = (Math.random() - 0.5) * 1.5;
@@ -518,7 +515,7 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
       const bCenterX = fromStg ? (fromStg.x || 0.0) : 0.0;
       const expectedLaneX = (b.actualBridgeX !== undefined)
         ? b.actualBridgeX
-        : (bCenterX + LANES[b.laneIdx]);
+        : (bCenterX + (LANES[b.laneIdx] !== undefined ? LANES[b.laneIdx] : 0.0));
 
       if (Math.abs(nextX - expectedLaneX) > 1.95) continue;
       if (nextZ > b.startZ + 0.15 || nextZ < b.endZ - 0.8) continue;
@@ -541,7 +538,7 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
       const bCenterX = fromStg ? (fromStg.x || 0.0) : 0.0;
       const currentLaneX = (onBridge.actualBridgeX !== undefined)
         ? onBridge.actualBridgeX
-        : (bCenterX + LANES[onBridge.laneIdx]);
+        : (bCenterX + (LANES[onBridge.laneIdx] !== undefined ? LANES[onBridge.laneIdx] : 0.0));
 
       if (char.currentStage === onBridge.nextStageIdx) {
         const isBridgeOpen = onBridge.isSlide || onBridge.isJump || onBridge.planks.every(p => p.teamId !== null);
@@ -732,7 +729,7 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
                   }
                 }
 
-                // 生送信フォールバックを完全撤廃し、queuePlankBuild へ一本化
+                // ★ 分離された固有レーン番号 (左: 0, 右: 2, 通常: 0/1/2) でパケット送信
                 const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
                 const shouldBroadcastPlank = char.isPlayer || (isHost && char.isAI);
 
@@ -829,17 +826,18 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
       const stgCenterX = curStage.x || 0.0;
 
       const isApproachingAnyBridge = (nextZ < curStage.z) && stageBridges.some(b => {
-        if (b.isSkydive || b.isTrapdoor || b.isCurvedSlide || b.isZipline || b.isFreefall) {
-          const lX = b.launchPoint ? b.launchPoint.x : stgCenterX;
-          return Math.abs(nextX - lX) < 2.0;
-        } else if (b.isElevator) {
-          return ELEVATOR_CONFIG.LANES.some(cfg => Math.abs(nextX - (stgCenterX + LANES[cfg.laneIdx])) < 1.7);
-        } else {
-          const bX = (b.actualBridgeX !== undefined)
-            ? b.actualBridgeX
-            : (stgCenterX + LANES[b.laneIdx]);
-          return Math.abs(nextX - bX) < 2.0;
+        if (b.isTrapdoor || b.isFreefall) {
+          const approachStart = b.approachStartZ !== undefined ? b.approachStartZ : (b.startZ + 16.0);
+          return Math.abs(char.pos.x - stgCenterX) < 2.5 && (char.pos.z <= approachStart + 2.0 && char.pos.z >= b.startZ - 2.5);
         }
+        if (b.isSkydive) {
+          const lX = b.launchPoint ? b.launchPoint.x : (b.actualBridgeX !== undefined ? b.actualBridgeX : stgCenterX);
+          return Math.abs(char.pos.x - lX) < 2.5 && (char.pos.z <= b.startZ + 3.0 && char.pos.z >= b.startZ - 4.0);
+        }
+        const laneX = (b.actualBridgeX !== undefined)
+          ? b.actualBridgeX
+          : ((b.isCurvedSlide || b.isZipline) ? stgCenterX : (stgCenterX + (LANES[b.laneIdx] !== undefined ? LANES[b.laneIdx] : 0.0)));
+        return Math.abs(char.pos.x - laneX) < 2.2 && (char.pos.z <= b.startZ + 2.5 && char.pos.z >= b.endZ - 1.0);
       });
 
       if (!isApproachingAnyBridge) {
@@ -943,7 +941,6 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
               duration: 0.55
             });
 
-            // 生送信を完全排除し、queueBlockPick へ集約
             const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
             const shouldBroadcastMagnet = char.isPlayer || (isHost && char.isAI);
             if (shouldBroadcastMagnet && typeof window !== 'undefined' && window.NetworkManager) {
@@ -1177,7 +1174,6 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
           stageBlocks.splice(i, 1);
           addBrickToCharacter(char, char.team, 1, soundRef, updateHUDRef);
 
-          // 生送信を完全排除し、queueBlockPick へ集約
           const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
           const shouldBroadcastPick = char.isPlayer || (isHost && char.isAI);
           if (shouldBroadcastPick && typeof window !== 'undefined' && window.NetworkManager) {
@@ -1249,10 +1245,12 @@ export function updateSingleCharacter(scene, char, dirX, dirZ, dt, spawnPuffClou
           return Math.abs(char.pos.x - stgCenterX) < 2.5 && (char.pos.z <= approachStart + 2.0 && char.pos.z >= b.startZ - 2.5);
         }
         if (b.isSkydive) {
-          const lX = b.launchPoint ? b.launchPoint.x : stgCenterX;
+          const lX = b.launchPoint ? b.launchPoint.x : (b.actualBridgeX !== undefined ? b.actualBridgeX : stgCenterX);
           return Math.abs(char.pos.x - lX) < 2.5 && (char.pos.z <= b.startZ + 3.0 && char.pos.z >= b.startZ - 4.0);
         }
-        const laneX = (b.actualBridgeX !== undefined) ? b.actualBridgeX : ((b.isCurvedSlide || b.isZipline) ? stgCenterX : (stgCenterX + LANES[b.laneIdx]));
+        const laneX = (b.actualBridgeX !== undefined)
+          ? b.actualBridgeX
+          : ((b.isCurvedSlide || b.isZipline) ? stgCenterX : (stgCenterX + (LANES[b.laneIdx] !== undefined ? LANES[b.laneIdx] : 0.0)));
         return Math.abs(char.pos.x - laneX) < 2.2 && (char.pos.z <= b.startZ + 2.5 && char.pos.z >= b.endZ - 1.0);
       });
 
