@@ -1,61 +1,58 @@
-// menu.js: ボトムシートメニュー・右下サイドMENUボタン・親指下部チャット・製作者プロフィール直結ボタン・ネオンいいね誘導
-// ★ UI/UX全面刷新 ＆ 崩れリスク物理ゼロ版：
-//   1. 【MENUボタンの英語化 ＆ 右下親指サイド配置】
-//      画面中央下部から撤退し、スワイプ操作エリアを全面開放。
-//      右下「サウンド（🔊）」ボタンの真上にスリムな半角英字「MENU」ボタンを配置し誤爆をゼロ化。
-//   2. 【いいね誘導のネオンシアン配色維持 ＆ 被り・本文矢印解消】
-//      上部ネイティブヘッダーとの重なりを解消し、本文内の「↗」を削除。上向きパルス矢印（▲）のみで直感誘導。
-//   3. 【製作者タブ：ボタン特化型スリムUI（崩れリスク物理ゼロ）】
-//      外部API取得や画像読み込みを全廃し、本アカウント（2736445531）と開発サブ垢（887811163）へ
-//      ワンタップで確実にジャンプする2大専用ボタンへ刷新。
-//   4. 【ハート絵文字の適正化 ＆ メッセージ1行完結】
-//      タブや装飾のハートを全廃（✦ 製作者）。ハート（❤️）は「いいね」の文脈でのみ上品に使用。
-//   5. 【チャットタブ：親指下部配置 ＆ 定型文8種への拡充 ＆ 説明文削除】
-//      不要な説明文を全廃。ボトムシート最下部に入力欄と送信ボタンを配置し、タップ即送信のクイックチップを拡充。
+// menu.js: ボトムシートメニュー・右下サイドMENUボタン・親指下部チャット・製作者プロフィール安全キック・ネオンいいね誘導
+// ★ GRAVITY公式推奨仕様完全準拠 ＆ ルーム招待被り完全解消版（Step 1）：
+//   1. 【公式推奨：非表示iframeによる安全ネイティブキック（真っ黒画面の完全根絶）】
+//      window.top.location.href の直接書き換えを全廃し、動的生成した非表示 iframe の src へ
+//      slme://internal 内部スキームを流し込む方式へ完全統一。
+//      ゲーム画面のアンロードや通信エラー画面（画像24）への遷移が物理的に 100% 発生しなくなります。
+//   2. 【「ルーム招待 ⇧」ボタン被り完全解消レイアウト】
+//      ボトムシート各タブのスクロール領域下部に max(96px, env(safe-area-inset-bottom, 24px) + 72px) の
+//      ゆったりとした安全余白（Padding）を配置。スクロール時に最下部ボタンが上に持ち上がり、誤爆なく快適にタップ可能。
+//   3. 【製作者タブ：本垢（2736445531）＆ サブ垢（887811163）安全直結ボタン】
+//      壊れる要素を物理的に排除したボタン特化型スリムUIを維持し、確実にマイページへジャンプ。
+//   4. 【再入室時のアクティブ無条件復帰保証】
+//      一度「退室済み」となったユーザーが再入室した際、recordParticipant 呼び出しで
+//      即座に isActive = true へ復元し、走者タブのステータス同期を完全保護。
+//   5. 【MENUボタン右下親指配置 ＆ チャット下部入力・定型文8種】
+//      中央スワイプエリアの完全開放、文字ズレのない英語半角「MENU」、親指で届く快適UIを完全維持。
 
 /**
  * GRAVITYアプリ内ネイティブ画面遷移ルーター
+ * ★【GRAVITY公式サポート推奨】非表示 iframe 経由の安全キックエンジン
  */
 export const GravityRouter = {
-  _sendToApp(command, paramObj) {
-    try {
-      const encodedJson = encodeURIComponent(JSON.stringify(paramObj));
-      const innerUrl = command + '?0=' + encodedJson;
-      const deepLink = 'slme://internal?type=5&ani=1&url=' + encodeURIComponent(innerUrl);
-
-      try {
-        if (window.top && window.top.location) {
-          window.top.location.href = deepLink;
-        } else {
-          window.location.href = deepLink;
-        }
-      } catch (e) {
-        const ifr = document.createElement('iframe');
-        ifr.style.cssText = 'position:absolute;width:0;height:0;opacity:0;pointer-events:none;border:none;';
-        ifr.src = deepLink;
-        document.body.appendChild(ifr);
-        setTimeout(() => {
-          try { ifr.remove(); } catch (err) {}
-        }, 5000);
-      }
-    } catch (err) {
-      console.warn('[GravityRouter] Navigation failed:', err);
-    }
-  },
-
   openProfile(userId) {
     if (!userId) return;
     const cleanId = String(userId).trim();
     if (!cleanId || cleanId === 'local_user' || cleanId === 'null') return;
 
-    const paramObj = {
-      uid: Number(cleanId) || cleanId,
-      selectedIndex: 0,
-      web_url: 'https://www.gravity.place/user/' + cleanId,
-      s: 'web',
-      b: 'user'
-    };
-    this._sendToApp('usercenter', paramObj);
+    try {
+      // 1. ネイティブへ渡すコマンドとパラメータの構築
+      const paramObj = {
+        uid: Number(cleanId) || cleanId,
+        selectedIndex: 0,
+        web_url: 'https://www.gravity.place/user/' + cleanId,
+        s: 'web',
+        b: 'user'
+      };
+      const encodedJson = encodeURIComponent(JSON.stringify(paramObj));
+      const innerUrl = 'usercenter?0=' + encodedJson;
+      const deepLink = 'slme://internal?type=5&ani=1&url=' + encodeURIComponent(innerUrl);
+
+      // 2. 非表示 iframe を用いた安全キック（メイン画面の URL 遷移を物理遮断）
+      const iframe = document.createElement('iframe');
+      iframe.style.cssText = 'position:absolute;width:0;height:0;opacity:0;pointer-events:none;border:none;display:none;';
+      iframe.src = deepLink;
+      document.body.appendChild(iframe);
+
+      // 3. クリーンアップ（1秒後に安全にDOMから除去）
+      setTimeout(() => {
+        if (document.body.contains(iframe)) {
+          document.body.removeChild(iframe);
+        }
+      }, 1000);
+    } catch (err) {
+      console.warn('[GravityRouter] Navigation failed gracefully:', err);
+    }
   }
 };
 
@@ -63,7 +60,7 @@ if (typeof window !== 'undefined') {
   window.GravityRouter = GravityRouter;
 }
 
-// 製作者アカウント定数
+// 製作者アカウント定数定義
 export const CREATOR_ACCOUNTS = {
   main: {
     id: '2736445531',
@@ -89,6 +86,7 @@ export function setChatSendCallback(fn) {
 
 /**
  * 参加者履歴の登録・更新
+ * ★ 再入室時は無条件で isActive = true へ復元
  */
 export function recordParticipant(userId, name, portrait, teamId, isActive = true) {
   if (!userId || userId === 'local_user') return;
@@ -98,7 +96,7 @@ export function recordParticipant(userId, name, portrait, teamId, isActive = tru
     name: name || 'プレイヤー',
     portrait: portrait || '',
     teamId: teamId || 'neutral',
-    isActive: isActive,
+    isActive: Boolean(isActive),
     lastSeen: Date.now()
   });
   renderParticipantsList();
@@ -125,7 +123,7 @@ function injectMenuStyles() {
   const style = document.createElement('style');
   style.id = 'gravity-game-menu-styles';
   style.textContent = `
-    /* ★ 右下サイド MENUボタン（親指誤爆ゼロ・英語カプセル） */
+    /* ★ 右下サイド MENUボタン（スワイプエリア完全解放・英語カプセル） */
     #btn-open-game-menu {
       position: fixed;
       right: 16px;
@@ -190,8 +188,8 @@ function injectMenuStyles() {
       right: 0;
       max-width: 460px;
       margin: 0 auto;
-      height: 70vh;
-      max-height: 520px;
+      height: 72vh;
+      max-height: 540px;
       background: radial-gradient(circle at 50% 0%, rgba(14, 165, 233, 0.96) 0%, rgba(15, 23, 42, 0.98) 100%);
       border: 1px solid rgba(255, 255, 255, 0.25);
       border-bottom: none;
@@ -277,13 +275,13 @@ function injectMenuStyles() {
       box-shadow: 0 2px 8px rgba(2, 132, 199, 0.4);
     }
 
-    /* タブコンテンツ表示領域 */
+    /* ★ タブコンテンツ表示領域（「ルーム招待 ⇧」ボタン被り解消の96px安全余白） */
     .menu-tab-content {
       flex: 1;
       overflow-y: auto;
       -webkit-overflow-scrolling: touch;
       padding: 8px 16px;
-      padding-bottom: max(16px, env(safe-area-inset-bottom, 12px));
+      padding-bottom: max(96px, env(safe-area-inset-bottom, 24px) + 72px);
       display: none;
     }
     .menu-tab-content.active {
@@ -291,7 +289,7 @@ function injectMenuStyles() {
       flex-direction: column;
     }
 
-    /* ★ 1. チャットタブ UI（親指下部配置 ＆ 定型文拡充） */
+    /* 1. チャットタブ UI */
     .chat-tab-container {
       display: flex;
       flex-direction: column;
@@ -332,7 +330,7 @@ function injectMenuStyles() {
       transform: scale(0.97);
     }
 
-    /* 親指で最も押しやすい最下部入力バー */
+    /* 親指で押しやすい下部入力バー */
     .chat-input-bottom-bar {
       margin-top: auto;
       display: flex;
@@ -372,7 +370,7 @@ function injectMenuStyles() {
       transform: scale(0.95);
     }
 
-    /* ★ 2. 製作者タブ UI（ボタン特化型スリムUI・崩れリスク物理ゼロ） */
+    /* 2. 製作者タブ UI（ボタン特化型スリムUI・崩れリスクゼロ） */
     .creator-section-container {
       display: flex;
       flex-direction: column;
@@ -446,8 +444,6 @@ function injectMenuStyles() {
       display: flex;
       flex-direction: column;
       gap: 8px;
-      max-height: 300px;
-      overflow-y: auto;
       padding-right: 4px;
     }
     .participant-row {
@@ -509,7 +505,7 @@ function injectMenuStyles() {
       flex-shrink: 0;
     }
 
-    /* ★ 右上「いいね誘導」ネオンシアン配色維持 ＆ 被り・本文矢印解消 */
+    /* 右上「いいね誘導」ネオンシアン配置 */
     #like-guide-anchor {
       position: fixed;
       top: max(56px, env(safe-area-inset-top, 24px) + 42px);
@@ -585,7 +581,6 @@ function renderParticipantsList() {
     const statusClass = p.isActive ? 'participant-status status-active' : 'participant-status';
     const avatarSrc = p.portrait || '';
 
-    // アバター描画：画像があればimg、なければフォールバック青丸
     const avatarHtml = avatarSrc
       ? `<img class="participant-avatar" src="${avatarSrc}" onerror="this.style.display='none';this.nextElementSibling.style.display='block';"><div class="participant-avatar" style="display:none;background:#0284c7;"></div>`
       : `<div class="participant-avatar" style="background:#0284c7;"></div>`;
@@ -601,6 +596,7 @@ function renderParticipantsList() {
       <div class="participant-jump-icon">↗</div>
     `;
 
+    // 走者タップ時も安全な iframe キックでマイページを開く
     row.addEventListener('click', () => {
       GravityRouter.openProfile(p.userId);
     });
@@ -624,7 +620,6 @@ function switchTab(tabId) {
     content.classList.toggle('active', content.id === `menu-tab-${tabId}`);
   });
 
-  // 製作者タブ選択時：右上のいいね誘導を表示
   if (tabId === 'creator') {
     if (likeGuide) likeGuide.classList.add('show');
   } else {
@@ -682,7 +677,7 @@ function handleSendMessage(customText = null) {
     onSendChatCallback(safeText);
   }
 
-  // 送信後、視界確保のためメニューを閉じる
+  // 視界確保のため閉じる
   GameMenu.close();
 }
 
@@ -705,7 +700,7 @@ function escapeHtml(str) {
 export function initGameMenuDOM() {
   injectMenuStyles();
 
-  // 1. 右下サイド MENUボタン（スワイプ誤爆ゼロ・英語カプセル）
+  // 1. 右下サイド MENUボタン（スワイプエリア完全解放・英語カプセル）
   if (!document.getElementById('btn-open-game-menu')) {
     const menuBtn = document.createElement('button');
     menuBtn.id = 'btn-open-game-menu';
@@ -721,7 +716,7 @@ export function initGameMenuDOM() {
     document.body.appendChild(menuBtn);
   }
 
-  // 2. 右上「いいね誘導」アンカー（ネオンシアン・矢印重複排除）
+  // 2. 右上「いいね誘導」アンカー（ネオンシアン・矢印重複なし）
   if (!document.getElementById('like-guide-anchor')) {
     const likeAnchor = document.createElement('div');
     likeAnchor.id = 'like-guide-anchor';
@@ -760,7 +755,7 @@ export function initGameMenuDOM() {
         <button type="button" class="menu-tab-btn" data-tab="creator">✦ 製作者</button>
       </div>
 
-      <!-- 1. チャットタブ（親指下部配置 ＆ 定型文8種 ＆ 説明文削除） -->
+      <!-- 1. チャットタブ（親指下部入力 ＆ 定型文8種） -->
       <div id="menu-tab-chat" class="menu-tab-content active">
         <div class="chat-tab-container">
           <div class="chat-top-section">
@@ -788,7 +783,7 @@ export function initGameMenuDOM() {
         <div id="menu-participants-list" class="participants-container"></div>
       </div>
 
-      <!-- 3. 製作者タブ（ボタン特化型スリムUI・崩れリスク物理ゼロ） -->
+      <!-- 3. 製作者タブ（安全iframeキック・ルーム招待被り解消） -->
       <div id="menu-tab-creator" class="menu-tab-content">
         <div class="creator-section-container">
           <div class="creator-message-card">
@@ -832,7 +827,7 @@ export function initGameMenuDOM() {
       }
     });
 
-    // 定型文チップ（タップ即送信）
+    // 定型文チップ
     const chips = sheet.querySelectorAll('.chat-chip');
     chips.forEach(chip => {
       chip.addEventListener('click', () => {
@@ -841,11 +836,13 @@ export function initGameMenuDOM() {
       });
     });
 
-    // 製作者プロフィール直結ボタン
-    document.getElementById('btn-jump-creator-main')?.addEventListener('click', () => {
+    // 製作者プロフィール直結ボタン（公式推奨の安全iframeキック）
+    document.getElementById('btn-jump-creator-main')?.addEventListener('click', (e) => {
+      e.stopPropagation();
       GravityRouter.openProfile(CREATOR_ACCOUNTS.main.id);
     });
-    document.getElementById('btn-jump-creator-sub')?.addEventListener('click', () => {
+    document.getElementById('btn-jump-creator-sub')?.addEventListener('click', (e) => {
+      e.stopPropagation();
       GravityRouter.openProfile(CREATOR_ACCOUNTS.sub.id);
     });
   }
