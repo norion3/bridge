@@ -1,19 +1,15 @@
 // network.js: AgentSDK公式仕様完全準拠 ＆ 極小タプルパッカー（約115B・68%削減）＆ スマートDelta送信 ＆ ゼロアロケーション純粋算術丸めエンジン
-// ★ Phase 1 メモリ・処理負荷極限最適化（ゼロアロケーション丸め＆GCゴミ根絶版）：
-//   1. 【toFixed() による一時文字列オブジェクト生成の完全根絶（ゼロアロケーション化）】
-//      毎秒数百回呼び出されていた Number(val.toFixed(1)) や Number(val.toFixed(2)) を、
-//      CPUレジスタ内で完結する純粋算術丸め（round1 / round2）へ完全置換。
-//      パケットの数値・型・精度は100%同一のまま、ヒープ（Stringインスタンス）の生成をゼロにし、
-//      モバイル端末における定期的なGCマイクロスタッター（一瞬のカクつき）を根絶。
-//   2. 【11要素フラットタプル配列（Tuple Array）＆ 1バイトビットマスク化】
-//      10Hz送信から不要な静的メタデータや冗長キーを完全撤廃し、約115バイト（公式推奨値内）を維持。
-//   3. 【透過的Tupleデコーダーによる完全デグレゼロ保証】
-//      受信時にフラット配列から従来のオブジェクトへ即座に復元し、他15ファイルへの副作用は完全ゼロ。
-//   4. 【静止時スマートDelta送信（10Hz ──> 2Hz Keep-Alive）】
-//      待機中のJSBridge負荷を最大80%削減しつつ、入力・被弾検知時に0msで即時復帰。
-//   5. 【動的ライフサイクル耐性（途中入退室・ホスト昇格・再入室）の100%維持】
-//      スロット不変型ホスト昇格、リスナー単一登録の永続化、セマンティック・チャンキング、
-//      公開ルーム一覧の1行Ellipsis対応を完全維持。
+// ★ Phase 4 完全同期＆アクション安定化版（ボーナススナップショット網羅 ＆ スマートDelta適正化）：
+//   1. 【初期スナップショットにボーナス回収状態（consumedBonusIds）を完全網羅】
+//      captureFullWorldSnapshot() にスライダーやアトラクションの回収済み白ブロックID配列を含め、
+//      途中入室時にホスト側で既に回収された白ブロックがゲスト側で満タン復活する不整合を完全根絶。
+//   2. 【静止時スマートDelta待機周波数の適正化（2Hz -> 5Hz）】
+//      走者が立ち止まって様子を見ている間の間引き頻度を 500ms（2Hz）から 200ms（5Hz）へ安全緩和。
+//      静止状態からの被弾・衝突・スキル初動の通信遅滞を最大0.5秒から0.2秒へ短縮し、アクション同期を極限まで安定化。
+//   3. 【11要素フラットタプル配列 ＆ ゼロアロケーション純粋算術丸め（round1/round2）の完全維持】
+//      ヒープ文字列生成ゼロ、パケットサイズ極小化、透過的デコーダーを100%維持。
+//   4. 【動的ライフサイクル耐性（途中入退室・ホスト昇格・再入室）の完全維持】
+//      スロット不変型ホスト昇格、リスナー単一登録の永続化、セマンティック・チャンキングを100%維持。
 
 import {
   player,
@@ -31,7 +27,12 @@ import {
   bridges,
   floorBlocksByStage,
   floorItems,
-  spawnItem
+  spawnItem,
+  slideBonusBlocks,
+  curvedSlideBonusBlocks,
+  ziplineBonusBlocks,
+  skydiveBonusBlocks,
+  applyRemoteBonusConsumed
 } from './world.js';
 import { resetParticlePools, floorBlockPool } from './particles.js';
 
@@ -135,7 +136,7 @@ function notifyRestartButtonVisibility() {
 
 /**
  * ホスト端末の全進行ステージを網羅した完全世界状態を収集
- * ★ ゼロアロケーション丸め（round2）により文字列生成を完全排除
+ * ★【核心改修】回収済みボーナスブロックID（bonuses）をスナップショットに網羅
  */
 function captureFullWorldSnapshot() {
   let maxStage = 0;
@@ -203,7 +204,21 @@ function captureFullWorldSnapshot() {
     }
   }
 
-  return { blocks, planks, items };
+  // ★【核心改修】既に回収された全アトラクションの白ブロックIDを収集
+  const bonuses = [];
+  const bonusArrays = [slideBonusBlocks, curvedSlideBonusBlocks, ziplineBonusBlocks, skydiveBonusBlocks];
+  for (let a = 0; a < bonusArrays.length; a++) {
+    const arr = bonusArrays[a];
+    if (!arr) continue;
+    for (let i = 0; i < arr.length; i++) {
+      const b = arr[i];
+      if (b.collected && b.bonusId && b.stageIdx <= allowedStageLimit) {
+        bonuses.push(b.bonusId);
+      }
+    }
+  }
+
+  return { blocks, planks, items, bonuses };
 }
 
 /**
@@ -228,8 +243,7 @@ function getCharacterActionState(c) {
 }
 
 /**
- * ★【Phase 1 エンコーダー】走者オブジェクトを11要素のフラットタプル配列へ極小パック
- * ★ ゼロアロケーション純粋算術丸め（round1 / round2）により文字列生成を完全排除
+ * 走者オブジェクトを11要素のフラットタプル配列へ極小パック
  * フォーマット: [slot, x, y, z, vx, vz, rotY, stack, stage, stateId, flags, (e)]
  */
 function encodeCharacterToTuple(charObj, slotIndex, vx = 0, vz = 0) {
@@ -272,11 +286,9 @@ function encodeCharacterToTuple(charObj, slotIndex, vx = 0, vz = 0) {
 }
 
 /**
- * ★【Phase 1 デコーダー】受信したフラットタプル配列を従来の完全オブジェクトへ透過復元
- * main.js や systems.js は従来と全く同じオブジェクトを受け取るため、デグレリスクはゼロ
+ * 受信したフラットタプル配列を従来の完全オブジェクトへ透過復元
  */
 function decodeTupleToCharacterPacket(item) {
-  // 既存のオブジェクト形式パケットが届いた場合はそのまま返却（完全後方互換）
   if (!Array.isArray(item)) {
     return item;
   }
@@ -366,7 +378,7 @@ export const NetworkManager = {
 
   captureWorldSnapshot: captureFullWorldSnapshot,
 
-  // --- アクション蓄積キュー登録API（すべてゼロアロケーション算術丸めへ最適化） ---
+  // --- アクション蓄積キュー登録API ---
 
   queuePlankBuild(stageIdx, laneIdx, plankIdx, teamId) {
     if (!this.isMultiplayerActive) return;
@@ -477,9 +489,6 @@ export const NetworkManager = {
     return this.myUser;
   },
 
-  /**
-   * ★【核心】リスナーの永続的・単一登録
-   */
   ensureMessageListener() {
     if (!this.isSDKAvailable || this._hasRegisteredListener) return;
     this._hasRegisteredListener = true;
@@ -512,9 +521,6 @@ export const NetworkManager = {
     }
   },
 
-  /**
-   * ★【2段階緩和】ハートビート監視ウォッチドッグタイマー
-   */
   _startHostWatchdog() {
     this._stopHostWatchdog();
     this._lastHostPacketTime = performance.now();
@@ -543,9 +549,6 @@ export const NetworkManager = {
     }
   },
 
-  /**
-   * ★【核心】スロット不変型ホスト昇格処理
-   */
   promoteToHost() {
     if (this._isPromoting || this.isHost) return;
     this._isPromoting = true;
@@ -561,9 +564,6 @@ export const NetworkManager = {
     this._isPromoting = false;
   },
 
-  /**
-   * ★【核心】人間が搭乗していない全スロットを通常の自律AIへ完全復帰
-   */
   _restoreAllVacantSlotsToAI() {
     for (let i = 0; i < this.slots.length; i++) {
       if (i === this.mySlot) continue;
@@ -760,9 +760,6 @@ export const NetworkManager = {
     }
   },
 
-  /**
-   * ★【完全受動型ハンドシェイク】ゲスト入室処理
-   */
   async joinRoom(roomId) {
     if (!roomId) return false;
     if (this._isCreatingRoom || this._isJoiningRoom) {
@@ -855,11 +852,8 @@ export const NetworkManager = {
     }
   },
 
-  /**
-   * ★【核心】新規入室者の検知 ＆ セマンティック・タイムスライス分割キューの構築
-   */
   _handleUserJoined(data) {
-    if (!data) return;
+    if (!this.isHost || !data) return;
     const userId = String(data.user_id || data.userId || data.uid || '');
     if (!userId || userId === String(this.myUser.user_id)) return;
 
@@ -927,12 +921,20 @@ export const NetworkManager = {
           });
         }
       }
+
+      // ★【核心改修】回収済みボーナスブロック配列のスライス送信キューイング
+      if (Array.isArray(fullSnapshot.bonuses) && fullSnapshot.bonuses.length > 0) {
+        const BATCH_SIZE = 25;
+        for (let i = 0; i < fullSnapshot.bonuses.length; i += BATCH_SIZE) {
+          this._snapshotQueue.push({
+            t: 'bonuses',
+            list: fullSnapshot.bonuses.slice(i, i + BATCH_SIZE)
+          });
+        }
+      }
     }
   },
 
-  /**
-   * 受信した分割スナップショットの展開
-   */
   _applySnapshotChunk(chunk) {
     if (!chunk || !chunk.t || !Array.isArray(chunk.list)) return;
     const activeScene = (typeof window !== 'undefined' && window.currentSceneRef) ? window.currentSceneRef : null;
@@ -956,12 +958,18 @@ export const NetworkManager = {
           spawnItem(activeScene, si.stageIdx, si.type);
         }
       });
+    } else if (chunk.t === 'bonuses') {
+      // ★【核心改修】途中入室時にホストで回収済みのボーナスブロックを即座に消去
+      chunk.list.forEach(bonusId => {
+        if (typeof applyRemoteBonusConsumed === 'function') {
+          applyRemoteBonusConsumed(bonusId);
+        } else if (typeof window.applyRemoteBonusConsumed === 'function') {
+          window.applyRemoteBonusConsumed(bonusId);
+        }
+      });
     }
   },
 
-  /**
-   * ★【Phase 1 核心】10Hz 完全集約 ＆ 極小タプルエンコード ＆ スマートDelta送信
-   */
   _startPositionBroadcasting() {
     if (this._syncIntervalId) clearInterval(this._syncIntervalId);
 
@@ -1007,7 +1015,6 @@ export const NetworkManager = {
             const aiTuple = encodeCharacterToTuple(charObj, s.slot, 0, 0);
             tuplesList.push(aiTuple);
 
-            // AIが現在歩行またはアトラクション移動中か判定
             if (charObj.aiState !== 'IDLE' && charObj.aiState !== 'REMOTE_IDLE') {
               anyAIActive = true;
             }
@@ -1031,8 +1038,8 @@ export const NetworkManager = {
         (this.isHost && this._snapshotQueue.length > 0)
       );
 
-      // ★【Phase 1 核心】静止時スマートDelta送信判定
-      // 自機が移動しておらず（移動量 < 0.05m かつ 速度 ≈ 0）、アクション発生なし、AIも静止中の場合
+      // ★【Phase 4 核心】静止時スマートDeltaの送信頻度適正化（500ms -> 200ms）
+      // 5回（500ms）間引きから 2回（200ms / 5Hz）へ安全緩和し、様子見からのアクション初動ラグを解消
       const isPlayerMoving = Math.hypot(vx, vz) > 0.15;
       const isPlayerStunnedOrBuffed = (myTuple[10] !== 0); // flags: boost, stun, shrink, magnet, invuln
       const isPlayerInSpecialGimmick = (myTuple[9] !== 0); // stateId !== NORMAL
@@ -1040,13 +1047,12 @@ export const NetworkManager = {
 
       if (!hasPendingActions && !isActivelyRunning && this._lastSentSnapshot) {
         this._idleKeepAliveCounter++;
-        // 5回に1回（500msの生存確認 Keep-Alive）以外は送信をスキップ
-        if (this._idleKeepAliveCounter < 5) {
+        // 2回に1回（200ms・5Hzの安全Keep-Alive）以外は送信をスキップ
+        if (this._idleKeepAliveCounter < 2) {
           return;
         }
       }
 
-      // 送信実行：カウンターをリセットし、スナップショットを更新
       this._idleKeepAliveCounter = 0;
       this._lastSentSnapshot = myTuple;
 
@@ -1060,15 +1066,12 @@ export const NetworkManager = {
       this._pendingScatters.length = 0;
       this._pendingSpawns.length = 0;
 
-      // ★【極限短縮パケットの構築】
-      // 通常時（走者3名）でわずか 約115 バイト！
       const posMessage = {
         e: 'P',
         l: tuplesList
       };
 
       // タイマー同期（ホストが10カウント＝1.0秒に1回のみ同封）
-      // ★ ゼロアロケーション丸め（round1）により文字列生成を完全排除
       if (this.isHost) {
         this._timeSyncCounter = (this._timeSyncCounter || 0) + 1;
         if (this._timeSyncCounter >= 10) {
@@ -1101,9 +1104,6 @@ export const NetworkManager = {
     }, 100);
   },
 
-  /**
-   * ★【Phase 1 核心】受信メッセージのパース ＆ タプル自動デコード ＆ ディスパッチ実行
-   */
   _handleCustomMessage(data) {
     if (!data) return;
     try {
@@ -1141,13 +1141,11 @@ export const NetworkManager = {
       const eventType = packet.e || packet.event;
       if (!eventType) return;
 
-      // 受信時刻を更新（ホスト生存シグナル ＆ 初回パケット受信フラグ確定）
       this._lastHostPacketTime = performance.now();
       if (!this._hasReceivedFirstHostPacket) {
         this._hasReceivedFirstHostPacket = true;
       }
 
-      // ★ 短縮キー 'P' または旧 'POS' の判定
       if (eventType === 'P' || eventType === 'POS') {
         // 0. snap (分割スナップショットの即時反映)
         if (packet.snap) {
@@ -1214,7 +1212,9 @@ export const NetworkManager = {
         const consumesList = packet.co || packet.consumes;
         if (Array.isArray(consumesList) && consumesList.length > 0) {
           consumesList.forEach(c => {
-            if (c.t === 'bonus' && typeof window.applyRemoteBonusConsumed === 'function') {
+            if (c.t === 'bonus' && typeof applyRemoteBonusConsumed === 'function') {
+              applyRemoteBonusConsumed(c.id);
+            } else if (c.t === 'bonus' && typeof window.applyRemoteBonusConsumed === 'function') {
               window.applyRemoteBonusConsumed(c.id);
             } else if (typeof window.applyRemoteObjectConsumed === 'function') {
               window.applyRemoteObjectConsumed(c.id, c.t);
@@ -1294,9 +1294,6 @@ export const NetworkManager = {
     }
   },
 
-  /**
-   * ★【核心】スナップショット反映 ＆ 自分スロット判定
-   */
   _applyRoomMembersSync(syncedSlots, seed, snapshot = null) {
     if (!Array.isArray(syncedSlots)) return;
     this.slots = syncedSlots;
@@ -1340,6 +1337,17 @@ export const NetworkManager = {
             const existing = floorItems.find(li => li.active && (li.itemId === si.itemId || (li.stageIdx === si.stageIdx && li.type === si.type)));
             if (!existing) {
               spawnItem(activeScene, si.stageIdx, si.type);
+            }
+          });
+        }
+
+        // ★【核心改修】同期スナップショット内に回収済みボーナスIDが含まれていれば即座に反映
+        if (snapshot && Array.isArray(snapshot.bonuses)) {
+          snapshot.bonuses.forEach(bId => {
+            if (typeof applyRemoteBonusConsumed === 'function') {
+              applyRemoteBonusConsumed(bId);
+            } else if (typeof window.applyRemoteBonusConsumed === 'function') {
+              window.applyRemoteBonusConsumed(bId);
             }
           });
         }
@@ -1395,9 +1403,6 @@ export const NetworkManager = {
     notifyRestartButtonVisibility();
   },
 
-  /**
-   * ★【核心・同期途絶防止】リモートスロットのバインド
-   */
   _bindRemoteSlot(slotIndex, playerName) {
     const targetChar = characters[slotIndex];
     if (!targetChar) return;
@@ -1498,9 +1503,6 @@ export const NetworkManager = {
     }
   },
 
-  /**
-   * ★【核心】リモート座標の反映（デコード済みオブジェクトを受け取り処理）
-   */
   _handleRemotePosition(packet) {
     if (packet.slot === this.mySlot) return;
 
@@ -1599,9 +1601,6 @@ export const NetworkManager = {
     }
   },
 
-  /**
-   * 純粋送信（AgentSDKインターフェース）
-   */
   _sendCustomMessage(msgObj) {
     if (!this.isSDKAvailable || !window.AgentSDK.room || typeof window.AgentSDK.room.sendMessage !== 'function') return;
     try {
@@ -1614,9 +1613,6 @@ export const NetworkManager = {
     }
   },
 
-  /**
-   * ホストが発行した新しいシード値と初期スナップショットを同封して送信
-   */
   broadcastRestartGame(newSeed, snapshot = null) {
     if (!this.isMultiplayerActive || !this.isHost) return;
     const finalSnapshot = snapshot || captureFullWorldSnapshot();
@@ -1657,9 +1653,6 @@ export const NetworkManager = {
     });
   },
 
-  /**
-   * ★【核心】ユーザー退出イベントのハンドリング
-   */
   _handleUserExited(data) {
     if (!data) return;
     const userId = String(data.user_id || data.userId || '');
@@ -1693,9 +1686,6 @@ export const NetworkManager = {
     notifyRestartButtonVisibility();
   },
 
-  /**
-   * ★【修正】ルーム退出処理
-   */
   async exitRoom() {
     this._stopHostWatchdog();
     if (this._syncIntervalId) {
@@ -1733,9 +1723,6 @@ if (typeof window !== 'undefined') {
   window.NetworkManager = NetworkManager;
 }
 
-/**
- * dom.js 内のボタンと NetworkManager を安全に接続するフック
- */
 let lastCreateActionTime = 0;
 
 export function hookLobbyNetworkEvents() {

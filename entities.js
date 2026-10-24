@@ -1,14 +1,14 @@
 // entities.js: 飛翔体・雷・ドレイン・マグネット・演出パーティクル・浮遊雲の毎フレーム更新モジュール
-// ★ Phase 3 最適化版（メモリ断片化防止 O(1) スワップPOP ＆ 画面外描画カリング完全連動）：
-//   1. 【activeMagnetBlocks の O(1) スワップPOP化（V8ヒープ断片化根絶）】
-//      吸着完了時の activeMagnetBlocks.splice(i, 1) による配列全要素の前詰めシフトコピー（O(N)）を
-//      末尾要素とのスワップ＆pop()（O(1) 削除）へ刷新。マグネット吸引中のGCスパイクを完全排除。
-//   2. 【画面外オブジェクトの GPU ドローコール完全カリング連動】
-//      前後40m/55mの画面外判定時、自転・浮遊計算をスキップするだけでなく mesh.visible = false を確実に連動。
-//      Three.js の Frustum Culling 判定および GPU へのドローコール自体を完全にバイパスし、省電力化。
-//   3. 【全走者完全同期演出の100%維持】
-//      攻撃クリスタルのドレインブロック生成、マグネット吸着放物線飛行、全走者背中バウンド（dockBounceTimer）、
-//      空間適正音響、衝撃波プール処理は完全維持。
+// ★ Phase 2 完全同期版（スキル着弾散乱ブロードキャスト保証 ＆ O(1)スワップPOP ＆ GPUカリング連動）：
+//   1. 【クリスタル着弾時 scatterBricks に forceBroadcast = true を明示伝達】
+//      ホストがゲストに命中させた際やゲストがホストに命中させた際にも、
+//      combat.js の shouldBroadcast 判定を確実に通過させ、散乱パケット（sc）を相手画面へブロードキャスト。
+//   2. 【サンダー着弾時 scatterBricks に forceBroadcast = true を明示伝達】
+//      落雷直撃時の散乱ブロックも全端末へ確実にパケット配信。
+//   3. 【activeMagnetBlocks の O(1) スワップPOP化（V8ヒープ断片化根絶）】
+//      吸着完了時の配列前詰めシフトコピーを末尾スワップ＆pop()へ刷新。
+//   4. 【画面外オブジェクトの GPU ドローコール完全カリング連動】
+//      前後40m/55mの視界外判定時に mesh.visible = false を連動させ、描画負荷を低減。
 
 import {
   sharedMats,
@@ -151,7 +151,9 @@ export function updateSceneEntities(scene, dt, timeSec, player, sound) {
         if (hitTarget.meshObj && hitTarget.meshObj.root) {
           hitTarget.meshObj.root.rotation.x = 0.55;
         }
-        scatterBricks(scene, hitTarget, 3);
+
+        // ★【核心改修】第4引数 forceBroadcast = true を明示的に渡し、散乱パケットを相手画面へ確実に同期
+        scatterBricks(scene, hitTarget, 3, true);
 
         // ★ 全端末共通ドレインブロック生成
         const drainCount = 4;
@@ -280,7 +282,9 @@ export function updateSceneEntities(scene, dt, timeSec, player, sound) {
         if (hitTarget.meshObj && hitTarget.meshObj.root) {
           hitTarget.meshObj.root.rotation.x = 0.45;
         }
-        scatterBricks(scene, hitTarget, 2);
+
+        // ★【核心改修】第4引数 forceBroadcast = true を明示的に渡し、散乱パケットを相手画面へ確実に同期
+        scatterBricks(scene, hitTarget, 2, true);
 
         // ★ 全端末共通ドレインブロック生成
         const drainCount = 4;

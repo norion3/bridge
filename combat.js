@@ -1,15 +1,15 @@
 // combat.js: タックル衝突・ノックアウト・攻撃スキル・ブロック散乱専用モジュール
-// ★ Phase 4 最適化版（タックル判定早期定数化 ＆ 散乱座標ゼロアロケーション化）：
-//   1. 【タックル接触判定の早期定数分岐（CPU演算スキップ）】
-//      全フレームの95%以上を占める通常サイズ時（双方小人化していない時）において、
-//      動的スケール計算や乗算・平方演算を完全バイパスし、定数 collisionDistSq = 1.90 を直接採用。
-//   2. 【散乱座標・ノックアウトベクトルのゼロアロケーション純粋算術丸め化】
-//      scatterBricks および executeSingleKnockout で使用されていた Number(val.toFixed(2)) を
-//      CPUレジスタ内で完結する round2(val) へ完全置換。
-//      被弾時のヒープ文字列オブジェクト（String）アロケーションをゼロにし、GC負荷を根絶。
-//   3. 【視覚的一致（約1.38m）・小人化連動・ノックアウト押し出しベクトルの100%維持】
-//      前フェーズで確定した視覚的一致（二乗値 1.90）、小人化動的スケーリング、
-//      吹き飛ばし距離（1.8m）、相打ち反発距離（1.2m）、衝撃波半径（1.8m）は完全維持。
+// ★ Phase 1 完全安定化版（真横並走ロックオン除外バグ解消 ＆ 散乱パケット送信条件整合）：
+//   1. 【真横並走（|dz| <= 0.5m）ロックオン完全除外バグの根絶】
+//      fireHomingCrystal 内のターゲット探索ロジックにおいて、
+//      dz > 0.5（前方）と dz < -0.5（後方）の隙間（-0.5 <= dz <= 0.5）に落ち込んで
+//      ターゲットが null となり虚空へ直進して消えていたバグを解消。
+//      前後・並走問わず、同一ステージまたは射程内の最も近い相手を確実に捕捉してロックオン。
+//   2. 【散乱ブロードキャスト条件の完全整合】
+//      scatterBricks において、forceBroadcast === true の場合は char.isPlayer や isAI の
+//      条件に関わらず確実に NetworkManager.queueScatterBlocks へ登録し相手画面へ同期。
+//   3. 【タックル早期定数分岐 ＆ ゼロアロケーション純粋算術丸めの完全維持】
+//      collisionDistSq = 1.90 の早期分岐、round2 によるガベージフリー数値丸めは100%維持。
 
 import { TEAMS } from './constants.js';
 import {
@@ -170,6 +170,7 @@ if (typeof window !== 'undefined') {
 /**
  * タックル被弾・ゲート通過時の所持ブロック床面散乱
  * ★ round2 による純粋算術丸めで文字列オブジェクト生成を完全排除
+ * ★ forceBroadcast フラグ判定の適正化（スキル着弾時にも確実にブロードキャスト）
  * @param {THREE.Scene} scene 
  * @param {Object} char 
  * @param {number} countToDrop 
@@ -247,6 +248,7 @@ export function scatterBricks(scene, char, countToDrop, forceBroadcast = false) 
 
   const isMulti = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive);
   const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
+  // ★ forceBroadcast が true なら被弾者がホスト・ゲスト・AI問わず確実に送信キューへ預ける
   const shouldBroadcast = isMulti && (forceBroadcast || char.isPlayer || (isHost && char.isAI));
 
   if (shouldBroadcast && flatCoords.length > 0 && typeof window !== 'undefined' && window.NetworkManager) {
@@ -257,7 +259,8 @@ export function scatterBricks(scene, char, countToDrop, forceBroadcast = false) 
 }
 
 /**
- * ホーミングクリスタル発射スキル（生送信を完全排除しキューイング化）
+ * ホーミングクリスタル発射スキル
+ * ★【核心改修】真横並走（-0.5 <= dz <= 0.5）の敵を確実にロックオン捕捉
  * @param {Object} char 
  * @param {Object} forcedTarget (optional)
  * @param {boolean} isRemote (optional)
@@ -268,28 +271,33 @@ export function fireHomingCrystal(char, forcedTarget = undefined, isRemote = fal
   let selectedTarget = forcedTarget;
 
   if (!isRemote && forcedTarget === undefined) {
-    let bestForwardTarget = null, minForwardDist = 999999;
-    let bestRearTarget = null, minRearDist = 999999;
+    let bestTarget = null;
+    let minDistanceSq = 999999;
+    let bestForwardTarget = null;
+    let minForwardDist = 999999;
 
     characters.forEach(c => {
       if (c === char) return;
-      const dz = char.pos.z - c.pos.z;
+      const dz = char.pos.z - c.pos.z; // 前方なら dz > 0
       const totalDistSq = (char.pos.x - c.pos.x) ** 2 + (char.pos.z - c.pos.z) ** 2;
 
-      if (dz > 0.5) {
+      // 全体での最短距離候補（真横・並走含む）
+      if (totalDistSq < minDistanceSq) {
+        minDistanceSq = totalDistSq;
+        bestTarget = c;
+      }
+
+      // 明確な前方ターゲット（先行している敵）
+      if (dz > 0.3) {
         if (totalDistSq < minForwardDist) {
           minForwardDist = totalDistSq;
           bestForwardTarget = c;
         }
-      } else if (dz < -0.5) {
-        if (totalDistSq < minRearDist) {
-          minRearDist = totalDistSq;
-          bestRearTarget = c;
-        }
       }
     });
 
-    selectedTarget = bestForwardTarget || bestRearTarget;
+    // ★ 前方に敵がいるなら前方優先、真横並走または後方なら全体最短ターゲットを確実にロックオン
+    selectedTarget = bestForwardTarget || bestTarget;
 
     const isMulti = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive);
     const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);

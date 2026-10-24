@@ -1,12 +1,10 @@
 // world.js: コース伸長・浮島・橋・スライド・ジップライン・エレベーター・スカイダイブ・ドロップタワー施設・二股分岐＆合流・目鼻なし愛嬌お邪魔キャラ
-// ★ Phase 2 完全同期版（ウォータースライダー白ブロック＆修飾ゲートの決定論的同期 ＆ リモート消去ハンドラ実装）：
-//   1. 【修飾ゲート生成の完全決定論化（player.stackCount依存の完全撤廃）】
-//      各端末ローカルの player.stackCount に応じた分岐を撤廃し、stageIdx と currentWorldSeed の
-//      固定数学ハッシュ（gateHash）から一意決定。ホストとゲストでゲートの数値・演算子が100%完全一致。
-//   2. 【リモートボーナスブロック消去ハンドラ（applyRemoteBonusConsumed）の完全実装】
-//      直線スライダー、S字カーブ、ジップライン、スカイダイブの全ボーナスブロックを
-//      bonusId で一意特定して即座に非表示・消去するハンドラを実装し、グローバル登録。
-//      ホストや他走者がスライダー上で回収した白ブロックが相手端末でもリアルタイムに確実に消滅。
+// ★ Phase 3 完全統合版（ボーナス消去ハンドラ一元化 ＆ 保留キュー連動 ＆ 決定論的ゲート同期）：
+//   1. 【applyRemoteBonusConsumed の一元化 ＆ 保留キュー（pendingConsumedBonusIds）保護】
+//      world.js と gimmicks.js に存在した同名定義の競合を根絶。
+//      未バインドステージのブロックIDを確実に保留キューへ保持し、extendCourse 時の即時消化（flushPendingBonusConsumes）と完全連動。
+//   2. 【修飾ゲート生成の完全決定論化（player.stackCount依存の完全撤廃）】
+//      stageIdx と currentWorldSeed の固定数学ハッシュ（gateHash）から一意決定。
 //   3. 【お邪魔モブ出現判定の数学的ハッシュ化】
 //      seededRandom() の消費ズレを防止するため、モブ出現および初期方向も stageIdx 固有ハッシュで決定。
 //   4. 【幾何構造・通常ステージ・お掃除処理の完全維持】
@@ -55,6 +53,10 @@ import {
   spawnSingleBlock,
   manageBlockSpawns
 } from './blocks.js';
+import {
+  pendingConsumedBonusIds,
+  flushPendingBonusConsumes
+} from './gimmicks.js';
 
 // 後方互換再エクスポート
 export {
@@ -155,61 +157,38 @@ function getNextAscentGimmick() {
 }
 
 /**
- * リモート走者が回収したアトラクションボーナスブロック（白ブロック）の強制消去ハンドラ
+ * ★【核心改修】リモート走者が回収したアトラクションボーナスブロック（白ブロック）の消去ハンドラ
+ * gimmicks.js の pendingConsumedBonusIds と完全統合し、未生成ステージの回収IDも失われずに保留
  */
 export function applyRemoteBonusConsumed(bonusId) {
   if (!bonusId) return;
 
-  // 1. 直線スライダー
-  for (let i = 0; i < slideBonusBlocks.length; i++) {
-    const b = slideBonusBlocks[i];
-    if (b.bonusId === bonusId && !b.collected) {
-      b.collected = true;
-      if (b.mesh) {
-        b.mesh.visible = false;
-        if (b.mesh.parent) b.mesh.parent.remove(b.mesh);
+  const arrays = [skydiveBonusBlocks, ziplineBonusBlocks, curvedSlideBonusBlocks, slideBonusBlocks];
+  let found = false;
+
+  for (let a = 0; a < arrays.length; a++) {
+    const arr = arrays[a];
+    if (!arr) continue;
+    for (let i = 0; i < arr.length; i++) {
+      const b = arr[i];
+      if (b.bonusId === bonusId && !b.collected) {
+        b.collected = true;
+        if (b.mesh) {
+          b.mesh.visible = false;
+          if (b.mesh.parent) b.mesh.parent.remove(b.mesh);
+        }
+        found = true;
+        break;
       }
-      return;
     }
+    if (found) break;
   }
 
-  // 2. S字カーブスライダー
-  for (let i = 0; i < curvedSlideBonusBlocks.length; i++) {
-    const b = curvedSlideBonusBlocks[i];
-    if (b.bonusId === bonusId && !b.collected) {
-      b.collected = true;
-      if (b.mesh) {
-        b.mesh.visible = false;
-        if (b.mesh.parent) b.mesh.parent.remove(b.mesh);
-      }
-      return;
-    }
-  }
-
-  // 3. ジップライン
-  for (let i = 0; i < ziplineBonusBlocks.length; i++) {
-    const b = ziplineBonusBlocks[i];
-    if (b.bonusId === bonusId && !b.collected) {
-      b.collected = true;
-      if (b.mesh) {
-        b.mesh.visible = false;
-        if (b.mesh.parent) b.mesh.parent.remove(b.mesh);
-      }
-      return;
-    }
-  }
-
-  // 4. スカイダイブ
-  for (let i = 0; i < skydiveBonusBlocks.length; i++) {
-    const b = skydiveBonusBlocks[i];
-    if (b.bonusId === bonusId && !b.collected) {
-      b.collected = true;
-      if (b.mesh) {
-        b.mesh.visible = false;
-        if (b.mesh.parent) b.mesh.parent.remove(b.mesh);
-      }
-      return;
-    }
+  // 自端末の配列にまだ存在していなかった場合（未生成の奥のステージ）は保留キューへ保管
+  if (!found) {
+    pendingConsumedBonusIds.add(bonusId);
+  } else {
+    pendingConsumedBonusIds.delete(bonusId);
   }
 }
 
@@ -284,8 +263,7 @@ export function spawnItem(scene, stageIdx, forcedType = null) {
 }
 
 /**
- * ★【核心改修】修飾ゲート生成の完全決定論化
- * player.stackCount によるローカル状態依存および seededRandom の消費ズレを完全撤廃
+ * 修飾ゲート生成の完全決定論化
  */
 export function spawnGatesOnIsland(scene, stageIdx, islandZ, islandY, islandX = 0.0) {
   if (stageIdx % 2 !== 1) return;
