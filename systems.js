@@ -1,13 +1,14 @@
 // systems.js: 物理移動判定・スカイウォーク歩行開放・ハッチ進入同期・リュック収納アニメーション連動・シームレス風音連携・スカイダイブ＆スライダーボーナス回収・合流島安全着地完全整合・お邪魔キャラ衝突判定・下層島誤ワープ完全防止・階段/床ブロック取得リアルタイム同期
-// ★ 確定仕様（ゼロバースト・決定論的圧縮アーキテクチャ）：
-//   1. 【残存生送信フォールバックの完全撤廃】
-//      階段設置、ブロック取得、アイテム消費、モブ吹き飛ばしにおいて残存していた
-//      ループ内の _sendCustomMessage 生送信フォールバックを完全撤廃。
+// ★ 全走者マグネット吸着完全同期版（Phase 2）：
+//   1. 【リモート走者のマグネット吸着アニメーション完全再現】
+//      applyRemoteBlockPicked 受信時、該当ステージにマグネット発動中の走者がいる場合、
+//      ブロックを即時非表示にせず activeMagnetBlocks へ登録。
+//      ホストが吸い寄せたブロックもゲスト画面で美しい放物線を描いてホストの背中へ吸着。
+//   2. 【残存生送信フォールバックの完全撤廃】
 //      NetworkManager の一時バッファ（queuePlankBuild, queueBlockPick, queueConsumeObject, queueBlowMob）へ完全集約。
-//   2. 【localBridges 配列生成のゼロアロケーション化】
-//      毎フレーム new Array されていた localBridges を静的再利用バッファへ切り替え、
-//      60fps/120fps 移動時のGCスパイク（画面の一瞬のカクつき）を根絶。
-//   3. 【CPU負荷 O(1)化 ＆ 既存の物理・アトラクション同期の完全維持】
+//   3. 【localBridges 配列生成のゼロアロケーション化】
+//      静的再利用バッファ reusableLocalBridges により 60fps/120fps 移動時のGCスパイクを根絶。
+//   4. 【CPU負荷 O(1)化 ＆ 既存の物理・アトラクション同期の完全維持】
 //      マグネット・足元ブロック回収時の blk.poolIdx による O(1) 参照、
 //      階段設置・ブロック取得の100ms集約、衝突判定は100%維持。
 
@@ -132,6 +133,7 @@ export function applyRemotePlankBuilt(stageIdx, laneIdx, plankIdx, teamId) {
 
 /**
  * リモートプレイヤーまたはホスト側AIが床ブロックを拾った際の受信ハンドラ
+ * ★ マグネット吸着完全同期：発動中の走者がいれば即時蒸発させず activeMagnetBlocks へ投入
  */
 export function applyRemoteBlockPicked(stageIdx, poolIdx, x, z, blockId = null) {
   const stageBlocks = getFloorBlocksForStage(stageIdx);
@@ -160,12 +162,51 @@ export function applyRemoteBlockPicked(stageIdx, poolIdx, x, z, blockId = null) 
   }
 
   if (targetBlock) {
-    targetBlock.active = false;
-    targetBlock.mesh.visible = false;
-    targetBlock.attracting = false;
-    const sIdx = stageBlocks.indexOf(targetBlock);
-    if (sIdx !== -1) {
-      stageBlocks.splice(sIdx, 1);
+    // 該当ステージ内でマグネットを発動しているキャラクターを探索
+    let magnetChar = null;
+    let minCharDistSq = 9.5 * 9.5; // マグネット有効半径（7m）+ 通信マージン
+
+    for (let c = 0; c < characters.length; c++) {
+      const ch = characters[c];
+      if (ch.currentStage === stageIdx && ch.magnetActive && ch.pos) {
+        const cdx = ch.pos.x - targetBlock.pos.x;
+        const cdz = ch.pos.z - targetBlock.pos.z;
+        const cDistSq = cdx * cdx + cdz * cdz;
+        if (cDistSq < minCharDistSq) {
+          minCharDistSq = cDistSq;
+          magnetChar = ch;
+        }
+      }
+    }
+
+    if (magnetChar && !targetBlock.attracting) {
+      // ★ 相手端末でもマグネット吸引キューに登録し、背中への滑らかな放物線飛行を完全再現
+      targetBlock.attracting = true;
+      targetBlock.active = false;
+      const sIdx = stageBlocks.indexOf(targetBlock);
+      if (sIdx !== -1) {
+        stageBlocks.splice(sIdx, 1);
+      }
+
+      const startVec = new THREE.Vector3(targetBlock.mesh.position.x, targetBlock.mesh.position.y, targetBlock.mesh.position.z);
+      activeMagnetBlocks.push({
+        poolItem: targetBlock,
+        mesh: targetBlock.mesh,
+        targetChar: magnetChar,
+        team: targetBlock.team,
+        startPos: startVec,
+        progress: 0,
+        duration: 0.55
+      });
+    } else {
+      // 通常歩行回収、またはマグネット範囲外の場合は即時非表示化
+      targetBlock.active = false;
+      targetBlock.mesh.visible = false;
+      targetBlock.attracting = false;
+      const sIdx = stageBlocks.indexOf(targetBlock);
+      if (sIdx !== -1) {
+        stageBlocks.splice(sIdx, 1);
+      }
     }
   }
 }

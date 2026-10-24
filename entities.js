@@ -1,11 +1,14 @@
 // entities.js: 飛翔体・雷・ドレイン・マグネット・演出パーティクル・浮遊雲の毎フレーム更新モジュール
-// ★ Phase C 実装版（画面外アイテム・ボーナスブロックの不要アニメーション計算間引き）：
-//   1. 【視界外アイテム・ボーナスのアニメーション更新スキップ】
-//      プレイヤーから前後40m以上離れたアイテム（floorItems）やボーナスブロック（slide/zipline/skydive）の
-//      毎フレーム三角関数（Math.sin）や自転回転計算、無駄な行列更新を完全バイパス。
-//   2. 【浮遊雲の計算カリング適正化】
-//      遠方の雲（前後55m超）の浮遊アニメーション更新を間引き、GPU/CPUの無駄な負荷を抑制。
-//   3. 既存のホーミング弾・サンダー・ドレイン・マグネット・衝撃波などの各種演出・オブジェクトプール管理は100%維持。
+// ★ 全走者完全同期版（ドレイン強奪飛翔 ＆ マグネット吸着アニメーション完全共通化）：
+//   1. 【クリスタル着弾時ドレインブロック全走者同期生成】
+//      発射者がホスト（リモート）であってもゲスト端末で固定4個のドレインブロックを確実に生成し、
+//      弧を描いて発射者の背中へ滑らかに吸着するアニメーションを完全同期。
+//   2. 【リモート走者への背中吸着・バウンド連動】
+//      ドレインおよびマグネットブロック到着時、自機だけでなくリモート走者の背中スタックバウンド（dockBounceTimer）
+//      および外観リフレッシュ（refreshRemoteStackVisuals）、着弾衝撃波エフェクトを等しく発火。
+//   3. 【空間適正音響と視界内カリングの完全維持】
+//      近隣走者のドレイン格納音やクリスタル着弾音を自然に再生しつつ、
+//      前後40m/55mの画面外カリングによる高フレームレート（60/120fps）維持を100%両立。
 
 import {
   sharedMats,
@@ -14,6 +17,7 @@ import {
   lightningPillarGeo
 } from './materials.js';
 import {
+  characters,
   addBrickToCharacter
 } from './character.js';
 import {
@@ -51,7 +55,7 @@ import {
 export function updateSceneEntities(scene, dt, timeSec, player, sound) {
   const playerZ = player ? player.pos.z : 0;
 
-  // 1. 床置きアイテムの自転・浮遊アニメーション（★ 前後40m以内の視界内のみ計算）
+  // 1. 床置きアイテムの自転・浮遊アニメーション（前後40m以内の視界内のみ計算）
   for (let i = 0; i < floorItems.length; i++) {
     const item = floorItems[i];
     if (item.active && item.group) {
@@ -122,34 +126,46 @@ export function updateSceneEntities(scene, dt, timeSec, player, sound) {
     }
 
     if (p.progress >= 1.0) {
-      if (sound) sound.playAttackHit();
+      // 命中音の再生（自機が関与しているか、近くで発生した場合）
+      if (sound) {
+        const isNearLocal = player && Math.hypot(player.pos.x - p.targetPos.x, player.pos.z - p.targetPos.z) < 32.0;
+        if ((p.shooter && p.shooter.isPlayer) || (p.target && p.target.isPlayer) || isNearLocal) {
+          sound.playAttackHit();
+        }
+      }
 
       triggerLandingShockwave(p.targetPos.x, p.targetPos.y - 0.8, p.targetPos.z, 4.5, 0xf43f5e);
 
       if (p.reticle) p.reticle.visible = false;
 
-      if (p.target) {
-        p.target.stunTimer = 1.4;
-        p.target.meshObj.root.rotation.x = 0.55;
-        scatterBricks(scene, p.target, 3);
+      const hitTarget = p.target;
+      const shooterChar = p.shooter || characters[0];
 
+      if (hitTarget && shooterChar) {
+        hitTarget.stunTimer = 1.4;
+        if (hitTarget.meshObj && hitTarget.meshObj.root) {
+          hitTarget.meshObj.root.rotation.x = 0.55;
+        }
+        scatterBricks(scene, hitTarget, 3);
+
+        // ★ 全端末共通ドレインブロック生成（isPlayerガードを撤廃）
         const drainCount = 4;
         let spawned = 0;
         for (let d = 0; d < drainBlockPool.length && spawned < drainCount; d++) {
           const db = drainBlockPool[d];
           if (!db.active) {
             db.active = true;
-            db.targetChar = p.shooter;
+            db.targetChar = shooterChar;
             db.index = spawned;
             db.delay = spawned * 0.08;
             db.progress = 0;
-            db.duration = 0.80;
+            db.duration = 0.85;
 
-            if (p.shooter && p.shooter.team && p.shooter.team.id === 'blue') {
+            if (shooterChar.team && shooterChar.team.id === 'blue') {
               db.mesh.material = sharedMats.blockBlue;
-            } else if (p.shooter && p.shooter.team && p.shooter.team.id === 'red') {
+            } else if (shooterChar.team && shooterChar.team.id === 'red') {
               db.mesh.material = sharedMats.blockRed;
-            } else if (p.shooter && p.shooter.team && p.shooter.team.id === 'yellow') {
+            } else if (shooterChar.team && shooterChar.team.id === 'yellow') {
               db.mesh.material = sharedMats.blockYellow;
             } else {
               db.mesh.material = sharedMats.blockNeutral;
@@ -160,7 +176,7 @@ export function updateSceneEntities(scene, dt, timeSec, player, sound) {
               1.2 + Math.random() * 0.8,
               (Math.random() - 0.5) * 1.2
             );
-            db.startPos.copy(p.target.pos).add(sOffset);
+            db.startPos.copy(hitTarget.pos).add(sOffset);
             db.mesh.position.copy(db.startPos);
             db.mesh.scale.set(1.3, 1.3, 1.3);
             db.mesh.visible = true;
@@ -229,7 +245,12 @@ export function updateSceneEntities(scene, dt, timeSec, player, sound) {
     }
 
     if (tp.progress >= 1.0) {
-      if (sound) sound.playThunderStrike();
+      if (sound) {
+        const isNearLocal = player && Math.hypot(player.pos.x - tp.targetPos.x, player.pos.z - tp.targetPos.z) < 32.0;
+        if ((tp.shooter && tp.shooter.isPlayer) || (tp.target && tp.target.isPlayer) || isNearLocal) {
+          sound.playThunderStrike();
+        }
+      }
 
       triggerLandingShockwave(tp.targetPos.x, tp.targetPos.y - 0.8, tp.targetPos.z, 3.2, 0xfacc15);
 
@@ -245,29 +266,35 @@ export function updateSceneEntities(scene, dt, timeSec, player, sound) {
         bolt.mesh.visible = true;
       }
 
-      if (tp.target) {
-        tp.target.shrinkTimer = 5.5;
-        tp.target.stunTimer = 1.0;
-        tp.target.meshObj.root.rotation.x = 0.45;
-        scatterBricks(scene, tp.target, 2);
+      const hitTarget = tp.target;
+      const shooterChar = tp.shooter || characters[0];
 
+      if (hitTarget && shooterChar) {
+        hitTarget.shrinkTimer = 5.5;
+        hitTarget.stunTimer = 1.0;
+        if (hitTarget.meshObj && hitTarget.meshObj.root) {
+          hitTarget.meshObj.root.rotation.x = 0.45;
+        }
+        scatterBricks(scene, hitTarget, 2);
+
+        // ★ 全端末共通ドレインブロック生成
         const drainCount = 4;
         let spawned = 0;
         for (let d = 0; d < drainBlockPool.length && spawned < drainCount; d++) {
           const db = drainBlockPool[d];
           if (!db.active) {
             db.active = true;
-            db.targetChar = tp.shooter;
+            db.targetChar = shooterChar;
             db.index = spawned;
             db.delay = spawned * 0.08;
             db.progress = 0;
-            db.duration = 0.80;
+            db.duration = 0.85;
 
-            if (tp.shooter && tp.shooter.team && tp.shooter.team.id === 'blue') {
+            if (shooterChar.team && shooterChar.team.id === 'blue') {
               db.mesh.material = sharedMats.blockBlue;
-            } else if (tp.shooter && tp.shooter.team && tp.shooter.team.id === 'red') {
+            } else if (shooterChar.team && shooterChar.team.id === 'red') {
               db.mesh.material = sharedMats.blockRed;
-            } else if (tp.shooter && tp.shooter.team && tp.shooter.team.id === 'yellow') {
+            } else if (shooterChar.team && shooterChar.team.id === 'yellow') {
               db.mesh.material = sharedMats.blockYellow;
             } else {
               db.mesh.material = sharedMats.blockNeutral;
@@ -278,7 +305,7 @@ export function updateSceneEntities(scene, dt, timeSec, player, sound) {
               1.2 + Math.random() * 0.8,
               (Math.random() - 0.5) * 1.2
             );
-            db.startPos.copy(tp.target.pos).add(sOffset);
+            db.startPos.copy(hitTarget.pos).add(sOffset);
             db.mesh.position.copy(db.startPos);
             db.mesh.scale.set(1.3, 1.3, 1.3);
             db.mesh.visible = true;
@@ -297,7 +324,7 @@ export function updateSceneEntities(scene, dt, timeSec, player, sound) {
     }
   }
 
-  // 4. 被弾ドレインブロックの吸引飛行更新
+  // 4. 被弾ドレインブロックの吸引飛行更新（全走者の背中へ追従）
   for (let i = 0; i < drainBlockPool.length; i++) {
     const d = drainBlockPool[i];
     if (!d.active) continue;
@@ -309,9 +336,19 @@ export function updateSceneEntities(scene, dt, timeSec, player, sound) {
     d.progress += dt / d.duration;
     const prog = Math.min(1.0, d.progress);
 
-    _tempVec3A.copy(d.targetChar.pos);
-    _tempVec3A.y += 1.4;
-    _tempVec3A.z += 0.2;
+    if (d.targetChar && d.targetChar.pos) {
+      _tempVec3A.copy(d.targetChar.pos);
+      const rotY = (d.targetChar.meshObj && d.targetChar.meshObj.root)
+        ? d.targetChar.meshObj.root.rotation.y
+        : (d.targetChar.rotation || 0);
+      const backDist = 0.35;
+      _tempVec3A.x -= Math.sin(rotY) * backDist;
+      _tempVec3A.z -= Math.cos(rotY) * backDist;
+      const stackH = Math.min((d.targetChar.stackCount || 0) * 0.18, 2.5);
+      _tempVec3A.y += 1.1 + stackH;
+    } else {
+      _tempVec3A.set(0, 0, 0);
+    }
 
     const easeT = prog * prog * (3 - 2 * prog);
     _tempVec3B.lerpVectors(d.startPos, _tempVec3A, easeT);
@@ -324,10 +361,31 @@ export function updateSceneEntities(scene, dt, timeSec, player, sound) {
     d.mesh.rotation.x += dt * 10;
 
     if (d.progress >= 1.0) {
-      addBrickToCharacter(d.targetChar, d.targetChar.team, 1);
-      if (d.targetChar.isPlayer) {
-        if (sound) sound.playDrainCollect(d.index || 0);
+      if (d.targetChar) {
+        addBrickToCharacter(d.targetChar, d.targetChar.team, 1);
+
+        // 自機・リモート問わず背中バウンドタイマーとスケールを起動
+        d.targetChar.dockBounceTimer = 0.15;
+        if (d.targetChar.meshObj && d.targetChar.meshObj.stackGroup) {
+          d.targetChar.meshObj.stackGroup.scale.set(1.15, 1.20, 1.15);
+        }
+
+        // リモートキャラなら背中スタック外観を再同期
+        if (typeof window !== 'undefined' && typeof window.refreshRemoteStackVisuals === 'function') {
+          window.refreshRemoteStackVisuals(d.targetChar);
+        }
+
+        // 背中ドッキング衝撃波
         triggerLandingShockwave(_tempVec3A.x, _tempVec3A.y, _tempVec3A.z, 1.0, 0x0284c7);
+
+        // 音響フィードバック
+        if (sound) {
+          if (d.targetChar.isPlayer) {
+            sound.playDrainCollect(d.index || 0);
+          } else if (player && Math.hypot(player.pos.x - _tempVec3A.x, player.pos.z - _tempVec3A.z) < 25.0) {
+            sound.playDrainCollect(d.index || 0);
+          }
+        }
       }
       d.active = false;
       d.mesh.visible = false;
@@ -341,10 +399,19 @@ export function updateSceneEntities(scene, dt, timeSec, player, sound) {
     mb.progress += dt / flightDuration;
     const prog = Math.min(1.0, mb.progress);
 
-    _tempVec3A.copy(mb.targetChar.pos);
-    const stackH = Math.min(mb.targetChar.stackCount * 0.22, 3.2);
-    _tempVec3A.y += 0.85 + stackH;
-    _tempVec3A.z -= 0.35;
+    if (mb.targetChar && mb.targetChar.pos) {
+      _tempVec3A.copy(mb.targetChar.pos);
+      const rotY = (mb.targetChar.meshObj && mb.targetChar.meshObj.root)
+        ? mb.targetChar.meshObj.root.rotation.y
+        : (mb.targetChar.rotation || 0);
+      const backDist = 0.35;
+      _tempVec3A.x -= Math.sin(rotY) * backDist;
+      _tempVec3A.z -= Math.cos(rotY) * backDist;
+      const stackH = Math.min((mb.targetChar.stackCount || 0) * 0.22, 3.2);
+      _tempVec3A.y += 0.85 + stackH;
+    } else {
+      _tempVec3A.set(0, 0, 0);
+    }
 
     const easeT = prog * prog * (3 - 2 * prog);
     _tempVec3B.lerpVectors(mb.startPos, _tempVec3A, easeT);
@@ -357,13 +424,26 @@ export function updateSceneEntities(scene, dt, timeSec, player, sound) {
     mb.mesh.rotation.x += dt * 9;
 
     if (mb.progress >= 1.0) {
-      addBrickToCharacter(mb.targetChar, mb.targetChar.team, 1);
-      if (mb.targetChar.isPlayer) {
-        if (sound) sound.playMagnetDock(incMagnetDockStep());
-        triggerLandingShockwave(_tempVec3A.x, _tempVec3A.y, _tempVec3A.z, 0.95, 0xa855f7);
+      if (mb.targetChar) {
+        addBrickToCharacter(mb.targetChar, mb.targetChar.team, 1);
+        if (mb.targetChar.isPlayer) {
+          if (sound) sound.playMagnetDock(incMagnetDockStep());
+          triggerLandingShockwave(_tempVec3A.x, _tempVec3A.y, _tempVec3A.z, 0.95, 0xa855f7);
+        } else {
+          // リモート走者の吸着時も衝撃波と外観リフレッシュを発火
+          triggerLandingShockwave(_tempVec3A.x, _tempVec3A.y, _tempVec3A.z, 0.95, 0xa855f7);
+          if (typeof window !== 'undefined' && typeof window.refreshRemoteStackVisuals === 'function') {
+            window.refreshRemoteStackVisuals(mb.targetChar);
+          }
+          if (sound && player && Math.hypot(player.pos.x - _tempVec3A.x, player.pos.z - _tempVec3A.z) < 22.0) {
+            sound.playMagnetDock(incMagnetDockStep());
+          }
+        }
+        mb.targetChar.dockBounceTimer = 0.085;
+        if (mb.targetChar.meshObj && mb.targetChar.meshObj.stackGroup) {
+          mb.targetChar.meshObj.stackGroup.scale.set(1.10, 1.15, 1.10);
+        }
       }
-      mb.targetChar.dockBounceTimer = 0.085;
-      mb.targetChar.meshObj.stackGroup.scale.set(1.10, 1.15, 1.10);
 
       if (mb.poolItem) {
         mb.poolItem.active = false;
@@ -407,7 +487,7 @@ export function updateSceneEntities(scene, dt, timeSec, player, sound) {
     }
   }
 
-  // 8. アトラクションボーナスブロックの自転・浮遊（★ 前後40m以内の視界内のみ計算）
+  // 8. アトラクションボーナスブロックの自転・浮遊（前後40m以内の視界内のみ計算）
   for (let i = 0; i < curvedSlideBonusBlocks.length; i++) {
     const blk = curvedSlideBonusBlocks[i];
     if (!blk.collected && blk.mesh) {
@@ -442,7 +522,7 @@ export function updateSceneEntities(scene, dt, timeSec, player, sound) {
     }
   }
 
-  // 9. 浮遊雲のふわふわ揺れ（★ 前後55m以内の視界内のみ計算）
+  // 9. 浮遊雲のふわふわ揺れ（前後55m以内の視界内のみ計算）
   for (let i = 0; i < cloudObjects.length; i++) {
     const c = cloudObjects[i];
     if (Math.abs(c.mesh.position.z - playerZ) > 55) continue;

@@ -1,18 +1,14 @@
 // main.js: ゲーム全体の起動指揮・Three.js初期化・メインループ・入力・HUD制御・DM招待リンク自動入室
-// ★ 確定仕様（DM招待Auto-Join ＆ GRAVITY公式スコア送信 ＆ スロット不変型ホスト昇格完全対応版）：
-//   1. 【DM招待リンク起動時の完全直列自動入室（Auto-Join Pipeline）】
-//      起動時に AgentSDK.room.getRoomId() を検知。招待 room_id が存在する場合、
-//      ロビー画面（「1人で遊ぶ」「部屋作成」等）を完全スキップし、自動で joinRoom() をキックして
-//      対象の3D対戦空間へ直接スポーン・合流。満員や解散時は安全にロビーへフォールバック。
-//   2. 【GRAVITY公式ランキング（スコア送信）完全準拠】
-//      window.parent.postMessage({ type: 'gameOver', score: placedPlankCount }, '*') による
-//      公式仕様に100%準拠したスコア送信ハンドラ submitGravityScore() を維持。
-//   3. 【ホスト昇格動的検知 ＆ リスタートボタン表示権限の自動追従】
-//      animate ループ内で isHost の動的変化を監視し、昇格時に左下リセットボタンを確実に表示。
-//   4. 【AI自律思考復帰の完全保証（硬直・フリーズ根絶フェイルセーフ）】
-//      ホスト端末時、人間不搭乗のAIスロットの残存補間目標やリモートフラグを自動パージし、自律走行を100%継続。
-//   5. 【スロット不変型リスタート時のカメラ初期位置最適化】
-//      リスタート時、自キャラの現在座標に合わせてカメラ初期位置を整列。
+// ★ 確定仕様（全走者演出完全同期 ＆ トラップドアハッチ開放連動 ＆ 背中スタックバウンド補正版）：
+//   1. 【リモート走者トラップドア搭乗時のハッチ開放完全連動】
+//      相手走者がドロップタワーに進入した際、相手画面だけでなく自画面のスカイウォークガラスハッチも
+//      自動で「ウィーン」と開き、閉じた床を突き抜けて落ちる視覚不整合を100%根絶。
+//   2. 【リモート走者のブロック取得・背中スタックバウンド同期】
+//      相手がブロックを取得した際、スタック数の増加を検知して dockBounceTimer を起動。
+//      滑らかなサイン波スケール補間により、相手走者の背中リュックも小気味よく「ポンッ」と跳ねる質感を再現。
+//   3. 【トランポリン（ジャンプ台）のネット沈み込み連動】
+//      リモート走者の JUMP 突入フレームで該当レーンの netMesh 沈み込みを適用。
+//   4. 【既存のDM招待Auto-Join・ホスト昇格・公式スコア送信の完全維持】
 
 import { mountAllUI, UIController, EntryShield } from './dom.js';
 
@@ -37,6 +33,7 @@ import {
   manageBlockSpawns,
   extendCourse,
   seaMesh,
+  bridgesByStage,
   floorBlocksByStage,
   floorItems,
   spawnItem
@@ -659,6 +656,25 @@ export function animate(currentTime) {
       if (typeof window !== 'undefined') {
         window.localPlayerInstance = player;
       }
+
+      // 自機の背中スタックバウンドの平滑減算アニメーション
+      if (player.dockBounceTimer > 0) {
+        player.dockBounceTimer -= dt;
+        if (player.dockBounceTimer <= 0) {
+          player.dockBounceTimer = 0;
+          if (player.meshObj && player.meshObj.stackGroup) {
+            player.meshObj.stackGroup.scale.set(1.0, 1.0, 1.0);
+          }
+        } else {
+          const bp = player.dockBounceTimer / 0.15;
+          const sy = 1.0 + Math.sin(bp * Math.PI) * 0.22;
+          const sxz = 1.0 + Math.sin(bp * Math.PI) * 0.12;
+          if (player.meshObj && player.meshObj.stackGroup) {
+            player.meshObj.stackGroup.scale.set(sxz, sy, sxz);
+          }
+        }
+      }
+
       updateSingleCharacter(scene, player, moveDirX, moveDirZ, dt, spawnPuffCloud, spawnSpeedStepRing);
       updateNameplatePosition(player);
     }
@@ -757,6 +773,43 @@ export function animate(currentTime) {
         const remState = c.remoteActionState || 'NORMAL';
         applyRemoteGimmickVisuals(c, remState, timeSec);
 
+        // ★【演出同期①】リモート走者のトラップドア（ドロップタワー）進入時、該当ハッチを開放
+        if (remState === 'TRAPDOOR') {
+          const stageBridges = bridgesByStage.get(c.currentStage);
+          if (stageBridges) {
+            const trapB = stageBridges.find(b => b.isTrapdoor);
+            if (trapB && !trapB.isHatchOpen) {
+              trapB.isHatchOpen = true;
+            }
+          }
+        }
+
+        // ★【演出同期②】リモート走者のジャンプ台（トランポリン）進入時、ネットの沈み込みを同期
+        if (remState === 'JUMP' && c.prevRemoteActionState !== 'JUMP') {
+          const stageBridges = bridgesByStage.get(c.currentStage);
+          if (stageBridges) {
+            for (let bi = 0; bi < stageBridges.length; bi++) {
+              const b = stageBridges[bi];
+              if (b && Array.isArray(b.planks)) {
+                for (let pi = 0; pi < b.planks.length; pi++) {
+                  const plank = b.planks[pi];
+                  if (plank && plank.isJumpPad && plank.netMesh) {
+                    plank.netMesh.scale.set(1.15, 0.2, 1.15);
+                    plank.netMesh.position.y = 0.35;
+                    setTimeout(() => {
+                      if (plank.netMesh) {
+                        plank.netMesh.scale.set(1.0, 1.0, 1.0);
+                        plank.netMesh.position.y = 0.50;
+                      }
+                    }, 180);
+                  }
+                }
+              }
+            }
+          }
+        }
+        c.prevRemoteActionState = remState;
+
         const stepDist = Math.hypot(c.pos.x - prevX, c.pos.z - prevZ);
         const hasNetVelocity = c.netVelocity && (Math.abs(c.netVelocity.x) > 0.08 || Math.abs(c.netVelocity.z) > 0.08);
 
@@ -848,12 +901,32 @@ export function animate(currentTime) {
         c.meshObj.rightArm.rotation.x = 0;
       }
 
+      // ★【演出同期③】リモート走者のスタック数増加を検知して背中バウンド（ポンッと跳ねる）を起動
+      if (c.prevStackCount === undefined) {
+        c.prevStackCount = c.stackCount || 0;
+      } else if ((c.stackCount || 0) > c.prevStackCount) {
+        c.dockBounceTimer = 0.15;
+      }
+      c.prevStackCount = c.stackCount || 0;
+
+      // リモート走者の背中スタックバウンドの滑らかなスケールアニメーション
       if (c.dockBounceTimer > 0) {
         c.dockBounceTimer -= dt;
         if (c.dockBounceTimer <= 0) {
-          c.meshObj.stackGroup.scale.set(1.0, 1.0, 1.0);
+          c.dockBounceTimer = 0;
+          if (c.meshObj && c.meshObj.stackGroup) {
+            c.meshObj.stackGroup.scale.set(1.0, 1.0, 1.0);
+          }
+        } else {
+          const bp = c.dockBounceTimer / 0.15;
+          const sy = 1.0 + Math.sin(bp * Math.PI) * 0.22;
+          const sxz = 1.0 + Math.sin(bp * Math.PI) * 0.12;
+          if (c.meshObj && c.meshObj.stackGroup) {
+            c.meshObj.stackGroup.scale.set(sxz, sy, sxz);
+          }
         }
       }
+
       updateNameplatePosition(c);
     }
 
