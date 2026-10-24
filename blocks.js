@@ -1,11 +1,11 @@
 // blocks.js: 床ブロック管理・補充・スポーン・決定論的一意キー（blockId）マルチ同期専用モジュール
-// ★ Phase 5 最適化版（床ブロック補充座標ゼロアロケーション化 ＆ プール保護完全維持）：
-//   1. 【床ブロック補充レコードのゼロアロケーション純粋算術丸め化】
-//      spawnSingleBlock および applyRemoteBlockSpawned で使用されていた Number(val.toFixed(2)) を
-//      CPUレジスタ内で完結する round2(val) へ完全置換。
-//      ブロック補充バッチが走った際の一時文字列（String）オブジェクト生成をゼロにし、GC負荷を根絶。
-//   2. 【ブロック補充の生 sendMessage 直打ち完全根絶の維持】
-//      NetworkManager.queueSpawnBlocks へ集約し、100ms周期の POS パケット（sp）に完全同封。
+// ★ PRNG汚染完全遮断 ＆ ゼロアロケーション最適化版（Phase 1）：
+//   1. 【世界生成用疑似乱数（seededRandom）の汚染・ズレを完全根絶】
+//      ホスト端末のみで定期実行される spawnSingleBlock 内の seededRandom() を Math.random() へ置換。
+//      床ブロック補充によって世界生成用PRNGの内部ポインタが消費されてホストとゲストでズレる事故を物理的に根絶。
+//      （補充されたブロック座標はパケット sp でゲストへ完全送信されるため、Math.random() で100%安全かつ完璧に機能）
+//   2. 【床ブロック補充レコードのゼロアロケーション純粋算術丸め化】
+//      round2(val) によるCPUレジスタ内完結の数値丸めを維持し、補充バッチ時の一時文字列（String）生成・GC負荷を根絶。
 //   3. 【現在滞在ステージの強制リサイクル強奪を完全遮断】
 //      プール枯渇時に走者が現在滞在しているステージのアクティブブロックが奥の島へ
 //      強制テレポートされて消滅する欠陥を防止。安全な非アクティブ枠・過去ステージからのみリサイクル。
@@ -30,8 +30,7 @@ import {
 import {
   STAGES,
   bridgesByStage,
-  activeMagnetBlocks,
-  seededRandom
+  activeMagnetBlocks
 } from './world.js';
 
 // --- 高速・ゼロアロケーション純粋算術丸めヘルパー（文字列インスタンス生成ゼロ） ---
@@ -181,7 +180,7 @@ if (typeof window !== 'undefined') {
 
 /**
  * 単一床ブロックの出現位置判定および内部配置
- * ★ round2 による純粋算術丸めで文字列オブジェクト生成を完全排除
+ * ★【核心改修】seededRandom() を Math.random() へ置換し、世界生成PRNGの汚染を100%防止
  */
 export function spawnSingleBlock(scene, stageIdx, targetTeam = null, shouldBroadcastImmediately = true) {
   const stageInfo = STAGES[stageIdx];
@@ -199,8 +198,8 @@ export function spawnSingleBlock(scene, stageIdx, targetTeam = null, shouldBroad
   const eleB = stageBridges.find(b => b.isElevator);
 
   while (attempts < 25) {
-    const r = Math.sqrt(seededRandom()) * (stageInfo.r - 2.2);
-    const theta = seededRandom() * Math.PI * 2;
+    const r = Math.sqrt(Math.random()) * (stageInfo.r - 2.2);
+    const theta = Math.random() * Math.PI * 2;
     const candX = centerX + Math.cos(theta) * r;
     const candZ = stageInfo.z + Math.sin(theta) * r;
 
@@ -252,7 +251,7 @@ export function spawnSingleBlock(scene, stageIdx, targetTeam = null, shouldBroad
   const poolItem = findSafePoolItem();
   if (!poolItem) return null;
 
-  const team = targetTeam || BLOCK_TYPES[Math.floor(seededRandom() * BLOCK_TYPES.length)];
+  const team = targetTeam || BLOCK_TYPES[Math.floor(Math.random() * BLOCK_TYPES.length)];
   let mat;
   if (team.id === 'blue') mat = sharedMats.blockBlue;
   else if (team.id === 'red') mat = sharedMats.blockRed;
@@ -265,7 +264,7 @@ export function spawnSingleBlock(scene, stageIdx, targetTeam = null, shouldBroad
 
   poolItem.mesh.material = mat;
   poolItem.mesh.position.set(validPos.x, spawnY, validPos.z);
-  poolItem.mesh.rotation.set(0, seededRandom() * Math.PI, 0);
+  poolItem.mesh.rotation.set(0, Math.random() * Math.PI, 0);
   poolItem.mesh.visible = true;
 
   poolItem.active = true;

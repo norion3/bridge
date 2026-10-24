@@ -1,12 +1,15 @@
 // world.js: コース伸長・浮島・橋・スライド・ジップライン・エレベーター・スカイダイブ・ドロップタワー施設・二股分岐＆合流・目鼻なし愛嬌お邪魔キャラ
-// ★ Phase 1 実装版（二股分岐ステージ Fork Pattern B の完全決定論ハッシュ化 ＆ PRNG消費ゼロ）：
-//   1. 【分岐ステージのPRNG履歴依存を完全撤廃】
-//      extendCourseForkPatternB 内のテーマペア選択、左右テーマ割り当て、アイテム種別、
-//      出口ギミック（スロープ vs スカイダイブ）に残存していた seededRandom() を全廃。
-//      分岐ステージ番号 forkIdx から数学的固定ハッシュにより一意決定。
-//   2. 【二股分岐島・合流島のアイテム＆ギミック完全一致】
-//      左右の島に現れるクリスタルアイテムや出口アトラクションが両端末で100%確定一致。
-//   3. 【幾何構造・通常ステージ・お掃除処理の完全維持】
+// ★ Phase 2 完全同期版（ウォータースライダー白ブロック＆修飾ゲートの決定論的同期 ＆ リモート消去ハンドラ実装）：
+//   1. 【修飾ゲート生成の完全決定論化（player.stackCount依存の完全撤廃）】
+//      各端末ローカルの player.stackCount に応じた分岐を撤廃し、stageIdx と currentWorldSeed の
+//      固定数学ハッシュ（gateHash）から一意決定。ホストとゲストでゲートの数値・演算子が100%完全一致。
+//   2. 【リモートボーナスブロック消去ハンドラ（applyRemoteBonusConsumed）の完全実装】
+//      直線スライダー、S字カーブ、ジップライン、スカイダイブの全ボーナスブロックを
+//      bonusId で一意特定して即座に非表示・消去するハンドラを実装し、グローバル登録。
+//      ホストや他走者がスライダー上で回収した白ブロックが相手端末でもリアルタイムに確実に消滅。
+//   3. 【お邪魔モブ出現判定の数学的ハッシュ化】
+//      seededRandom() の消費ズレを防止するため、モブ出現および初期方向も stageIdx 固有ハッシュで決定。
+//   4. 【幾何構造・通常ステージ・お掃除処理の完全維持】
 //      決定論的コース形状生成、全アトラクション物理用データ構造、cleanupOldData は100%維持。
 
 import {
@@ -106,7 +109,6 @@ const BASE_ITEMS = ['speed', 'attack', 'magnet', 'thunder'];
 
 /**
  * ステージ番号固有の決定論的アイテム種別決定関数
- * 乱数消費履歴に一切依存せず、stageIdx と currentWorldSeed から数学的に一意決定
  */
 export function getDeterministicItemType(stageIdx) {
   const hash = Math.imul(stageIdx ^ 0x5DEECE66, (currentWorldSeed + 37) | 1);
@@ -153,8 +155,70 @@ function getNextAscentGimmick() {
 }
 
 /**
+ * リモート走者が回収したアトラクションボーナスブロック（白ブロック）の強制消去ハンドラ
+ */
+export function applyRemoteBonusConsumed(bonusId) {
+  if (!bonusId) return;
+
+  // 1. 直線スライダー
+  for (let i = 0; i < slideBonusBlocks.length; i++) {
+    const b = slideBonusBlocks[i];
+    if (b.bonusId === bonusId && !b.collected) {
+      b.collected = true;
+      if (b.mesh) {
+        b.mesh.visible = false;
+        if (b.mesh.parent) b.mesh.parent.remove(b.mesh);
+      }
+      return;
+    }
+  }
+
+  // 2. S字カーブスライダー
+  for (let i = 0; i < curvedSlideBonusBlocks.length; i++) {
+    const b = curvedSlideBonusBlocks[i];
+    if (b.bonusId === bonusId && !b.collected) {
+      b.collected = true;
+      if (b.mesh) {
+        b.mesh.visible = false;
+        if (b.mesh.parent) b.mesh.parent.remove(b.mesh);
+      }
+      return;
+    }
+  }
+
+  // 3. ジップライン
+  for (let i = 0; i < ziplineBonusBlocks.length; i++) {
+    const b = ziplineBonusBlocks[i];
+    if (b.bonusId === bonusId && !b.collected) {
+      b.collected = true;
+      if (b.mesh) {
+        b.mesh.visible = false;
+        if (b.mesh.parent) b.mesh.parent.remove(b.mesh);
+      }
+      return;
+    }
+  }
+
+  // 4. スカイダイブ
+  for (let i = 0; i < skydiveBonusBlocks.length; i++) {
+    const b = skydiveBonusBlocks[i];
+    if (b.bonusId === bonusId && !b.collected) {
+      b.collected = true;
+      if (b.mesh) {
+        b.mesh.visible = false;
+        if (b.mesh.parent) b.mesh.parent.remove(b.mesh);
+      }
+      return;
+    }
+  }
+}
+
+if (typeof window !== 'undefined') {
+  window.applyRemoteBonusConsumed = applyRemoteBonusConsumed;
+}
+
+/**
  * 床アイテム生成の完全決定論化
- * PRNGの内部状態を消費せず、stageIdx 固有の固定幾何ハッシュで座標・種別を生成
  */
 export function spawnItem(scene, stageIdx, forcedType = null) {
   const stageInfo = STAGES[stageIdx];
@@ -219,55 +283,29 @@ export function spawnItem(scene, stageIdx, forcedType = null) {
   });
 }
 
+/**
+ * ★【核心改修】修飾ゲート生成の完全決定論化
+ * player.stackCount によるローカル状態依存および seededRandom の消費ズレを完全撤廃
+ */
 export function spawnGatesOnIsland(scene, stageIdx, islandZ, islandY, islandX = 0.0) {
   if (stageIdx % 2 !== 1) return;
 
   const gateZ = islandZ - 1.2;
-  const playerCount = player ? player.stackCount : 0;
-  let p;
+  const gateHash = Math.abs(Math.imul(stageIdx ^ 0x3C6EF35F, (currentWorldSeed + 71) | 1));
 
-  if (playerCount >= 51) {
-    const cautionPatterns = [
-      { left: { op: 'add', val: 4, label: '+4' }, right: { op: 'divide', val: 2, label: '÷2' } },
-      { left: { op: 'divide', val: 2, label: '÷2' }, right: { op: 'add', val: 6, label: '+6' } },
-      { left: { op: 'subtract', val: 6, label: '-6' }, right: { op: 'add', val: 4, label: '+4' } },
-      { left: { op: 'add', val: 6, label: '+6' }, right: { op: 'subtract', val: 8, label: '-8' } },
-      { left: { op: 'divide', val: 2, label: '÷2' }, right: { op: 'subtract', val: 4, label: '-4' } }
-    ];
-    p = cautionPatterns[Math.floor(seededRandom() * cautionPatterns.length)];
-  } else if (playerCount >= 26) {
-    if (seededRandom() < 0.15) {
-      if (seededRandom() < 0.5) {
-        p = { left: { op: 'multiply', val: 2, label: '×2' }, right: { op: 'divide', val: 2, label: '÷2' } };
-      } else {
-        p = { left: { op: 'divide', val: 2, label: '÷2' }, right: { op: 'multiply', val: 2, label: '×2' } };
-      }
-    } else {
-      const stablePatterns = [
-        { left: { op: 'add', val: 6, label: '+6' }, right: { op: 'subtract', val: 4, label: '-4' } },
-        { left: { op: 'subtract', val: 6, label: '-6' }, right: { op: 'add', val: 6, label: '+6' } },
-        { left: { op: 'add', val: 4, label: '+4' }, right: { op: 'subtract', val: 4, label: '-4' } },
-        { left: { op: 'add', val: 6, label: '+6' }, right: { op: 'add', val: 4, label: '+4' } }
-      ];
-      p = stablePatterns[Math.floor(seededRandom() * stablePatterns.length)];
-    }
-  } else {
-    if (seededRandom() < 0.05) {
-      if (seededRandom() < 0.5) {
-        p = { left: { op: 'multiply', val: 2, label: '×2' }, right: { op: 'subtract', val: 4, label: '-4' } };
-      } else {
-        p = { left: { op: 'add', val: 4, label: '+4' }, right: { op: 'multiply', val: 2, label: '×2' } };
-      }
-    } else {
-      const boostPatterns = [
-        { left: { op: 'add', val: 6, label: '+6' }, right: { op: 'add', val: 4, label: '+4' } },
-        { left: { op: 'add', val: 8, label: '+8' }, right: { op: 'subtract', val: 4, label: '-4' } },
-        { left: { op: 'subtract', val: 4, label: '-4' }, right: { op: 'add', val: 6, label: '+6' } },
-        { left: { op: 'add', val: 4, label: '+4' }, right: { op: 'subtract', val: 2, label: '-2' } }
-      ];
-      p = boostPatterns[Math.floor(seededRandom() * boostPatterns.length)];
-    }
-  }
+  const allGatePatterns = [
+    { left: { op: 'add', val: 6, label: '+6' }, right: { op: 'subtract', val: 4, label: '-4' } },
+    { left: { op: 'add', val: 4, label: '+4' }, right: { op: 'subtract', val: 2, label: '-2' } },
+    { left: { op: 'add', val: 8, label: '+8' }, right: { op: 'subtract', val: 4, label: '-4' } },
+    { left: { op: 'subtract', val: 4, label: '-4' }, right: { op: 'add', val: 6, label: '+6' } },
+    { left: { op: 'add', val: 6, label: '+6' }, right: { op: 'add', val: 4, label: '+4' } },
+    { left: { op: 'multiply', val: 2, label: '×2' }, right: { op: 'divide', val: 2, label: '÷2' } },
+    { left: { op: 'divide', val: 2, label: '÷2' }, right: { op: 'multiply', val: 2, label: '×2' } },
+    { left: { op: 'add', val: 4, label: '+4' }, right: { op: 'divide', val: 2, label: '÷2' } },
+    { left: { op: 'subtract', val: 6, label: '-6' }, right: { op: 'add', val: 4, label: '+4' } }
+  ];
+
+  const p = allGatePatterns[gateHash % allGatePatterns.length];
 
   createModifierGate(scene, stageIdx, islandX - 3.2, gateZ, islandY, p.left.op, p.left.val, p.left.label);
   modifierGates[modifierGates.length - 1].gateId = `gate_${stageIdx}_${Math.round((islandX - 3.2) * 100)}_${Math.round(gateZ * 100)}`;
@@ -277,74 +315,41 @@ export function spawnGatesOnIsland(scene, stageIdx, islandZ, islandY, islandX = 
 }
 
 function getForkThemeGates(themeRole) {
-  const playerCount = player ? player.stackCount : 0;
-
   if (themeRole === 'shortcut') {
-    if (playerCount >= 51) {
-      return [
-        { op: 'add', val: 4, label: '+4' },
-        { op: 'divide', val: 2, label: '÷2' }
-      ];
-    } else if (playerCount >= 26) {
-      return [
-        { op: 'add', val: 6, label: '+6' },
-        { op: 'subtract', val: 4, label: '-4' }
-      ];
-    } else {
-      return [
-        { op: 'add', val: 6, label: '+6' },
-        { op: 'add', val: 4, label: '+4' }
-      ];
-    }
+    return [
+      { op: 'add', val: 6, label: '+6' },
+      { op: 'subtract', val: 4, label: '-4' }
+    ];
   } else if (themeRole === 'rich') {
-    if (playerCount >= 51) {
-      return [
-        { op: 'add', val: 6, label: '+6' },
-        { op: 'subtract', val: 4, label: '-4' }
-      ];
-    } else if (playerCount >= 26) {
-      return [
-        { op: 'add', val: 8, label: '+8' },
-        { op: 'subtract', val: 4, label: '-4' }
-      ];
-    } else {
-      return [
-        { op: 'add', val: 10, label: '+10' },
-        { op: 'add', val: 6, label: '+6' }
-      ];
-    }
+    return [
+      { op: 'add', val: 8, label: '+8' },
+      { op: 'subtract', val: 4, label: '-4' }
+    ];
   } else {
-    if (playerCount >= 51) {
-      return [
-        { op: 'add', val: 4, label: '+4' },
-        { op: 'subtract', val: 6, label: '-6' }
-      ];
-    } else if (playerCount >= 26) {
-      return [
-        { op: 'add', val: 6, label: '+6' },
-        { op: 'subtract', val: 4, label: '-4' }
-      ];
-    } else {
-      return [
-        { op: 'add', val: 8, label: '+8' },
-        { op: 'subtract', val: 2, label: '-2' }
-      ];
-    }
+    return [
+      { op: 'add', val: 6, label: '+6' },
+      { op: 'subtract', val: 4, label: '-4' }
+    ];
   }
 }
 
+/**
+ * お邪魔キャラの出現判定（決定論的ハッシュ化）
+ */
 export function spawnObstacleMobOnStage(scene, stageIdx, islandZ, islandY, islandX = 0.0) {
   if (stageIdx <= 3) return;
   const stageInfo = STAGES[stageIdx];
   if (!stageInfo || stageInfo.r < 9.0 || stageInfo.isFork || stageInfo.isMerge) return;
 
-  if (stagesSinceLastObstacle < 4) {
+  if (stagesSinceLastObstacle < 3) {
     stagesSinceLastObstacle++;
     return;
   }
 
-  const spawnChance = (stagesSinceLastObstacle >= 6) ? 1.0 : 0.35;
-  if (seededRandom() < spawnChance) {
+  const mobHash = Math.abs(Math.imul(stageIdx ^ 0x1A2B3C4D, (currentWorldSeed + 89) | 1));
+  const spawnChance = (stagesSinceLastObstacle >= 6) ? 1.0 : 0.40;
+
+  if ((mobHash % 100) < (spawnChance * 100)) {
     stagesSinceLastObstacle = 0;
 
     const hasGates = (stageIdx % 2 === 1);
@@ -362,7 +367,7 @@ export function spawnObstacleMobOnStage(scene, stageIdx, islandZ, islandY, islan
       centerX: islandX,
       rangeX: 3.2,
       currentX: islandX,
-      direction: (seededRandom() < 0.5 ? 1 : -1),
+      direction: ((mobHash >> 8) % 2 === 0 ? 1 : -1),
       speed: 2.8,
       active: true,
       blownAway: false,
@@ -963,8 +968,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
 }
 
 /**
- * ★【Phase 1 核心】二股分岐パターンB（Fork Pattern B）の完全決定論ハッシュ化
- * seededRandom() の消費をゼロにし、forkIdx と worldSeed から数学的に一意決定
+ * 二股分岐パターンB（Fork Pattern B）の完全決定論ハッシュ化
  */
 export function extendCourseForkPatternB(scene) {
   const forkIdx = STAGES.length;
@@ -994,7 +998,6 @@ export function extendCourseForkPatternB(scene) {
   CONNECTIONS.push({ from: forkIdx - 1, to: forkIdx, type: 'bridge' });
   createBridgeLinks(scene, forkIdx - 1, forkIdx, prev.z, forkZ, prev.r, forkR, prev.y, forkY, 'bridge', 0.0, false);
 
-  // ★ forkIdx から数学的固定ハッシュ値を算出（PRNG消費ゼロ）
   const forkHash = Math.abs(Math.imul(forkIdx ^ 0x6D2B79F5, (currentWorldSeed + 13) | 1));
 
   const themeBItemType = (forkHash % 2 === 0) ? 'thunder' : 'magnet';
@@ -1035,11 +1038,9 @@ export function extendCourseForkPatternB(scene) {
     [themeB, themeC],
     [themeA, themeC]
   ];
-  // 決定論的ペア選択
   const pairIdx = ((forkHash >> 2) % candidatePairs.length);
   const chosenPair = candidatePairs[pairIdx];
 
-  // 決定論的左右割り当て
   const shuffleLeft = ((forkHash >> 4) % 2 === 0);
   const leftTheme = shuffleLeft ? chosenPair[0] : chosenPair[1];
   const rightTheme = shuffleLeft ? chosenPair[1] : chosenPair[0];
@@ -1069,7 +1070,6 @@ export function extendCourseForkPatternB(scene) {
   createBridgeLinks(scene, forkIdx, leftStageIdx, forkZ, leftMidZ, forkR, leftMidR, forkY, leftMidY, leftTheme.connType, leftMidX, true);
 
   const leftGates = getForkThemeGates(leftTheme.role);
-  // 決定論的ゲート配置反転判定
   if ((forkHash >> 5) % 2 === 1) {
     const tmp = leftGates[0]; leftGates[0] = leftGates[1]; leftGates[1] = tmp;
   }
@@ -1107,7 +1107,6 @@ export function extendCourseForkPatternB(scene) {
   createBridgeLinks(scene, forkIdx, rightStageIdx, forkZ, rightMidZ, forkR, rightMidR, forkY, rightMidY, rightTheme.connType, rightMidX, true);
 
   const rightGates = getForkThemeGates(rightTheme.role);
-  // 決定論的ゲート配置反転判定
   if ((forkHash >> 6) % 2 === 1) {
     const tmp = rightGates[0]; rightGates[0] = rightGates[1]; rightGates[1] = tmp;
   }
@@ -1147,7 +1146,6 @@ export function extendCourseForkPatternB(scene) {
   createBridgeLinks(scene, rightStageIdx, mergeStageIdx, rightMidZ, mergeZ, rightMidR, mergeR, rightMidY, mergeY, rightTheme.exitType, rightMidX, true);
 
   spawnGatesOnIsland(scene, mergeStageIdx, mergeZ, mergeY, 0.0);
-  // 合流島のアイテムも完全決定論化
   spawnItem(scene, mergeStageIdx);
 
   lastGimmickCategory = 'descent';
