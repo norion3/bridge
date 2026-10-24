@@ -1,21 +1,20 @@
-// menu.js: ボトムシートメニュー・チャット入力・製作者カード・いいね誘導・参加者一覧・GRAVITYプロフィールジャンプ
-// ★ 新規作成モジュール：
-//   1. 【画面下部中央の台形メニューボタン】
-//      リスタートと音量ボタンの中間に配置。タップ時に小気味よく沈み込み、下からボトムシートをスライドアップ。
-//   2. 【ぬるっとスライドアップするボトムシートモーダル】
-//      イージング（cubic-bezier(0.16, 1, 0.3, 1)）とすりガラス（backdrop-filter）による滑らかな開閉。
-//   3. 【チャット入力欄（最大15文字制限）】
-//      スマホキーボードに配慮した軽量入力欄。送信時にコールバックを発火。
-//   4. 【製作者の声 ＆ 右上「いいね誘導」パルスアロー演出】
-//      製作者タブ展開時、画面右上（GRAVITY標準「...」ボタン直下）へ小さなネオンシアン矢印・吹き出しを点滅浮遊表示。
-//   5. 【参加者一覧（現在＆過去）スクロールリスト】
-//      ルームに参加した全プレイヤーの履歴をスクロール表示。
-//   6. 【GRAVITYネイティブプロフィール遷移（GravityRouter）内蔵】
-//      slme://internal スキーム（usercenter）により、ユーザーアイコン・名前タップで該当ユーザーのマイページへ遷移。
+// menu.js: ボトムシートメニュー・チャット入力・2アカウント製作者カード（本垢＆サブ垢）・いいね誘導・参加者一覧・GRAVITYプロフィールジャンプ
+// ★ 製作者情報動的フェッチ＆2アカウント並列表示対応版：
+//   1. 【本垢（2736445531）＆ サブ垢（887811163）の2カード同時表示】
+//      画像7（なむぴょん様参考画面）の優れたレイアウトを踏襲し、本垢（メイン活動・交流）とサブ垢（AIアプリ開発・要望受付）の
+//      役割を明記した2枚の独立カードを「製作者」タブ内に並列配置。
+//   2. 【負荷ゼロ・オンデマンド動的プロフィール解決】
+//      3Dレース走行中には一切通信を行わず、メニューの「製作者」タブが開かれた瞬間（またはユーザー操作時）にのみ
+//      バックグラウンドで非同期フェッチ／キャッシュ解決を実行。TTL（キャッシュ有効期限）管理により無駄な通信を防止。
+//   3. 【堅牢な自動フォールバック機能】
+//      電波不調時や外部通信制限時でも、各アカウントのデフォルト名（norion / のりおん ✦）と
+//      ネオンカラー（シアン / エメラルド）のスタイリッシュなグラデーションアバターへ自動フォールバック（画面崩れゼロ）。
+//   4. 【ワンタップネイティブプロフィールジャンプ（GravityRouter）】
+//      各カードの「プロフィールを開く ↗」ボタン、またはアバターをタップすると、
+//      slme://internal スキーム（usercenter）により相手のネイティブプロフィール画面が常に最新状態で瞬時に立ち上がる。
 
 /**
  * GRAVITYアプリ内ネイティブ画面遷移ルーター
- * 実績のある slme://internal ディープリンクハックを安全に呼び出し
  */
 export const GravityRouter = {
   _sendToApp(command, paramObj) {
@@ -31,7 +30,6 @@ export const GravityRouter = {
           window.location.href = deepLink;
         }
       } catch (e) {
-        // iframe / WebView 内で location 変更がブロックされた場合のフォールバック
         const ifr = document.createElement('iframe');
         ifr.style.cssText = 'position:absolute;width:0;height:0;opacity:0;pointer-events:none;border:none;';
         ifr.src = deepLink;
@@ -64,6 +62,38 @@ export const GravityRouter = {
 if (typeof window !== 'undefined') {
   window.GravityRouter = GravityRouter;
 }
+
+// 製作者アカウント定義（本垢＆開発サブ垢）
+export const CREATOR_PROFILES = [
+  {
+    key: 'main',
+    id: '2736445531',
+    roleBadge: '本アカウント',
+    badgeClass: 'badge-main',
+    name: 'norion',
+    subtitle: 'メインの活動・交流拠点はこちら！',
+    description: '『Bridge Dash 3D』を遊んでくれてありがとうございます！楽しんでいただけたらぜひ本アカウントのフォローやいいねをお願いします✨',
+    avatarUrl: null,
+    avatarBorder: '#38bdf8',
+    buttonClass: 'btn-main-account'
+  },
+  {
+    key: 'sub',
+    id: '887811163',
+    roleBadge: '開発・要望用',
+    badgeClass: 'badge-sub',
+    name: 'のりおん ✦',
+    subtitle: 'AIアプリ開発・ゲーム要望受付用！',
+    description: 'グラビティのAIアプリ開発用アカウントです。新機能のご意見・ご要望や感想コメントはぜひこちらへお寄せください！',
+    avatarUrl: null,
+    avatarBorder: '#10b981',
+    buttonClass: 'btn-sub-account'
+  }
+];
+
+// 動的取得ステート管理
+let isCreatorFetched = false;
+let isFetchingCreators = false;
 
 // 参加者履歴キャッシュ（セッション中に参加した全ユーザー）
 const sessionParticipants = new Map();
@@ -169,8 +199,8 @@ function injectMenuStyles() {
       right: 0;
       max-width: 480px;
       margin: 0 auto;
-      height: 68vh;
-      max-height: 520px;
+      height: 75vh;
+      max-height: 580px;
       background: radial-gradient(circle at 50% 0%, rgba(14, 165, 233, 0.96) 0%, rgba(15, 23, 42, 0.98) 100%);
       border: 1px solid rgba(255, 255, 255, 0.25);
       border-bottom: none;
@@ -183,7 +213,7 @@ function injectMenuStyles() {
       flex-direction: column;
       overflow: hidden;
       color: #ffffff;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Hiragino Kaku Gothic ProN", sans-serif;
     }
     #game-menu-sheet.open {
       transform: translateY(0%);
@@ -342,74 +372,167 @@ function injectMenuStyles() {
       background: rgba(56, 189, 248, 0.3);
     }
 
-    /* 2. 製作者の声タブ UI */
-    .creator-card {
-      background: rgba(255, 255, 255, 0.10);
-      border: 1px solid rgba(255, 255, 255, 0.25);
-      border-radius: 16px;
-      padding: 16px;
+    /* 2. 製作者タブ UI（2アカウント並列表示カード） */
+    .creator-section-container {
       display: flex;
       flex-direction: column;
-      align-items: center;
+      gap: 14px;
+    }
+
+    /* 参考画面（画像7）踏襲の挨拶メッセージバー */
+    .creator-app-thanks-banner {
+      background: rgba(15, 23, 42, 0.65);
+      border: 1px solid rgba(56, 189, 248, 0.35);
+      border-radius: 14px;
+      padding: 12px 14px;
+      font-size: 12.5px;
+      line-height: 1.55;
+      color: #bae6fd;
       text-align: center;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+    }
+    .creator-app-thanks-banner b {
+      color: #fde047;
+    }
+
+    /* 2アカウント個別カード */
+    .creator-profile-card {
+      background: rgba(255, 255, 255, 0.09);
+      border: 1px solid rgba(255, 255, 255, 0.20);
+      border-radius: 16px;
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.28);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .creator-profile-card.card-main {
+      border-left: 4px solid #38bdf8;
+      background: linear-gradient(135deg, rgba(2, 132, 199, 0.18) 0%, rgba(15, 23, 42, 0.35) 100%);
+    }
+
+    .creator-profile-card.card-sub {
+      border-left: 4px solid #10b981;
+      background: linear-gradient(135deg, rgba(16, 185, 129, 0.18) 0%, rgba(15, 23, 42, 0.35) 100%);
+    }
+
+    .creator-card-header {
+      display: flex;
+      align-items: center;
       gap: 12px;
     }
-    .creator-avatar-wrap {
+
+    .creator-card-avatar-wrap {
       position: relative;
+      flex-shrink: 0;
       cursor: pointer;
     }
-    .creator-avatar {
-      width: 68px;
-      height: 68px;
+
+    .creator-card-avatar {
+      width: 54px;
+      height: 54px;
       border-radius: 50%;
-      border: 3px solid #38bdf8;
-      box-shadow: 0 0 16px rgba(56, 189, 248, 0.5);
       object-fit: cover;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
       background: #0284c7;
+      display: block;
     }
-    .creator-profile-badge {
-      position: absolute;
-      bottom: -4px;
-      right: -4px;
-      background: #10b981;
-      color: #fff;
+
+    .creator-card-info {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+      flex: 1;
+    }
+
+    .creator-card-name-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .creator-card-name {
+      font-size: 15px;
+      font-weight: 900;
+      color: #ffffff;
+      letter-spacing: 0.02em;
+    }
+
+    .creator-card-badge {
       font-size: 10px;
-      font-weight: 900;
-      padding: 2px 6px;
-      border-radius: 10px;
-      border: 1px solid #ffffff;
-    }
-    .creator-name {
-      font-size: 16px;
-      font-weight: 900;
+      font-weight: 800;
+      padding: 2px 7px;
+      border-radius: 9999px;
       color: #ffffff;
+      white-space: nowrap;
     }
-    .creator-message {
-      font-size: 13px;
-      color: #e0f2fe;
-      line-height: 1.6;
-      background: rgba(0, 0, 0, 0.25);
-      padding: 12px;
-      border-radius: 12px;
-      border-left: 3px solid #38bdf8;
-      text-align: left;
-      width: 100%;
+    .badge-main {
+      background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
+      border: 1px solid #38bdf8;
     }
-    .creator-jump-btn {
-      width: 100%;
-      padding: 12px;
+    .badge-sub {
       background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-      color: #ffffff;
+      border: 1px solid #34d399;
+    }
+
+    .creator-card-id {
+      font-size: 11px;
+      color: #94a3b8;
+      font-family: monospace;
+    }
+
+    .creator-card-subtitle {
+      font-size: 11.5px;
+      color: #bae6fd;
+      line-height: 1.35;
+    }
+
+    .creator-card-desc {
+      font-size: 12px;
+      color: #e2e8f0;
+      line-height: 1.5;
+      background: rgba(0, 0, 0, 0.22);
+      padding: 8px 10px;
+      border-radius: 8px;
+    }
+
+    /* 参考画像（画像7）踏襲の丸みボタン */
+    .creator-open-btn {
+      width: 100%;
+      padding: 10px 14px;
+      border-radius: 9999px;
       font-size: 13px;
       font-weight: 800;
-      border: none;
-      border-radius: 12px;
+      border: 1.5px solid transparent;
       cursor: pointer;
-      box-shadow: 0 4px 12px rgba(16, 185, 129, 0.35);
       display: flex;
       align-items: center;
       justify-content: center;
       gap: 6px;
+      transition: transform 0.12s ease, filter 0.12s ease;
+      touch-action: manipulation;
+    }
+    .creator-open-btn:active {
+      transform: scale(0.97);
+    }
+
+    .btn-main-account {
+      background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%);
+      color: #ffffff;
+      border-color: #38bdf8;
+      box-shadow: 0 4px 14px rgba(2, 132, 199, 0.4);
+    }
+
+    .btn-sub-account {
+      background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+      color: #ffffff;
+      border-color: #34d399;
+      box-shadow: 0 4px 14px rgba(16, 185, 129, 0.4);
     }
 
     /* 3. 参加者一覧タブ UI */
@@ -417,7 +540,7 @@ function injectMenuStyles() {
       display: flex;
       flex-direction: column;
       gap: 8px;
-      max-height: 280px;
+      max-height: 320px;
       overflow-y: auto;
       padding-right: 4px;
     }
@@ -534,6 +657,128 @@ function injectMenuStyles() {
 }
 
 /**
+ * 2アカウント（本垢＆サブ垢）製作者カードの動的HTMLレンダリング
+ */
+function renderCreatorCards() {
+  const container = document.getElementById('menu-creator-cards-wrapper');
+  if (!container) return;
+
+  container.innerHTML = '';
+
+  CREATOR_PROFILES.forEach((creator) => {
+    const card = document.createElement('div');
+    card.className = `creator-profile-card card-${creator.key}`;
+
+    const fallbackBg = (creator.key === 'main') ? '%230284c7' : '%2310b981';
+    const initialChar = (creator.key === 'main') ? 'N' : '✦';
+    const fallbackSvg = `data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 60 60"><circle cx="30" cy="30" r="30" fill="${fallbackBg}"/><text x="30" y="36" font-size="20" font-weight="bold" fill="white" text-anchor="middle">${initialChar}</text></svg>`;
+    const avatarSrc = creator.avatarUrl || fallbackSvg;
+
+    card.innerHTML = `
+      <div class="creator-card-header">
+        <div class="creator-card-avatar-wrap" data-uid="${creator.id}">
+          <img class="creator-card-avatar" style="border: 2.5px solid ${creator.avatarBorder};" src="${avatarSrc}" onerror="this.src='${fallbackSvg}'">
+        </div>
+        <div class="creator-card-info">
+          <div class="creator-card-name-row">
+            <span class="creator-card-name">${escapeHtml(creator.name)}</span>
+            <span class="creator-card-badge ${creator.badgeClass}">${creator.roleBadge}</span>
+          </div>
+          <span class="creator-card-id">ID: ${creator.id}</span>
+          <span class="creator-card-subtitle">${escapeHtml(creator.subtitle)}</span>
+        </div>
+      </div>
+      <div class="creator-card-desc">
+        ${escapeHtml(creator.description)}
+      </div>
+      <button type="button" class="creator-open-btn ${creator.buttonClass}" data-uid="${creator.id}">
+        👤 プロフィールを開く ↗
+      </button>
+    `;
+
+    // アバタータップまたはボタンタップでプロフィール遷移
+    const triggerElements = card.querySelectorAll('[data-uid]');
+    triggerElements.forEach(el => {
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const uid = el.dataset.uid;
+        GravityRouter.openProfile(uid);
+      });
+    });
+
+    container.appendChild(card);
+  });
+}
+
+/**
+ * 製作者情報の動的解決（レース走行負荷完全ゼロ・オンデマンド取得）
+ */
+async function fetchCreatorProfilesIfNeeded() {
+  if (isCreatorFetched || isFetchingCreators) return;
+  isFetchingCreators = true;
+
+  try {
+    for (const creator of CREATOR_PROFILES) {
+      // 1. 製作者本人がログインして操作している場合の自動検知
+      if (window.NetworkManager?.myUser?.user_id === creator.id) {
+        if (window.NetworkManager.myUser.name) {
+          creator.name = window.NetworkManager.myUser.name;
+        }
+        if (window.NetworkManager.myUser.portrait) {
+          creator.avatarUrl = window.NetworkManager.myUser.portrait;
+        }
+        continue;
+      }
+
+      // 2. セッションストレージキャッシュの確認（API無駄打ち防止）
+      const cacheKey = `creator_cache_${creator.id}`;
+      const cached = sessionStorage.getItem(cacheKey);
+      if (cached) {
+        try {
+          const parsed = JSON.parse(cached);
+          if (parsed && (Date.now() - parsed.timestamp < 1000 * 60 * 30)) {
+            if (parsed.name) creator.name = parsed.name;
+            if (parsed.avatarUrl) creator.avatarUrl = parsed.avatarUrl;
+            continue;
+          }
+        } catch (e) {}
+      }
+
+      // 3. 公開Webプロフィール/エンドポイントからの動的取得トライ（タイムアウト付き）
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 2000);
+
+      const res = await fetch(`https://www.gravity.place/api/user/profile?uid=${creator.id}`, {
+        signal: controller.signal
+      }).catch(() => null);
+      clearTimeout(timeoutId);
+
+      if (res && res.ok) {
+        const data = await res.json().catch(() => null);
+        if (data && data.data) {
+          if (data.data.name) creator.name = data.data.name;
+          if (data.data.portrait || data.data.avatar) {
+            creator.avatarUrl = data.data.portrait || data.data.avatar;
+          }
+          // キャッシュ保存
+          sessionStorage.setItem(cacheKey, JSON.stringify({
+            name: creator.name,
+            avatarUrl: creator.avatarUrl,
+            timestamp: Date.now()
+          }));
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[menu.js] Dynamic creator resolution fallback used:', err);
+  } finally {
+    isCreatorFetched = true;
+    isFetchingCreators = false;
+    renderCreatorCards();
+  }
+}
+
+/**
  * 参加者一覧リストの再描画
  */
 function renderParticipantsList() {
@@ -566,7 +811,7 @@ function renderParticipantsList() {
       <div class="participant-left">
         <img class="participant-avatar" src="${avatarSrc}" onerror="this.src='data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 40 40%22><circle cx=%2220%22 cy=%2220%22 r=%2220%22 fill=%22%230284c7%22/></svg>'">
         <div class="participant-info">
-          <span class="participant-name">${p.name}</span>
+          <span class="participant-name">${escapeHtml(p.name)}</span>
           <span class="${statusClass}">${statusText}</span>
         </div>
       </div>
@@ -597,13 +842,12 @@ function switchTab(tabId) {
     content.classList.toggle('active', content.id === `menu-tab-${tabId}`);
   });
 
-  // 製作者タブのときのみ右上のいいね誘導を表示
-  if (likeGuide) {
-    if (tabId === 'creator') {
-      likeGuide.classList.add('show');
-    } else {
-      likeGuide.classList.remove('show');
-    }
+  // 製作者タブ選択時：右上のいいね誘導を表示 ＆ 必要なら動的フェッチを実行
+  if (tabId === 'creator') {
+    if (likeGuide) likeGuide.classList.add('show');
+    fetchCreatorProfilesIfNeeded();
+  } else {
+    if (likeGuide) likeGuide.classList.remove('show');
   }
 
   if (tabId === 'participants') {
@@ -623,6 +867,9 @@ export const GameMenu = {
     const sheet = document.getElementById('game-menu-sheet');
     if (backdrop) backdrop.classList.add('open');
     if (sheet) sheet.classList.add('open');
+
+    // 開いた時点でバックグラウンド動的取得を緩やかに開始
+    fetchCreatorProfilesIfNeeded();
   },
 
   close() {
@@ -651,7 +898,6 @@ function handleSendMessage() {
   const rawText = inputEl.value.trim();
   if (!rawText) return;
 
-  // 全角15文字（半角30文字）へ厳格カット
   const safeText = rawText.slice(0, 15);
   inputEl.value = '';
 
@@ -661,6 +907,19 @@ function handleSendMessage() {
 
   // 送信後、ゲーム画面を見渡せるようメニューを自動クローズ
   GameMenu.close();
+}
+
+/**
+ * XSS防止サニタイズ
+ */
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
 }
 
 /**
@@ -747,25 +1006,25 @@ export function initGameMenuDOM() {
         <div id="menu-participants-list" class="participants-container"></div>
       </div>
 
-      <!-- 3. 製作者の声タブ -->
+      <!-- 3. 製作者の声タブ（本垢＆サブ垢 2カード並列表示） -->
       <div id="menu-tab-creator" class="menu-tab-content">
-        <div class="creator-card">
-          <div class="creator-avatar-wrap" id="creator-avatar-trigger">
-            <img class="creator-avatar" src="https://norion3.github.io/bridge/assets/norion_icon.png" onerror="this.src='data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 68 68%22><circle cx=%2234%22 cy=%2234%22 r=%2234%22 fill=%22%230284c7%22/><text x=%2234%22 y=%2240%22 font-size=%2222%22 font-weight=%22bold%22 fill=%22white%22 text-anchor=%22middle%22>N</text></svg>'">
-            <span class="creator-profile-badge">製作者</span>
+        <div class="creator-section-container">
+          <!-- 参考画像（画像7）完全踏襲の感謝＆いいねメッセージ -->
+          <div class="creator-app-thanks-banner">
+            『Bridge Dash 3D』を遊んでくれてありがとう！✨<br>
+            楽しかったら右上の［<b>…</b>］ボタンから❤️<b>いいね</b>を押してね。<br>
+            ゲームの感想や要望コメントをくれるとめちゃくちゃ喜びます！
           </div>
-          <div class="creator-name">norion (のりおん)</div>
-          <div class="creator-message">
-            『Bridge Dash 3D』を遊んでくれてありがとうございます！✨<br><br>
-            もし面白かったら、右上のメニューからぜひ<b>いいね＆フォロー</b>をお願いします！更新の大きな励みになります💖
-          </div>
-          <button type="button" id="btn-jump-creator-profile" class="creator-jump-btn">
-            👤 製作者プロフィールを見る ↗
-          </button>
+
+          <!-- 2アカウントカードラッパー -->
+          <div id="menu-creator-cards-wrapper" style="display: flex; flex-direction: column; gap: 12px;"></div>
         </div>
       </div>
     `;
     document.body.appendChild(sheet);
+
+    // 初期カード描画
+    renderCreatorCards();
 
     // イベントバインド
     document.getElementById('btn-close-game-menu')?.addEventListener('click', () => GameMenu.close());
@@ -796,15 +1055,6 @@ export function initGameMenuDOM() {
         }
       });
     });
-
-    // 製作者プロフィールジャンプ（norion の user_id を指定）
-    const creatorJumpAction = () => {
-      // 製作者の GRAVITY user_id（後から変更可能）
-      const CREATOR_USER_ID = 'norion_creator';
-      GravityRouter.openProfile(CREATOR_USER_ID);
-    };
-    document.getElementById('creator-avatar-trigger')?.addEventListener('click', creatorJumpAction);
-    document.getElementById('btn-jump-creator-profile')?.addEventListener('click', creatorJumpAction);
   }
 }
 
