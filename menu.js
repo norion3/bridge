@@ -1,19 +1,18 @@
 // menu.js: ボトムシートメニュー・右下サイドMENUボタン・親指下部チャット・製作者プロフィール公式フック・参加者履歴管理
-// ★ GRAVITY公式回答完全準拠 ＆ ネイティブプロフィール直接起動版：
-//   1. 【公式推奨 方式A：公式URLトップレベル遷移によるネイティブフック起動】
-//      slme://internal?type=5（ブラウザ起動ラッパー）によるネットワークエラー画面を完全撤廃。
-//      公式短縮URL（api.gravity.place/gravity/url/...）および公式ユーザーURL（gravity.place/user/xxx）を
-//      window.top.location.href へキックし、アプリ側のネイティブインターセプトを直接発動。
-//      ゲーム画面をリロードさせることなく、ネイティブのマイページを綺麗にオーバーレイ表示させます。
-//   2. 【本垢・サブ垢・走者一覧の全導線完全対応】
-//      製作者ボタンでは公式短縮URL（yH2Wc / IH2Wc）を優先使用し、走者一覧では動的ユーザーIDから公式URLを自動生成。
-//   3. 【分割後アーキテクチャ（menu_styles.js 連携）の完全維持】
-//      スタイルシートは menu_styles.js へ外注し、可読性と保守性を維持。
-//   4. 【走者重複根絶 ＆ ルーム招待被り96px余白の完全維持】
+// ★ アプリ内ネイティブプロフィール直接起動版（走者＆製作者の完全一本化）：
+//   1. 【Web URL遷移（外部ブラウザ化）を完全根絶】
+//      window.top.location.href = 'https://...' によるWeb版GRAVITY（アプリ誘導バナー）への誤遷移を全廃。
+//   2. 【もともとの走者方式（ネイティブ起動）へ製作者も完全統合】
+//      走者（p.userId）も製作者（本垢: 2736445531 / 開発垢: 887811163）も、
+//      すべて数字の user_id を渡す統一インターフェースへ一本化。
+//   3. 【AgentSDKネイティブブリッジ ＆ slme://usercenter スキーム連動】
+//      AgentSDK.user.openUserProfile 等のネイティブブリッジを最優先実行し、
+//      フォールバックとして不可視iframe経由で GRAVITY内部スキーム（slme://usercenter?uid=xxx）をキック。
+//      ゲーム画面を壊さず、アプリ内ネイティブのマイページを直接起動します。
 
 import { injectMenuStyles } from './menu_styles.js';
 
-// 製作者アカウント定数定義（公式短縮URL対応）
+// 製作者アカウント定数定義（数字IDベース）
 export const CREATOR_ACCOUNTS = {
   main: {
     id: '2736445531',
@@ -31,7 +30,7 @@ export const CREATOR_ACCOUNTS = {
 
 /**
  * GRAVITYアプリ内ネイティブ画面遷移ルーター
- * ★【GRAVITY公式推奨 方式A】公式プロフィールURLによるネイティブフック起動
+ * ★ 走者・製作者共通：アプリ内ネイティブプロフィールを直接オーバーレイ起動
  */
 export const GravityRouter = {
   openProfile(userIdOrUrl) {
@@ -39,39 +38,73 @@ export const GravityRouter = {
     const target = String(userIdOrUrl).trim();
     if (!target || target === 'local_user' || target === 'null') return;
 
-    try {
-      let finalUrl = '';
-      if (target.startsWith('http://') || target.startsWith('https://')) {
-        // 公式短縮URL（Universal Link）が渡された場合
-        finalUrl = target;
-      } else {
-        // ユーザーID（数字等）が渡された場合は公式プロフィールURLを生成
-        finalUrl = `https://www.gravity.place/user/${target}`;
-      }
+    // 1. 数字のユーザーIDを抽出（URLが渡された場合もIDを優先抽出）
+    let cleanId = target.replace(/[^0-9]/g, '');
 
-      console.log('[GravityRouter] 公式URLネイティブフックをキック:', finalUrl);
+    // URL形式でIDが含まれていない場合は短縮URLとみなす
+    const isUrl = target.startsWith('http://') || target.startsWith('https://');
 
-      // ★ 公式推奨方式A: アプリがこのURL遷移を検知し、Web遷移をキャンセルしてネイティブ画面をオーバーレイ起動
-      if (typeof window !== 'undefined') {
-        if (window.top && window.top.location) {
-          window.top.location.href = finalUrl;
-        } else {
-          window.location.href = finalUrl;
-        }
-      }
-    } catch (err) {
-      console.warn('[GravityRouter] ネイティブフック起動失敗、フォールバックを試行:', err);
-      // 万一の例外時のみ方式B（直接スキーム）をフォールバック実行
+    console.log('[GravityRouter] アプリ内ネイティブプロフィール起動を試行: ID =', cleanId || target);
+
+    // 2. 【優先度1】AgentSDK の公式ネイティブブリッジメソッドを検証・実行
+    if (typeof window !== 'undefined' && window.AgentSDK) {
       try {
-        const cleanId = String(userIdOrUrl).replace(/[^0-9]/g, '');
-        if (cleanId) {
-          const ifr = document.createElement('iframe');
-          ifr.style.cssText = 'position:absolute;width:0;height:0;opacity:0;pointer-events:none;border:none;display:none;';
-          ifr.src = `slme://usercenter?uid=${cleanId}`;
-          document.body.appendChild(ifr);
-          setTimeout(() => { if (document.body.contains(ifr)) document.body.removeChild(ifr); }, 1000);
+        const targetIdStr = cleanId || target;
+
+        // パターンA: AgentSDK.user.openUserProfile
+        if (window.AgentSDK.user && typeof window.AgentSDK.user.openUserProfile === 'function') {
+          window.AgentSDK.user.openUserProfile({ user_id: targetIdStr, uid: targetIdStr });
+          return;
         }
-      } catch (e) {}
+        // パターンB: AgentSDK.user.openUser
+        if (window.AgentSDK.user && typeof window.AgentSDK.user.openUser === 'function') {
+          window.AgentSDK.user.openUser({ user_id: targetIdStr, uid: targetIdStr });
+          return;
+        }
+        // パターンC: AgentSDK.app.openProfile
+        if (window.AgentSDK.app && typeof window.AgentSDK.app.openProfile === 'function') {
+          window.AgentSDK.app.openProfile({ user_id: targetIdStr, uid: targetIdStr });
+          return;
+        }
+        // パターンD: AgentSDK.room.openUserProfile
+        if (window.AgentSDK.room && typeof window.AgentSDK.room.openUserProfile === 'function') {
+          window.AgentSDK.room.openUserProfile({ user_id: targetIdStr, uid: targetIdStr });
+          return;
+        }
+      } catch (sdkErr) {
+        console.warn('[GravityRouter] AgentSDK native openProfile call failed:', sdkErr);
+      }
+    }
+
+    // 3. 【優先度2】GRAVITY ネイティブ内部スキーム（slme://usercenter）をキック
+    // ※ 不可視 iframe 経由でキックすることで、ゲーム画面の白濁やリロードを防ぎ、ネイティブ画面を被せる
+    if (cleanId) {
+      try {
+        const ifr = document.createElement('iframe');
+        ifr.style.cssText = 'position:absolute;width:0;height:0;opacity:0;pointer-events:none;border:none;display:none;';
+        ifr.src = `slme://usercenter?uid=${cleanId}`;
+        document.body.appendChild(ifr);
+
+        // 1秒後にiframeを掃除
+        setTimeout(() => {
+          if (document.body.contains(ifr)) {
+            document.body.removeChild(ifr);
+          }
+        }, 1000);
+
+        // GRAVITYアプリ内環境（AgentSDK存在時）であればここで完了
+        if (typeof window !== 'undefined' && window.AgentSDK) {
+          return;
+        }
+      } catch (schemeErr) {
+        console.warn('[GravityRouter] Native scheme launch failed:', schemeErr);
+      }
+    }
+
+    // 4. 【優先度3】PCブラウザ等の非アプリ環境（検証時）のみ Web URL を開く
+    if (typeof window !== 'undefined' && !window.AgentSDK) {
+      const fallbackUrl = isUrl ? target : `https://www.gravity.place/user/${cleanId}`;
+      window.open(fallbackUrl, '_blank');
     }
   }
 };
@@ -176,7 +209,7 @@ function renderParticipantsList() {
       <div class="participant-jump-icon">↗</div>
     `;
 
-    // 走者タップ時：公式プロフィールURLによるネイティブフック起動
+    // ★ 走者タップ時：数字の userId を渡してネイティブプロフィールを起動
     row.addEventListener('click', () => {
       GravityRouter.openProfile(p.userId);
     });
@@ -362,7 +395,7 @@ export function initGameMenuDOM() {
         <div id="menu-participants-list" class="participants-container"></div>
       </div>
 
-      <!-- 3. 製作者タブ（公式短縮URL・ネイティブフック直結） -->
+      <!-- 3. 製作者タブ（走者と完全に同じネイティブ起動方式） -->
       <div id="menu-tab-creator" class="menu-tab-content">
         <div class="creator-section-container">
           <div class="creator-message-card">
@@ -415,14 +448,14 @@ export function initGameMenuDOM() {
       });
     });
 
-    // ★ 製作者プロフィール直結ボタン：公式短縮URLを直接キックしてネイティブフックを発動
+    // ★【核心改善】製作者プロフィール直結ボタン：Web URLではなく「数字ID」を渡してもともとの走者方式でネイティブ起動
     document.getElementById('btn-jump-creator-main')?.addEventListener('click', (e) => {
       e.stopPropagation();
-      GravityRouter.openProfile(CREATOR_ACCOUNTS.main.shareUrl);
+      GravityRouter.openProfile(CREATOR_ACCOUNTS.main.id);
     });
     document.getElementById('btn-jump-creator-sub')?.addEventListener('click', (e) => {
       e.stopPropagation();
-      GravityRouter.openProfile(CREATOR_ACCOUNTS.sub.shareUrl);
+      GravityRouter.openProfile(CREATOR_ACCOUNTS.sub.id);
     });
   }
 }
