@@ -1,18 +1,18 @@
 // dom.js: 画面UI・HUD・ロビー・待機室・超ミニマルエントリーシールドの動的生成モジュール
-// ★ 超ミニマル・エントリーシールド ＆ FOUC根絶（Phase 1）：
-//   1. 【初期スタイル強制非表示によるFOUC完全遮断】
+// ★ 確定仕様（ソロプレイ「1人で遊ぶ」即時起動 ＆ 超ミニマルエントリーシールド完全連動版）：
+//   1. 【「1人で遊ぶ（#btn-start-solo）」タップ即時ゲーム始動の実装】
+//      タップ時に UIController.showGame()、ロビー画面完全非表示化、スロット0バインド、
+//      launchGameEngine() を確実にキックし、1人で遊ぶが確実に起動するように修正。
+//      スマホ実機でのタップ抜けを防ぐため touchend と click の双方を確実にバインド。
+//   2. 【初期スタイル強制非表示によるFOUC完全遮断】
 //      #test-lobby-overlay の初期スタイルを display: none !important; に設定。
 //      ローダー消去から判定完了までの間に素のロビー画面が露出する事故を物理的に根絶。
-//   2. 【超ミニマル・エントリーシールド（#entry-shield）のDOM＆CSS追加】
-//      ボタン・枠線・TIPSを一切持たない、極細ネオンスピナー＋ルーム番号＋合流中テキストのみの
-//      最軽量全画面すりガラスシールド（z-index: 9999）を追加。
-//   3. 【EntryShield コントローラーの実装と公開】
-//      show(roomText, statusText), update(roomText, statusText), hide() を提供し、
-//      main.js の起動シーケンスからシームレスに操作可能。
+//   3. 【超ミニマル・エントリーシールド（#entry-shield）の完全維持】
+//      極細ネオンスピナー＋ルーム番号＋合流中テキストのみの最軽量すりガラスシールド。
 //   4. 【公開ルーム一覧の独立スクロール ＆ 1行Ellipsisの完全維持】
 //      max-height: 210px の慣性スクロールと1行省略レイアウトを100%維持。
 
-import { updatePlayerName } from './character.js';
+import { updatePlayerName, bindLocalPlayerSlot } from './character.js';
 
 /**
  * 必要なスタイル（CSS）をheadタグ内に動的注入する
@@ -301,6 +301,7 @@ export async function syncGravityUserName() {
 
 /**
  * 既存のHTML要素（#test-lobby-overlay）を最新青空ロビーへ完全上書き整形
+ * ★「1人で遊ぶ」ボタンに確実なゲーム始動処理をバインド
  */
 export function patchExistingLobbyLabels() {
   const overlay = document.getElementById('test-lobby-overlay');
@@ -329,19 +330,72 @@ export function patchExistingLobbyLabels() {
     greetingEl.style.marginBottom = '6px';
   }
 
-  // ボタンの順序入れ替え：【1人で遊ぶ】を一番上に配置し、鮮やかなシアンブルーボタンへ整形
+  // ★【核心】メインボタン「1人で遊ぶ」の始動イベント完全バインド
   const soloBtn = document.getElementById('btn-start-solo');
   if (soloBtn) {
     soloBtn.textContent = '▶ 1人で遊ぶ';
     soloBtn.className = 'btn-solo-hero';
 
-    if (!soloBtn._hasCustomListener) {
-      soloBtn._hasCustomListener = true;
-      soloBtn.addEventListener('click', () => {
+    if (!soloBtn._hasSoloListener) {
+      soloBtn._hasSoloListener = true;
+
+      const onSoloStart = (e) => {
+        if (e) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+
+        // 1. ユーザー名同期
         if (window.GRAVITY_USER_NAME) {
           updatePlayerName(window.GRAVITY_USER_NAME);
         }
-      });
+
+        // 2. ソロプレイモードの確定（マルチフラグ解除 ＆ スロット0バインド）
+        if (window.NetworkManager) {
+          window.NetworkManager.isMultiplayerActive = false;
+          window.NetworkManager.isHost = true;
+          window.NetworkManager.mySlot = 0;
+        }
+
+        if (typeof bindLocalPlayerSlot === 'function') {
+          bindLocalPlayerSlot(0);
+        } else if (typeof window.bindLocalPlayerSlot === 'function') {
+          window.bindLocalPlayerSlot(0);
+        }
+
+        // 3. ロビー画面および全オーバーレイの完全消去
+        if (typeof UIController !== 'undefined' && typeof UIController.showGame === 'function') {
+          UIController.showGame();
+        } else if (window.UIController && typeof window.UIController.showGame === 'function') {
+          window.UIController.showGame();
+        }
+
+        const allOverlays = document.querySelectorAll('.gravity-screen-overlay, #test-lobby-overlay');
+        allOverlays.forEach(ol => {
+          ol.classList.remove('active-screen');
+          ol.classList.add('hidden');
+          ol.style.setProperty('display', 'none', 'important');
+        });
+
+        const startModal = document.getElementById('modal-start');
+        if (startModal) {
+          startModal.classList.add('hidden');
+          startModal.style.setProperty('display', 'none', 'important');
+        }
+
+        // 4. ゲームエンジンの起動
+        if (typeof window.launchGameEngine === 'function') {
+          window.launchGameEngine();
+        }
+
+        const startBtn = document.getElementById('btn-start');
+        if (startBtn) {
+          startBtn.click();
+        }
+      };
+
+      soloBtn.addEventListener('touchend', onSoloStart, { passive: false });
+      soloBtn.addEventListener('click', onSoloStart);
     }
   }
 
@@ -398,7 +452,7 @@ export function patchExistingLobbyLabels() {
 }
 
 /**
- * ★【Phase 1】超ミニマル・エントリーシールド コントローラー
+ * 超ミニマル・エントリーシールド コントローラー
  */
 export const EntryShield = {
   show(roomText = 'CONNECTING...', statusText = 'ルームへ合流中...') {
@@ -485,7 +539,7 @@ export function mountAllUI(container) {
     container.appendChild(waitScreen);
   }
 
-  // ★ 超ミニマル・エントリーシールドがまだなければ動的追加
+  // 超ミニマル・エントリーシールドがまだなければ動的追加
   if (!document.getElementById('entry-shield')) {
     const shield = document.createElement('div');
     shield.id = 'entry-shield';
