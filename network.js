@@ -1,22 +1,14 @@
-// network.js: AgentSDK公式仕様完全準拠 ＆ 極小タプルパッカー ＆ スマートDelta送信 ＆ ゼロアロケーション純粋算術丸めエンジン ＆ チャット・参加者履歴・アバター完全同期
-// ★ 走者重複完全根絶 ＆ 入退室・再入室完全整合版：
-//   1. 【走者重複・3名化の完全根絶（動的IDマージ連携）】
-//      joinRoom 直後のホスト先行仮登録（host_slot_0）から、ホストの本ID（実ID）を受信した際、
-//      menu.js の自動マージエンジンと連携して確実に同一走者枠へ統合。同一人物が2行に増殖するバグを根絶。
-//   2. 【ホスト情報（Slot 0）の常時登録保護（画像26の1名化を完全根絶）】
-//      _applyRoomMembersSync 内で userId の真偽判定によるスキップを撤廃し、フォールバックID解決により
-//      ホスト枠がゲスト端末の走者一覧から消滅するバグを物理的に 100% 根絶。
-//   3. 【再入室・退室ステータスの双方向完全同期（画像20・21・25の不整合解消）】
-//      再入室時は recordParticipant で無条件に isActive = true へ復帰。
-//      退室時は markParticipantInactive で確実に「退室済み」へ更新し、何回出入りしても正確に追従。
-//   4. 【ホストアバター画像（portrait）の完全伝達の維持】
-//      slots[0] に保持されたアバターURLを ROOM_MEMBERS_SYNC 経由で確実に伝達し、ホストのアイコンを完全描画。
-//   5. 【既存の全最適化・通信安全性の100%維持】
-//      10Hz POS パケット相乗り（ch キー）、ニコニコ風弾幕テキスト（danmaku.js）連携、
-//      ボーナスブロック完全網羅スナップショット、5HzスマートDelta、11要素タプルは完全維持。
+// network.js: AgentSDK公式仕様完全準拠 ＆ 10Hz POS 送受信ループ ＆ 自律ホスト昇格 ＆ スナップショット復元司令塔
+// ★ Package 3 プロトコル・ロビー分離＆スリム化司令塔版（net_protocol.js ＆ net_lobby_hooks.js 統合）：
+//   1. 【純粋タプル計算・ビット演算を net_protocol.js へ完全外注】
+//      round1, round2, encodeCharacterToTuple, decodeTupleToCharacterPacket,
+//      getTeamIdBySlot, generateClientId を外部モジュールからインポート。
+//   2. 【レース中非稼働のロビーDOM処理を net_lobby_hooks.js へ完全外注】
+//      hookLobbyNetworkEvents を外部モジュールからインポート＆再エクスポートし、後方互換100%を維持。
+//   3. 【走者重複根絶・入退室ステータス整合・ホストアバター完全同期の100%維持】
+//      joinRoom先行仮登録、フォールバックID解決、無条件isActive復帰、slots[0].portrait伝達を完全維持。
 
 import {
-  player,
   characters,
   createNameplateMesh,
   updatePlayerName,
@@ -46,38 +38,20 @@ import {
   markParticipantInactive
 } from './menu.js';
 
-// --- 高速・ゼロアロケーション純粋算術丸めヘルパー（文字列インスタンス生成ゼロ） ---
-const round1 = (val) => Math.round(val * 10) / 10;
-const round2 = (val) => Math.round(val * 100) / 100;
+// ★ net_protocol.js から純粋計算・タプル変換関数をインポート
+import {
+  round1,
+  round2,
+  getTeamIdBySlot,
+  generateClientId,
+  encodeCharacterToTuple,
+  decodeTupleToCharacterPacket
+} from './net_protocol.js';
 
-// --- アクション状態IDおよびビットマスク定数マッピング ---
-const ACTION_STATE_TO_ID = {
-  NORMAL: 0,
-  JUMP: 1,
-  SKYDIVE: 2,
-  ELEVATOR: 3,
-  TRAPDOOR: 4,
-  ZIPLINE: 5,
-  SLIDE: 6
-};
+// ★ net_lobby_hooks.js からロビーイベントフックをインポート＆再エクスポート
+import { hookLobbyNetworkEvents } from './net_lobby_hooks.js';
 
-const ID_TO_ACTION_STATE = [
-  'NORMAL',
-  'JUMP',
-  'SKYDIVE',
-  'ELEVATOR',
-  'TRAPDOOR',
-  'ZIPLINE',
-  'SLIDE'
-];
-
-// スロット番号に応じたチームカラーID取得ヘルパー
-function getTeamIdBySlot(slot) {
-  if (slot === 0) return 'blue';
-  if (slot === 1) return 'red';
-  if (slot === 2) return 'yellow';
-  return 'neutral';
-}
+export { hookLobbyNetworkEvents };
 
 /**
  * 未入室時の exit() による無限保留（Promiseハング）を確実に防ぐ安全退出ヘルパー
@@ -233,96 +207,6 @@ function captureFullWorldSnapshot() {
   }
 
   return { blocks, planks, items, bonuses };
-}
-
-function generateClientId() {
-  return 'client_' + Math.random().toString(36).substring(2, 9) + '_' + Date.now();
-}
-
-function getCharacterActionState(c) {
-  if (!c) return 'NORMAL';
-  if (c.isJumping) return 'JUMP';
-  if (c.onSkydive) return 'SKYDIVE';
-  if (c.onElevator) return 'ELEVATOR';
-  if (c.onTrapdoor || c.onFreefall) return 'TRAPDOOR';
-  if (c.onZipline) return 'ZIPLINE';
-  if (c.onSlide || c.onCurvedSlide) return 'SLIDE';
-  return 'NORMAL';
-}
-
-function encodeCharacterToTuple(charObj, slotIndex, vx = 0, vz = 0) {
-  const stateStr = getCharacterActionState(charObj);
-  const stateId = ACTION_STATE_TO_ID[stateStr] !== undefined ? ACTION_STATE_TO_ID[stateStr] : 0;
-
-  let flags = 0;
-  if (charObj.speedBoostActive) flags |= 1;
-  if (charObj.stunTimer > 0) flags |= 2;
-  if (charObj.shrinkTimer > 0) flags |= 4;
-  if (charObj.magnetActive) flags |= 8;
-  if (charObj.invulnerableTimer > 0) flags |= 16;
-
-  const rawRotY = (charObj.meshObj && charObj.meshObj.root)
-    ? charObj.meshObj.root.rotation.y
-    : (charObj.rotation || 0);
-  const rotY = round2(rawRotY);
-
-  const tuple = [
-    slotIndex,
-    round1(charObj.pos.x),
-    round1(charObj.pos.y),
-    round1(charObj.pos.z),
-    round1(vx),
-    round1(vz),
-    rotY,
-    charObj.stackCount || 0,
-    charObj.currentStage || 0,
-    stateId,
-    flags
-  ];
-
-  if (stateId === 3 && typeof charObj.elevatorLane === 'number') {
-    tuple.push(charObj.elevatorLane);
-  }
-
-  return tuple;
-}
-
-function decodeTupleToCharacterPacket(item) {
-  if (!Array.isArray(item)) {
-    return item;
-  }
-
-  const slot = item[0];
-  const x = item[1];
-  const y = item[2];
-  const z = item[3];
-  const vx = item[4] || 0;
-  const vz = item[5] || 0;
-  const rotY = item[6] || 0;
-  const stack = item[7] || 0;
-  const stage = item[8] || 0;
-  const stateId = item[9] || 0;
-  const flags = item[10] || 0;
-  const elevatorLane = item[11] !== undefined ? item[11] : undefined;
-
-  return {
-    slot: slot,
-    x: x,
-    y: y,
-    z: z,
-    vx: vx,
-    vz: vz,
-    rotY: rotY,
-    stack: stack,
-    stage: stage,
-    state: ID_TO_ACTION_STATE[stateId] || 'NORMAL',
-    boost: Boolean(flags & 1),
-    stun: Boolean(flags & 2),
-    shrink: Boolean(flags & 4),
-    magnet: Boolean(flags & 8),
-    invuln: Boolean(flags & 16),
-    e: elevatorLane
-  };
 }
 
 export const NetworkManager = {
@@ -487,7 +371,6 @@ export const NetworkManager = {
   },
 
   async init() {
-    // menu.js のチャット送信コールバックを接続
     setChatSendCallback((msg) => {
       this.queueChat(msg);
     });
@@ -505,7 +388,6 @@ export const NetworkManager = {
           portrait: res.data.portrait || res.data.portait || ''
         };
         window.GRAVITY_USER_NAME = this.myUser.name;
-        // 参加者履歴に自機を登録
         recordParticipant(this.myUser.user_id, this.myUser.name, this.myUser.portrait, 'blue', true);
       }
     } catch (err) {
@@ -772,7 +654,6 @@ export const NetworkManager = {
       this.slots[1] = { slot: 1, clientId: null, userId: null, name: 'CPU 1', portrait: '', isAI: true };
       this.slots[2] = { slot: 2, clientId: null, userId: null, name: 'CPU 2', portrait: '', isAI: true };
 
-      // 自機を参加者履歴に登録
       recordParticipant(this.myUser.user_id, this.myUser.name, this.myUser.portrait, 'blue', true);
 
       const activeScene = (typeof window !== 'undefined' && window.currentSceneRef) ? window.currentSceneRef : null;
@@ -877,10 +758,9 @@ export const NetworkManager = {
       }
       updatePlayerName(myRealName);
 
-      // 自機を赤チームとして参加者履歴に登録（再入室時も確実にアクティブ点灯）
       recordParticipant(this.myUser.user_id, myRealName, this.myUser.portrait, 'red', true);
 
-      // ★ ホスト（Slot 0）の先行仮登録（パケット受信前でも走者タブが1人にならないよう保護）
+      // ホスト（Slot 0）の先行仮登録
       this._bindRemoteSlot(0, 'norion');
       recordParticipant('host_slot_0', 'norion', '', 'blue', true);
 
@@ -927,11 +807,9 @@ export const NetworkManager = {
         };
         this._bindRemoteSlot(targetSlot, guestName);
 
-        // 再入室時は確実にアクティブ状態で履歴登録・更新
         recordParticipant(userId, guestName, portrait, getTeamIdBySlot(targetSlot), true);
       }
 
-      // ホスト自身の portrait も確実に slots[0] に保証してパケット送出
       if (this.slots[0]) {
         this.slots[0].portrait = this.myUser.portrait || this.slots[0].portrait || '';
       }
@@ -1072,7 +950,6 @@ export const NetworkManager = {
         }
       }
 
-      // バッファから各アクションを切り出し
       const outgoingPlanks = this._pendingPlanks.length > 0 ? [...this._pendingPlanks] : undefined;
       const outgoingPicks = this._pendingPicks.length > 0 ? [...this._pendingPicks] : undefined;
       const outgoingConsumes = this._pendingConsumes.length > 0 ? [...this._pendingConsumes] : undefined;
@@ -1104,7 +981,6 @@ export const NetworkManager = {
       this._idleKeepAliveCounter = 0;
       this._lastSentSnapshot = myTuple;
 
-      // バッファクリア
       this._pendingPlanks.length = 0;
       this._pendingPicks.length = 0;
       this._pendingConsumes.length = 0;
@@ -1194,12 +1070,10 @@ export const NetworkManager = {
       }
 
       if (eventType === 'P' || eventType === 'POS') {
-        // 0. snap
         if (packet.snap) {
           this._applySnapshotChunk(packet.snap);
         }
 
-        // 1. l / list
         const incomingList = packet.l || packet.list;
         if (Array.isArray(incomingList)) {
           for (let i = 0; i < incomingList.length; i++) {
@@ -1210,7 +1084,6 @@ export const NetworkManager = {
           this._handleRemotePosition(packet);
         }
 
-        // ch (チャットメッセージ着信・ニコニコ風弾幕発火)
         const chatsList = packet.ch;
         if (Array.isArray(chatsList) && chatsList.length > 0) {
           chatsList.forEach(c => {
@@ -1224,7 +1097,6 @@ export const NetworkManager = {
           });
         }
 
-        // 2. sc
         const scattersList = packet.sc || packet.scatters;
         if (Array.isArray(scattersList) && scattersList.length > 0) {
           scattersList.forEach(sc => {
@@ -1249,7 +1121,6 @@ export const NetworkManager = {
           });
         }
 
-        // 3. pk
         const picksList = packet.pk || packet.picks;
         if (Array.isArray(picksList) && picksList.length > 0) {
           picksList.forEach(pk => {
@@ -1259,7 +1130,6 @@ export const NetworkManager = {
           });
         }
 
-        // 階段設置
         const planksList = packet.pl || packet.planks;
         if (Array.isArray(planksList) && planksList.length > 0) {
           planksList.forEach(p => {
@@ -1269,7 +1139,6 @@ export const NetworkManager = {
           });
         }
 
-        // 4. co
         const consumesList = packet.co || packet.consumes;
         if (Array.isArray(consumesList) && consumesList.length > 0) {
           consumesList.forEach(c => {
@@ -1283,7 +1152,6 @@ export const NetworkManager = {
           });
         }
 
-        // 5. bl
         const blowsList = packet.bl || packet.blows;
         if (Array.isArray(blowsList) && blowsList.length > 0) {
           blowsList.forEach(bl => {
@@ -1293,7 +1161,6 @@ export const NetworkManager = {
           });
         }
 
-        // 6. sp
         const spawnsList = packet.sp;
         if (Array.isArray(spawnsList) && spawnsList.length > 0 && typeof window.applyRemoteBlockSpawned === 'function') {
           spawnsList.forEach(sp => {
@@ -1302,7 +1169,6 @@ export const NetworkManager = {
           });
         }
 
-        // 7. ko
         const knockoutsList = packet.ko;
         if (Array.isArray(knockoutsList) && knockoutsList.length > 0) {
           knockoutsList.forEach(ko => {
@@ -1312,7 +1178,6 @@ export const NetworkManager = {
           });
         }
 
-        // 8. sk
         const skillsList = packet.sk;
         if (Array.isArray(skillsList) && skillsList.length > 0) {
           skillsList.forEach(sk => {
@@ -1323,7 +1188,6 @@ export const NetworkManager = {
           });
         }
 
-        // 9. tl
         if (packet.tl !== undefined && !this.isHost && typeof window.applyRemoteTimeSync === 'function') {
           window.applyRemoteTimeSync(packet.tl);
         }
@@ -1449,7 +1313,6 @@ export const NetworkManager = {
             : this.myUser.name;
           updatePlayerName(myRealName);
         }
-        // 参加者一覧に自機を登録（再入室時も確実にアクティブ復帰）
         recordParticipant(this.myUser.user_id, this.myUser.name, this.myUser.portrait, getTeamIdBySlot(this.mySlot), true);
         notifyRestartButtonVisibility();
         return;
@@ -1459,7 +1322,6 @@ export const NetworkManager = {
       if (!s.isAI && (s.clientId || s.userId || (!this.isHost && s.slot === 0))) {
         this._bindRemoteSlot(s.slot, s.name);
         
-        // userId の有無に左右されず、フォールバック ID で確実に走者一覧に登録・アクティブ復元
         const resolvedUserId = (s.userId && s.userId !== 'local_user' && s.userId !== 'null')
           ? String(s.userId)
           : (s.slot === 0 ? 'host_slot_0' : `guest_slot_${s.slot}`);
@@ -1741,7 +1603,6 @@ export const NetworkManager = {
 
       this._restoreSlotToAI(exitedSlotIdx);
 
-      // 参加者リスト上の退室状態を確実に更新
       markParticipantInactive(userId);
 
       if (isExitedSlotHost) {
@@ -1769,7 +1630,6 @@ export const NetworkManager = {
     this._lastSentSnapshot = null;
     this._idleKeepAliveCounter = 0;
 
-    // 自機の退室状態をマーク
     if (this.myUser && this.myUser.user_id) {
       markParticipantInactive(this.myUser.user_id);
     }
@@ -1799,131 +1659,4 @@ export const NetworkManager = {
 
 if (typeof window !== 'undefined') {
   window.NetworkManager = NetworkManager;
-}
-
-let lastCreateActionTime = 0;
-
-export function hookLobbyNetworkEvents() {
-  const btnCreatePublic = document.getElementById('btn-create-public');
-  if (btnCreatePublic && !btnCreatePublic._hasNetHook) {
-    btnCreatePublic._hasNetHook = true;
-
-    const onCreateHandler = (e) => {
-      if (e) {
-        e.preventDefault();
-        e.stopPropagation();
-      }
-      const now = Date.now();
-      if (now - lastCreateActionTime < 1000) {
-        return;
-      }
-      lastCreateActionTime = now;
-      NetworkManager.createRoom(false);
-    };
-
-    btnCreatePublic.addEventListener('touchend', onCreateHandler, { passive: false });
-    btnCreatePublic.addEventListener('click', onCreateHandler);
-  }
-
-  const btnCreatePrivate = document.getElementById('btn-create-private');
-  if (btnCreatePrivate && !btnCreatePrivate._hasNetHook) {
-    btnCreatePrivate._hasNetHook = true;
-
-    const onCreatePrivateHandler = (e) => {
-      if (e) {
-        e.preventDefault();
-        e.stopPropagation();
-      }
-      const now = Date.now();
-      if (now - lastCreateActionTime < 1000) {
-        return;
-      }
-      lastCreateActionTime = now;
-      NetworkManager.createRoom(true);
-    };
-
-    btnCreatePrivate.addEventListener('touchend', onCreatePrivateHandler, { passive: false });
-    btnCreatePrivate.addEventListener('click', onCreatePrivateHandler);
-  }
-
-  const btnRefresh = document.getElementById('btn-refresh-rooms');
-  if (btnRefresh && !btnRefresh._hasNetHook) {
-    btnRefresh._hasNetHook = true;
-
-    let lastRefreshActionTime = 0;
-    const onRefreshHandler = async (e) => {
-      if (e) {
-        e.preventDefault();
-        e.stopPropagation();
-      }
-      const now = Date.now();
-      if (now - lastRefreshActionTime < 1000) {
-        return;
-      }
-      lastRefreshActionTime = now;
-
-      btnRefresh.textContent = '更新中...';
-      const rooms = await NetworkManager.getPublicRooms();
-      btnRefresh.textContent = '更新';
-
-      const container = document.getElementById('room-list-container');
-      if (!container || !rooms) return;
-
-      if (rooms.length === 0) {
-        container.innerHTML = '<div style="font-size: 14px; color: #bae6fd; padding: 20px 0; text-align: center;">公開ルームはありません</div>';
-        return;
-      }
-
-      container.innerHTML = '';
-      rooms.forEach((r) => {
-        const item = document.createElement('div');
-        item.className = 'gravity-room-item';
-        const strRoomId = String(r.room_id);
-        item.innerHTML = `
-          <div style="min-width: 0; flex: 1; margin-right: 10px; display: flex; flex-direction: column; gap: 2px;">
-            <span style="font-weight: 800; color: #ffffff; font-size: 13px; letter-spacing: 0.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">ROOM #${strRoomId}</span>
-            <span style="font-size: 12px; color: #bae6fd;">走者: ${r.gamer_num || 1} / ${r.max_players || 3}名</span>
-          </div>
-          <button type="button" class="gravity-btn-green" style="flex-shrink: 0; width: auto; padding: 6px 14px; font-size: 13px; border-radius: 8px;">参加</button>
-        `;
-        const joinBtn = item.querySelector('button');
-
-        let lastJoinTime = 0;
-        const onJoinHandler = (ev) => {
-          if (ev) {
-            ev.preventDefault();
-            ev.stopPropagation();
-          }
-          const jNow = Date.now();
-          if (jNow - lastJoinTime < 1000) {
-            return;
-          }
-          lastJoinTime = jNow;
-
-          if (typeof window !== 'undefined' && window.launchGameEngine) {
-            window.launchGameEngine();
-          }
-
-          NetworkManager.joinRoom(strRoomId);
-        };
-
-        joinBtn.addEventListener('touchend', onJoinHandler, { passive: false });
-        joinBtn.addEventListener('click', onJoinHandler);
-        container.appendChild(item);
-      });
-    };
-
-    btnRefresh.addEventListener('touchend', onRefreshHandler, { passive: false });
-    btnRefresh.addEventListener('click', onRefreshHandler);
-  }
-}
-
-if (typeof window !== 'undefined') {
-  window.hookLobbyNetworkEvents = hookLobbyNetworkEvents;
-}
-
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', hookLobbyNetworkEvents);
-} else {
-  hookLobbyNetworkEvents();
 }

@@ -1,18 +1,17 @@
-// systems.js: 物理移動判定・スカイウォーク歩行開放・ハッチ進入同期・リュック収納アニメーション連動・シームレス風音連携・スカイダイブ＆スライダーボーナス回収・合流島安全着地完全整合・お邪魔キャラ衝突判定・下層島誤ワープ完全防止・階段/床ブロック取得リアルタイム同期
-// ★ Phase 2 完全整合版（二股分岐における左右階段の識別子分離＆色化け不具合根絶）：
-//   1. 【applyRemotePlankBuilt の左右橋一意マッチング保証】
-//      world.js で分離された laneIdx（左: 0, 右: 2）に基づき、localBridges.find(b => b.laneIdx === laneIdx) が
-//      左右の階段を 100% 誤認なく特定。ゲストが右階段（laneIdx: 2）を踏んだパケットで左階段が塗られる現象を完全根絶。
-//   2. 【単一レーン分岐階段の actualBridgeX 基準進入・架橋判定の完全整合】
-//      二股分岐の左右の橋（laneIdx: 0 または 2）に進入・架橋する際、レーン番号に依存せず
-//      橋固有のワールドX座標（actualBridgeX: -6.5 / +6.5）を基準に正確な段板生成・登攀判定を維持。
-//   3. 【残存生送信フォールバック完全撤廃・マグネット全走者吸着・O(1)参照の完全維持】
-//      100ms周期POSパケット集約、ゼロアロケーションバッファ、衝突判定は100%維持。
+// systems.js: 自機・AIの物理移動計算・島内判定・階段架橋登攀判定・アトラクション進入判定司令塔
+// ★ Package 2 受信ハンドラ分離＆スリム化司令塔版（systems_remote.js 統合）
+//   1. 【受信ハンドラを systems_remote.js へ完全外注】
+//      applyRemotePlankBuilt, applyRemoteBlockPicked, applyRemoteObjectConsumed, applyRemoteBlowMob を
+//      systems_remote.js からインポート＆再エクスポートし、後方互換性100%を維持。
+//   2. 【自機・AI移動・階段物理計算への専念】
+//      二股分岐における左右レーン（左: 0, 右: 2）の actualBridgeX 基準登攀判定、
+//      6大アトラクション進入判定、お邪魔モブ・ゲート衝突判定に特化。
+//   3. 【GCスパイク防止の静的再利用バッファ完全維持】
+//      reusableLocalBridges による配列生成ゼロ化、衝突調停は100%維持。
 
 import {
   TRAMPOLINE_TIERS,
   LANES,
-  ELEVATOR_CONFIG,
   SKYDIVE_CONFIG,
   TRAPDOOR_CONFIG
 } from './constants.js';
@@ -57,8 +56,20 @@ import {
   tackleKnockout
 } from './combat.js';
 
-// 他モジュールへの後方互換再エクスポート
+// ★ systems_remote.js から受信ハンドラをインポート
+import {
+  applyRemotePlankBuilt,
+  applyRemoteBlockPicked,
+  applyRemoteObjectConsumed,
+  applyRemoteBlowMob
+} from './systems_remote.js';
+
+// 他モジュールへの後方互換再エクスポート（外部からの import を100%保証）
 export {
+  applyRemotePlankBuilt,
+  applyRemoteBlockPicked,
+  applyRemoteObjectConsumed,
+  applyRemoteBlowMob,
   scatterBricks,
   fireHomingCrystal,
   fireThunderStrike,
@@ -79,192 +90,6 @@ export function setSystemCallbacks(sound, updateHUD, onPlankPlaced = null) {
   updateHUDRef = updateHUD;
   onPlankPlacedCallback = onPlankPlaced;
   setCombatCallbacks(sound, updateHUD);
-}
-
-/**
- * リモートプレイヤーが階段を設置した際の受信ハンドラ（段板カラー即時同期 ＆ スタック整合）
- * ★【Phase 2 核心】二股分岐の左右の橋（左: laneIdx 0, 右: laneIdx 2）を誤認なく一意に特定
- */
-export function applyRemotePlankBuilt(stageIdx, laneIdx, plankIdx, teamId) {
-  const localBridges = bridgesByStage.get(stageIdx) || [];
-  // 左右で分離された laneIdx (左=0, 右=2, 通常3レーン=0,1,2) により確実に目的の橋がヒット
-  const onBridge = localBridges.find(b => b.laneIdx === laneIdx);
-  if (!onBridge || !onBridge.solidMesh || !onBridge.ghostMesh) return;
-
-  const currentP = onBridge.planks[plankIdx];
-  if (!currentP) return;
-
-  currentP.teamId = teamId;
-
-  const fromStg = STAGES[onBridge.stageIdx];
-  const bCenterX = fromStg ? (fromStg.x || 0.0) : 0.0;
-  const currentLaneX = (onBridge.actualBridgeX !== undefined)
-    ? onBridge.actualBridgeX
-    : (bCenterX + (LANES[onBridge.laneIdx] !== undefined ? LANES[onBridge.laneIdx] : 0.0));
-
-  // ゴースト非表示
-  dummyPlankObj.position.set(currentLaneX, currentP.y, currentP.z);
-  dummyPlankObj.rotation.set(0, 0, 0);
-  dummyPlankObj.scale.set(0, 0, 0);
-  dummyPlankObj.updateMatrix();
-  onBridge.ghostMesh.setMatrixAt(plankIdx, dummyPlankObj.matrix);
-  onBridge.ghostMesh.instanceMatrix.needsUpdate = true;
-
-  // 実体段板表示 ＆ カラー反映
-  dummyPlankObj.scale.set(1, 1, 1);
-  dummyPlankObj.updateMatrix();
-  onBridge.solidMesh.setMatrixAt(plankIdx, dummyPlankObj.matrix);
-  onBridge.solidMesh.instanceMatrix.needsUpdate = true;
-
-  if (teamId === 'blue') onBridge.solidMesh.setColorAt(plankIdx, COLOR_BLUE_PLANK);
-  else if (teamId === 'red') onBridge.solidMesh.setColorAt(plankIdx, COLOR_RED_PLANK);
-  else if (teamId === 'yellow') onBridge.solidMesh.setColorAt(plankIdx, COLOR_YELLOW_PLANK);
-
-  if (onBridge.solidMesh.instanceColor) {
-    onBridge.solidMesh.instanceColor.needsUpdate = true;
-  }
-
-  const builderChar = characters.find(c => !c.isPlayer && c.team && c.team.id === teamId);
-  if (builderChar && builderChar.stackCount > 0) {
-    removeBrickFromCharacter(builderChar);
-  }
-}
-
-/**
- * リモートプレイヤーまたはホスト側AIが床ブロックを拾った際の受信ハンドラ
- */
-export function applyRemoteBlockPicked(stageIdx, poolIdx, x, z, blockId = null) {
-  const stageBlocks = getFloorBlocksForStage(stageIdx);
-  let targetBlock = null;
-
-  // 1. 【最優先】一意の blockId が指定されている場合は完全一致で検索
-  if (blockId) {
-    targetBlock = stageBlocks.find(b => b.active && b.blockId === blockId);
-  }
-
-  // 2. blockId で見つからない、または旧パケットの場合は近接座標マッチング（距離 1.2m 以内）
-  if (!targetBlock && x !== undefined && z !== undefined) {
-    let minDistSq = 1.2 * 1.2;
-    for (let i = 0; i < stageBlocks.length; i++) {
-      const b = stageBlocks[i];
-      if (b.active) {
-        const dx = b.pos.x - x;
-        const dz = b.pos.z - z;
-        const distSq = dx * dx + dz * dz;
-        if (distSq < minDistSq) {
-          minDistSq = distSq;
-          targetBlock = b;
-        }
-      }
-    }
-  }
-
-  if (targetBlock) {
-    // 該当ステージ内でマグネットを発動しているキャラクターを探索
-    let magnetChar = null;
-    let minCharDistSq = 9.5 * 9.5;
-
-    for (let c = 0; c < characters.length; c++) {
-      const ch = characters[c];
-      if (ch.currentStage === stageIdx && ch.magnetActive && ch.pos) {
-        const cdx = ch.pos.x - targetBlock.pos.x;
-        const cdz = ch.pos.z - targetBlock.pos.z;
-        const cDistSq = cdx * cdx + cdz * cdz;
-        if (cDistSq < minCharDistSq) {
-          minCharDistSq = cDistSq;
-          magnetChar = ch;
-        }
-      }
-    }
-
-    if (magnetChar && !targetBlock.attracting) {
-      targetBlock.attracting = true;
-      targetBlock.active = false;
-      const sIdx = stageBlocks.indexOf(targetBlock);
-      if (sIdx !== -1) {
-        stageBlocks.splice(sIdx, 1);
-      }
-
-      const startVec = new THREE.Vector3(targetBlock.mesh.position.x, targetBlock.mesh.position.y, targetBlock.mesh.position.z);
-      activeMagnetBlocks.push({
-        poolItem: targetBlock,
-        mesh: targetBlock.mesh,
-        targetChar: magnetChar,
-        team: targetBlock.team,
-        startPos: startVec,
-        progress: 0,
-        duration: 0.55
-      });
-    } else {
-      targetBlock.active = false;
-      targetBlock.mesh.visible = false;
-      targetBlock.attracting = false;
-      const sIdx = stageBlocks.indexOf(targetBlock);
-      if (sIdx !== -1) {
-        stageBlocks.splice(sIdx, 1);
-      }
-    }
-  }
-}
-
-/**
- * 相手端末で消費されたアイテム・ゲートの強制消去ハンドラ
- */
-export function applyRemoteObjectConsumed(objectId, objectType) {
-  if (!objectId || !objectType) return;
-
-  if (objectType === 'item') {
-    const idx = floorItems.findIndex(i => i.itemId === objectId);
-    if (idx !== -1) {
-      const item = floorItems[idx];
-      item.active = false;
-      if (item.group) {
-        item.group.visible = false;
-      }
-      floorItems.splice(idx, 1);
-    }
-  } else if (objectType === 'gate') {
-    const gate = modifierGates.find(g => g.gateId === objectId);
-    if (gate && !gate.consumed) {
-      gate.consumed = true;
-      if (gate.meshGroup) {
-        gate.meshGroup.visible = false;
-      }
-    }
-  }
-}
-
-/**
- * 他端末で敵モブが吹き飛ばされた際の受信ハンドラ
- */
-export function applyRemoteBlowMob(mobIndex, stageIdx, pushDirX = 1.0) {
-  let targetMob = null;
-
-  if (mobIndex !== undefined && mobIndex >= 0 && mobIndex < obstacleMobs.length) {
-    const m = obstacleMobs[mobIndex];
-    if (m && m.active && !m.blownAway && m.stageIdx === stageIdx) {
-      targetMob = m;
-    }
-  }
-
-  if (!targetMob) {
-    targetMob = obstacleMobs.find(m => m.active && !m.blownAway && m.stageIdx === stageIdx);
-  }
-
-  if (targetMob) {
-    targetMob.blownAway = true;
-    const dirX = (typeof pushDirX === 'number' && !isNaN(pushDirX)) ? pushDirX : 1.0;
-    targetMob.blowVelocity.set(dirX * 12.0, 16.0, -18.0);
-    triggerLandingShockwave(targetMob.currentX, targetMob.baseY + 0.2, targetMob.baseZ, 2.5, 0xf97316);
-  }
-}
-
-// グローバル公開
-if (typeof window !== 'undefined') {
-  window.applyRemotePlankBuilt = applyRemotePlankBuilt;
-  window.applyRemoteBlockPicked = applyRemoteBlockPicked;
-  window.applyRemoteObjectConsumed = applyRemoteObjectConsumed;
-  window.applyRemoteBlowMob = applyRemoteBlowMob;
 }
 
 export function checkGateCollisions(scene, char) {
@@ -729,7 +554,7 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
                   }
                 }
 
-                // ★ 分離された固有レーン番号 (左: 0, 右: 2, 通常: 0/1/2) でパケット送信
+                // 分離された固有レーン番号 (左: 0, 右: 2, 通常: 0/1/2) でパケット送信
                 const isHost = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isHost);
                 const shouldBroadcastPlank = char.isPlayer || (isHost && char.isAI);
 
