@@ -1,18 +1,22 @@
 // menu.js: ボトムシートメニュー・右下サイドMENUボタン・親指下部チャット・製作者プロフィール安全キック・ネオンいいね誘導
-// ★ GRAVITY公式推奨仕様完全準拠 ＆ ルーム招待被り完全解消版（Step 1）：
-//   1. 【公式推奨：非表示iframeによる安全ネイティブキック（真っ黒画面の完全根絶）】
+// ★ 視覚アライメント精密最適化 ＆ 走者重複完全根絶 ＆ 公式非表示iframe完全準拠版：
+//   1. 【右上「いいね誘導」吹き出しの精密最適化】
+//      ・テキスト配置を自然な「左詰め（text-align: left）」へ刷新（行頭が揃って可読性UP）。
+//      ・GRAVITY上部ボタンと三角矢印先端の間に約8〜10pxの快適な余白（抜け）を確保。
+//      ・GRAVITY右端ボタンの中心線（右端から約33px）へ三角矢印の先端を数学的に精密一致。
+//   2. 【走者重複・3名増殖の完全根絶（動的仮キー自動マージ）】
+//      joinRoom 直後に登録される仮キー（host_slot_0）と本ID（2736445531等）を自動検知して統合。
+//      同一人物が2行に増殖するバグを物理的に根絶し、一般プレイヤー同士でも常に正確な人数を表示。
+//   3. 【公式推奨：非表示iframeによる安全ネイティブキック（真っ黒画面の完全根絶）】
 //      window.top.location.href の直接書き換えを全廃し、動的生成した非表示 iframe の src へ
 //      slme://internal 内部スキームを流し込む方式へ完全統一。
 //      ゲーム画面のアンロードや通信エラー画面（画像24）への遷移が物理的に 100% 発生しなくなります。
-//   2. 【「ルーム招待 ⇧」ボタン被り完全解消レイアウト】
+//   4. 【「ルーム招待 ⇧」ボタン被り完全解消レイアウト】
 //      ボトムシート各タブのスクロール領域下部に max(96px, env(safe-area-inset-bottom, 24px) + 72px) の
 //      ゆったりとした安全余白（Padding）を配置。スクロール時に最下部ボタンが上に持ち上がり、誤爆なく快適にタップ可能。
-//   3. 【製作者タブ：本垢（2736445531）＆ サブ垢（887811163）安全直結ボタン】
+//   5. 【製作者タブ：本垢（2736445531）＆ サブ垢（887811163）安全直結ボタン】
 //      壊れる要素を物理的に排除したボタン特化型スリムUIを維持し、確実にマイページへジャンプ。
-//   4. 【再入室時のアクティブ無条件復帰保証】
-//      一度「退室済み」となったユーザーが再入室した際、recordParticipant 呼び出しで
-//      即座に isActive = true へ復元し、走者タブのステータス同期を完全保護。
-//   5. 【MENUボタン右下親指配置 ＆ チャット下部入力・定型文8種】
+//   6. 【MENUボタン右下親指配置 ＆ チャット下部入力・定型文8種】
 //      中央スワイプエリアの完全開放、文字ズレのない英語半角「MENU」、親指で届く快適UIを完全維持。
 
 /**
@@ -86,16 +90,28 @@ export function setChatSendCallback(fn) {
 
 /**
  * 参加者履歴の登録・更新
- * ★ 再入室時は無条件で isActive = true へ復元
+ * ★ 仮キー（host_slot_0等）と本ID（実ID）の自動マージにより走者重複（norion増殖）を根絶
  */
 export function recordParticipant(userId, name, portrait, teamId, isActive = true) {
   if (!userId || userId === 'local_user') return;
   const key = String(userId);
+  const cleanName = name || 'プレイヤー';
+
+  // 本ID（数字や固有ID）が届いた際、古い先行仮キー（host_slot_0 / guest_slot_*）を自動消去して統合
+  if (key !== 'host_slot_0' && !key.startsWith('guest_slot_')) {
+    for (const [existingKey, p] of sessionParticipants.entries()) {
+      if ((existingKey === 'host_slot_0' || existingKey.startsWith('guest_slot_')) && p.name === cleanName) {
+        sessionParticipants.delete(existingKey);
+      }
+    }
+  }
+
+  const existing = sessionParticipants.get(key) || {};
   sessionParticipants.set(key, {
     userId: key,
-    name: name || 'プレイヤー',
-    portrait: portrait || '',
-    teamId: teamId || 'neutral',
+    name: cleanName,
+    portrait: portrait || existing.portrait || '',
+    teamId: teamId || existing.teamId || 'neutral',
     isActive: Boolean(isActive),
     lastSeen: Date.now()
   });
@@ -505,11 +521,14 @@ function injectMenuStyles() {
       flex-shrink: 0;
     }
 
-    /* 右上「いいね誘導」ネオンシアン配置 */
+    /* =========================================================
+       ★ 右上「いいね誘導」ネオンシアン吹き出し（位置・余白・左詰め最適化版）
+       ========================================================= */
     #like-guide-anchor {
       position: fixed;
-      top: max(56px, env(safe-area-inset-top, 24px) + 42px);
-      right: 14px;
+      /* 上部ボタンとの間に約8〜10pxの快適な余白（抜け）を確保 */
+      top: max(56px, env(safe-area-inset-top, 24px) + 48px);
+      right: 12px;
       z-index: 95;
       display: flex;
       flex-direction: column;
@@ -523,15 +542,21 @@ function injectMenuStyles() {
       opacity: 1;
       transform: translateY(0);
     }
+
+    /* 三角矢印（上部GRAVITYボタンの中心線：右端から約33pxにピタリと合わせる） */
     .like-guide-arrow {
       width: 0;
       height: 0;
       border-left: 7px solid transparent;
       border-right: 7px solid transparent;
       border-bottom: 9px solid #38bdf8;
-      margin-right: 18px;
+      /* アンカー(12px) + マージン(14px) + 矢印半幅(7px) = 右端から33pxの中心アライメント */
+      margin-right: 14px;
+      margin-bottom: 3px;
       animation: likeArrowPulse 0.8s ease-in-out infinite alternate;
     }
+
+    /* 吹き出し本体（自然な左詰め＆高視認性） */
     .like-guide-bubble {
       background: linear-gradient(135deg, rgba(2, 132, 199, 0.95) 0%, rgba(3, 105, 161, 0.98) 100%);
       border: 1.5px solid #38bdf8;
@@ -540,10 +565,14 @@ function injectMenuStyles() {
       color: #ffffff;
       font-size: 12px;
       font-weight: 800;
+      letter-spacing: 0.02em;
       box-shadow: 0 4px 18px rgba(2, 132, 199, 0.5), 0 0 10px rgba(56, 189, 248, 0.4);
-      text-align: right;
-      line-height: 1.4;
+      /* ★ 左詰めに変更：行頭が揃って圧倒的に読みやすくなる */
+      text-align: left;
+      line-height: 1.45;
+      white-space: nowrap;
     }
+
     @keyframes likeArrowPulse {
       0% { transform: translateY(0); }
       100% { transform: translateY(-4px); }
@@ -716,7 +745,7 @@ export function initGameMenuDOM() {
     document.body.appendChild(menuBtn);
   }
 
-  // 2. 右上「いいね誘導」アンカー（ネオンシアン・矢印重複なし）
+  // 2. 右上「いいね誘導」アンカー（左詰め・8px余白・33px中央アライメント最適化版）
   if (!document.getElementById('like-guide-anchor')) {
     const likeAnchor = document.createElement('div');
     likeAnchor.id = 'like-guide-anchor';
