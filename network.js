@@ -1,16 +1,17 @@
 // network.js: AgentSDK公式仕様完全準拠 ＆ 10Hz POS 送受信ループ ＆ 自律ホスト昇格 ＆ スナップショット復元司令塔
-// ★ 途中参加ホスト現在地合流スポーン（Catch-up Spawn）実装版：
-//   1. 【ホスト現在ステージの同期伝達（hostStage パケット拡張）】
-//      ホストが先に進んでいる状態でゲストが入室した際、ROOM_MEMBERS_SYNC パケットに
-//      ホストの最新ステージ番号（hostStage = player.currentStage）を同封して送信。
-//   2. 【ゲスト端末のホスト島直接合流スポーン（画像4・5の海面浮遊・散乱根絶）】
-//      ゲスト端末側で hostStage > 0 を検知した場合、すでに消去された Stage 0 ではなく、
-//      ホストがいる最新の島（STAGES[hostStage]）の中央安全平地に自機（player）を直接配置。
-//      カメラも即座にその島へ追従し、足場のない海に落ちる事故を物理的に根絶。
-//   3. 【ホスト端末上での受入ゲスト配置の最適化】
-//      _bindRemoteSlot において、ホストが先に進んでいる場合は受入ゲストキャラ（characters[slot]）を
-//      ホストと同じ現在ステージの島の上に配置。ホスト画面でゲストが海に浮く現象を解消。
-//   4. 【走者重複根絶・入退室ステータス整合・ゼロアロケーション通信の100%維持】
+// ★ Phase 3 修正版（1KBパケット安全バッチ化 ＆ Catch-up事前コース伸長 ＆ カメラダイレクトスナップ）：
+//   1. 【スナップショットの1KB安全バッチ化 (Buffer Bloat根絶)】
+//      親アプリの1024バイト制限を厳格に遵守するため、各チャンクのバッチサイズを再設計
+//      （Planks: 30->10個、Blocks: 25->8個、Items: 20->8個、Bonuses: 25->15個）。
+//      ネイティブJSBridgeのキュー詰まりやパケットのサイレント破棄・切断を根絶。
+//   2. 【途中参加 Catch-up Spawn 時のコース決定論的自動伸長】
+//      ホストが Stage 7 以降に進んでいる状態でゲストが入室した際、STAGES 配列が追いつくまで
+//      window.extendCourse(activeScene) を同期ループ実行。
+//      未生成ステージへのフォールバックによる海面浮遊・ブロック散乱を100%防止。
+//   3. 【合流時のカメラ即時ダイレクトスナップ】
+//      Catch-up Spawn 時に window.currentCameraRef を合流先の島へ即座に移動させ、
+//      海の上を150m以上超高速すっ飛びする不快なカメラ挙動を完全に抑止。
+//   4. 【既存の11要素タプル通信・自律ホスト昇格・チャット相乗りの100%維持】
 
 import {
   player,
@@ -273,7 +274,6 @@ export const NetworkManager = {
     const cleanText = String(messageText).trim().slice(0, 15);
     if (!cleanText) return;
 
-    // 自端末の画面上には即座に弾幕を流す（0msレスポンス）
     const myName = (typeof window !== 'undefined' && window.GRAVITY_USER_NAME)
       ? window.GRAVITY_USER_NAME
       : this.myUser.name;
@@ -649,7 +649,6 @@ export const NetworkManager = {
         ? Math.abs(createdRoomId.split('').reduce((acc, char) => (acc << 5) - acc + char.charCodeAt(0), 0))
         : Math.floor(Math.random() * 90000000) + 10000000;
 
-      // ホスト自身の portrait を slots[0] に確実に格納
       this.slots[0] = {
         slot: 0,
         clientId: this.clientId,
@@ -822,7 +821,6 @@ export const NetworkManager = {
         this.slots[0].portrait = this.myUser.portrait || this.slots[0].portrait || '';
       }
 
-      // ★【核心改善①】ホストの現在ステージ（hostStage）を同封してパケット送出
       const hostCurrentStage = (player && typeof player.currentStage === 'number') ? player.currentStage : 0;
 
       this._sendCustomMessage({
@@ -836,8 +834,9 @@ export const NetworkManager = {
       const fullSnapshot = captureFullWorldSnapshot();
       this._snapshotQueue.length = 0;
 
+      // ★【Phase 3 核心改善①】1KB上限遵守：スナップショットのチャンクバッチサイズを安全圏（500〜700B）へ圧縮
       if (Array.isArray(fullSnapshot.planks) && fullSnapshot.planks.length > 0) {
-        const BATCH_SIZE = 30;
+        const BATCH_SIZE = 10; // 30 -> 10個（約300B）
         for (let i = 0; i < fullSnapshot.planks.length; i += BATCH_SIZE) {
           this._snapshotQueue.push({
             t: 'planks',
@@ -847,7 +846,7 @@ export const NetworkManager = {
       }
 
       if (Array.isArray(fullSnapshot.blocks) && fullSnapshot.blocks.length > 0) {
-        const BATCH_SIZE = 25;
+        const BATCH_SIZE = 8; // 25 -> 8個（約480B：Buffer Bloat完全防止）
         for (let i = 0; i < fullSnapshot.blocks.length; i += BATCH_SIZE) {
           this._snapshotQueue.push({
             t: 'blocks',
@@ -857,7 +856,7 @@ export const NetworkManager = {
       }
 
       if (Array.isArray(fullSnapshot.items) && fullSnapshot.items.length > 0) {
-        const BATCH_SIZE = 20;
+        const BATCH_SIZE = 8; // 20 -> 8個（約480B）
         for (let i = 0; i < fullSnapshot.items.length; i += BATCH_SIZE) {
           this._snapshotQueue.push({
             t: 'items',
@@ -867,7 +866,7 @@ export const NetworkManager = {
       }
 
       if (Array.isArray(fullSnapshot.bonuses) && fullSnapshot.bonuses.length > 0) {
-        const BATCH_SIZE = 25;
+        const BATCH_SIZE = 15; // 25 -> 15個（約375B）
         for (let i = 0; i < fullSnapshot.bonuses.length; i += BATCH_SIZE) {
           this._snapshotQueue.push({
             t: 'bonuses',
@@ -1326,9 +1325,20 @@ export const NetworkManager = {
           updatePlayerName(myRealName);
         }
 
-        // ★【核心改善②】ゲスト端末側での「ホスト現在地合流スポーン（Catch-up）」
+        // ★【Phase 3 核心改善②】ゲスト端末側での「ホスト現在地合流スポーン（Catch-up）」
         if (!this.isHost && !this._hasCaughtUp && typeof hostStage === 'number' && hostStage > 0 && player) {
           this._hasCaughtUp = true;
+
+          // ホストの現在ステージが存在しない場合、追いつくまでコースを同期伸長
+          if (activeScene && typeof window.extendCourse === 'function') {
+            while (STAGES.length <= hostStage + 2) {
+              window.extendCourse(activeScene);
+            }
+            if (typeof window.flushPendingBonusConsumes === 'function') {
+              window.flushPendingBonusConsumes();
+            }
+          }
+
           player.currentStage = hostStage;
 
           const targetStageObj = STAGES[hostStage] || STAGES[0];
@@ -1344,7 +1354,14 @@ export const NetworkManager = {
               player.meshObj.root.rotation.set(0, Math.PI, 0);
             }
 
-            console.log(`[NetworkManager] Catch-up Spawn: ホスト現在地 (Stage ${hostStage}, Z=${Math.round(spawnZ)}m) へ合流配置完了`);
+            // ★【Phase 3 核心改善③】カメラを超高速すっ飛びさせず、合流先の島へ即時ダイレクトスナップ！
+            if (typeof window.currentCameraRef !== 'undefined' && window.currentCameraRef) {
+              const cam = window.currentCameraRef;
+              cam.position.set(spawnX * 0.75, spawnY + 24, spawnZ + 12);
+              cam.lookAt(spawnX * 0.65, spawnY, spawnZ - 5);
+            }
+
+            console.log(`[NetworkManager] Catch-up Spawn 成功: ホスト現在地 (Stage ${hostStage}, Z=${Math.round(spawnZ)}m) へ即時合流完了`);
           }
         }
 
@@ -1405,8 +1422,7 @@ export const NetworkManager = {
       targetChar.nameplateSprite.visible = true;
     }
 
-    // ★【核心改善③】ホスト端末上でゲストを受け入れる際の現在地合流スポーン
-    // ホストが既にステージを進めていて Stage 0 が消えている場合、ホストがいる現在の島の上にスポーンさせる
+    // ホスト端末上でゲストを受け入れる際の現在地合流スポーン
     const hostCurrentStage = (this.isHost && player && typeof player.currentStage === 'number') ? player.currentStage : 0;
 
     if (hostCurrentStage > 0 && STAGES[hostCurrentStage]) {

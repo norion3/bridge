@@ -1,12 +1,13 @@
 // main.js: ゲーム全体の起動指揮・Three.js初期化・メインループ・DM招待リンク自動合流司令塔
-// ★ Package 5 操作入力＆HUD分離・スリム化司令塔版（main_controls.js ＆ main_hud.js 統合）：
-//   1. 【入力・タッチ操作を main_controls.js へ完全外注】
-//      setupControls, input を委譲。
-//   2. 【タイマー・スコア・HUDを main_hud.js へ完全外注】
-//      updateHUD, updateTimerHUD, triggerScorePop, updateRestartButtonVisibility, submitGravityScore 等を委譲。
-//   3. 【Three.js初期化・レンダーループ・DM招待Auto-Joinへの専念】
-//      120fps/60fpsメインループ、シーングラフ最適化、カメラ制御、ゲーム起動シーケンスを統括。
-//   4. 【外部向けエクスポート100%完全維持】
+// ★ Phase 2 修正版（グローバル参照パイプライン強化 ＆ Catch-up Spawn 連携準備）：
+//   1. 【コース伸長関数の明示公開 (window.extendCourse)】
+//      network.js の途中参加処理（_applyRoomMembersSync）がホスト先行ステージへ追いつくまで
+//      決定論的コース伸長を安全に実行できるよう、window.extendCourse = extendCourse を公開。
+//   2. 【カメラインスタンスの直接参照バインド (window.currentCameraRef)】
+//      initThree において camera 生成直後に window.currentCameraRef = camera をバインド。
+//      合流時にカメラが海の上を150m以上超高速すっ飛びする不具合を抑止し、合流先の島へ即時ダイレクトスナップ可能に。
+//   3. 【main_controls.js / main_hud.js との責務分離および既存機能の100%維持】
+//      120fps/60fpsメインループ、タッチ入力・HUD連携、DM招待Auto-Joinは完全維持。
 
 import { mountAllUI, UIController, EntryShield } from './dom.js';
 import { SoundEngine } from './audio.js';
@@ -87,11 +88,14 @@ export {
   updateHUD,
   updateTimerHUD,
   onTimeUp,
-  setupControls
+  setupControls,
+  extendCourse
 };
 
+// ★【Phase 2 核心】外部（network.js）からコース事前伸長をキックできるようにグローバル公開
 if (typeof window !== 'undefined') {
   window.refreshRemoteStackVisuals = refreshCharacterStackVisuals;
+  window.extendCourse = extendCourse;
 }
 
 export const IS_GRAVITY_APP = typeof window !== 'undefined' && !!window.AgentSDK;
@@ -234,6 +238,11 @@ export function initThree() {
   scene.fog = new THREE.FogExp2(0x7dd3fc, 0.0032);
 
   camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1500);
+  
+  // ★【Phase 2 核心】カメラ参照をグローバルに確定バインド
+  if (typeof window !== 'undefined') {
+    window.currentCameraRef = camera;
+  }
 
   renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
   renderer.setSize(window.innerWidth, window.innerHeight);

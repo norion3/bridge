@@ -1,8 +1,13 @@
 // ai.js: Bot AI自律思考ロジック・レーン評価・左右分岐選択・アトラクション進入・AIワープ追いつき復活
-// ★ Step 6 実装版（Host-Authoritative AI・権限分離の徹底）：
-//   1. マルチプレイ時、ホスト端末のみがAI思考ルーチンを実行するHost-Authoritativeガードを強化
-//   2. ゲスト端末ではローカルのAI自律計算・追いつきワープ・ルート探索を完全停止し、リモート受信補間のみに委ねてジッターやスプリットブレインを根絶
-//   3. 単体プレイ（ソロ）時は従来通りの完全自律思考を100%維持
+// ★ Phase 1 修正版（二股分岐 Fork Pattern B 通過後の誤ワープ根絶 ＆ Host-Authoritative AI）：
+//   1. 【二股分岐考慮型ワープ判定の堅牢化】
+//      プレイヤーまたはBotのいずれかが分岐領域（fork_hub, fork_left, fork_right, fork_merge）に
+//      関与している場合、ステージ番号差判定をバイパスし、純粋なZ距離差（> 60m）でのみ追いつきワープを発動。
+//      合流直後に遅れていないBotが手元に突然ワープしてくる不具合を物理的に根絶。
+//   2. 【Host-Authoritative AI・権限分離の徹底】
+//      マルチプレイ時、ホスト端末のみがAI思考ルーチンを実行。ゲスト端末は受信補間に委ねてジッターやスプリットブレインを防止。
+//   3. 【単体プレイ（ソロ）の完全維持】
+//      ソロプレイ時は従来通りの完全自律思考・障害物回避・ルート選択を100%維持。
 
 import {
   LANES,
@@ -111,7 +116,7 @@ export function avoidGateObstacles(bot, dirX, dirZ) {
 }
 
 export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStepRing) {
-  // ★【Step 6 核心】Host-Authoritative ガード
+  // ★【Host-Authoritative ガード】
   // マルチプレイ中かつ非ホスト端末（ゲスト端末）の場合、AIの自律思考・移動計算を完全に停止
   if (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive) {
     if (!window.NetworkManager.isHost) {
@@ -127,17 +132,21 @@ export function updateAICharacter(scene, bot, dt, spawnPuffCloud, spawnSpeedStep
   const currentStageInfo = STAGES[bot.currentStage];
   const playerStageInfo = player ? STAGES[player.currentStage] : null;
 
-  // 分岐考慮型ワープ判定：並列中継島（fork_left と fork_right）のステージ番号差による誤ワープを防止
+  // ★【Phase 1 改善】二股分岐考慮型ワープ判定
+  // プレイヤーかBotのどちらか一方でも分岐領域（fork_hub, fork_left, fork_right, fork_merge）に関わっている場合は
+  // ステージインデックスの単純比較を行わず、Z座標の実距離差で安全に判定する
   let shouldWarp = false;
   if (player && playerStageInfo && currentStageInfo) {
-    const isPlayerInFork = (playerStageInfo.isFork || playerStageInfo.type === 'fork_left' || playerStageInfo.type === 'fork_right' || playerStageInfo.isMerge);
-    const isBotInFork = (currentStageInfo.isFork || currentStageInfo.type === 'fork_left' || currentStageInfo.type === 'fork_right' || currentStageInfo.isMerge);
+    const isPlayerInFork = Boolean(playerStageInfo.isFork || playerStageInfo.type === 'fork_hub' || playerStageInfo.type === 'fork_left' || playerStageInfo.type === 'fork_right' || playerStageInfo.isMerge);
+    const isBotInFork = Boolean(currentStageInfo.isFork || currentStageInfo.type === 'fork_hub' || currentStageInfo.type === 'fork_left' || currentStageInfo.type === 'fork_right' || currentStageInfo.isMerge);
 
-    if (isPlayerInFork && isBotInFork) {
-      if (bot.pos.z - player.pos.z > 55.0) {
+    if (isPlayerInFork || isBotInFork) {
+      // 分岐区間中・合流直後はレーン距離差やステージ番号のズレが生じるため、Z軸の純粋な距離差で判定
+      if (bot.pos.z - player.pos.z > 60.0) {
         shouldWarp = true;
       }
     } else {
+      // 直列コース区間：2ステージ以上離脱した場合にワープ
       if (bot.currentStage < player.currentStage - 1) {
         shouldWarp = true;
       }
