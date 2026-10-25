@@ -1,41 +1,20 @@
-// menu.js: ボトムシートメニュー・右下サイドMENUボタン・親指下部チャット・走者＆製作者完全一本化プロフィール起動・参加者履歴管理
-// ★ メモ帳URL連携 ＆ 走者実績コード完全一本化版：
-//   1. 【なぜメモ帳からは開けてゲームから開けなかったのかの完全解決】
-//      メモ帳はOSがUniversal Linkとしてアプリを直接起動できるが、WebView内JavaScriptからの
-//      URL遷移はAppleのWebKit仕様によりブロックされ、Webページロードとして自爆していた。
-//   2. 【走者タブで100%成功している実績あるスキームへ製作者も完全一本化】
-//      走者一覧で norion を開いた実績のある内部ルーティング（slme://internal?type=5&ani=1&url=usercenter...）を
-//      製作者ボタン（本垢: 2736445531 / 開発垢: 887811163）でも全く同一に非表示 iframe からキック。
-//   3. 【メモ帳公式短縮URLとのハイブリッドバインド】
-//      メモ帳で動作確認済みの公式URL（api.gravity.place/gravity/url/...）をフォールバックに配備。
-//   4. 【スマホ実機のタップ抜け防止（touchend + click）】
-//      スクロール時の誤キャンセルを防ぎ、指が触れた瞬間に確実にネイティブ画面をオーバーレイ起動。
-//   5. 【走者重複根絶 ＆ ルーム招待被り96px余白の完全維持】
+// menu.js: ボトムシートメニュー・右下サイドMENUボタン・親指下部チャット・走者プロフィール安全起動・製作者メッセージ
+// ★ 製作者リンクボタン完全削除・走者機能完全温存版：
+//   1. 【製作者タブのリンクボタンを完全削除】
+//      ご指示通り、製作者タブ内のジャンプボタンを完全に撤廃。
+//      余計な紹介カードなども追加せず、メッセージのみのシンプルな構成に。
+//   2. 【走者一覧からのプロフィール遷移は完全温存】
+//      走者タブで正常に動作している非表示 iframe キック方式（slme://internal...）は1文字も触らず維持。
+//   3. 【右下MENUボタン・チャット・右上いいね誘導・UIスタイルの完全維持】
 
 import { injectMenuStyles } from './menu_styles.js';
 
-// 製作者アカウント定数定義（数字ID ＆ メモ帳で確認済みの公式Universal Link）
-export const CREATOR_ACCOUNTS = {
-  main: {
-    id: '2736445531',
-    url: 'https://api.gravity.place/gravity/url/yH2Wc',
-    title: '👤 製作者の本アカウントを見る ↗',
-    subtitle: 'メインの活動・交流・フォローはこちら'
-  },
-  sub: {
-    id: '887811163',
-    url: 'https://api.gravity.place/gravity/url/IH2Wc',
-    title: '🛠️ 開発・ご要望用アカウントを見る ↗',
-    subtitle: 'ゲームの要望やコメントはこちらへどうぞ'
-  }
-};
-
 /**
  * GRAVITYアプリ内ネイティブ画面遷移ルーター
- * ★ 走者・製作者完全共通：走者タブで100%実績のある非表示 iframe キック方式
+ * ★ 走者専用（完全温存）：走者タブで100%実績のある非表示 iframe キック方式
  */
 export const GravityRouter = {
-  openProfile(userId, fallbackUrl = null) {
+  openProfile(userId) {
     if (!userId) return;
     const target = String(userId).trim();
     if (!target || target === 'local_user' || target === 'null') return;
@@ -45,11 +24,10 @@ export const GravityRouter = {
     if (!cleanId) return;
 
     try {
-      // 1. 走者タブで100%実績のあるネイティブ連携パラメータを構築
       const paramObj = {
         uid: Number(cleanId) || cleanId,
         selectedIndex: 0,
-        web_url: fallbackUrl || ('https://www.gravity.place/user/' + cleanId),
+        web_url: 'https://www.gravity.place/user/' + cleanId,
         s: 'web',
         b: 'user'
       };
@@ -57,7 +35,6 @@ export const GravityRouter = {
       const innerUrl = 'usercenter?0=' + encodedJson;
       const deepLink = 'slme://internal?type=5&ani=1&url=' + encodeURIComponent(innerUrl);
 
-      // 2. 非表示 iframe による安全キック（WebView自体のページ遷移を物理遮断）
       const iframe = document.createElement('iframe');
       iframe.style.cssText = 'position:absolute;width:0;height:0;opacity:0;pointer-events:none;border:none;display:none;';
       iframe.src = deepLink;
@@ -363,25 +340,13 @@ export function initGameMenuDOM() {
         <div id="menu-participants-list" class="participants-container"></div>
       </div>
 
-      <!-- 3. 製作者タブ（メモ帳URL連携 ＆ 走者実績スキーム完全一本化） -->
+      <!-- 3. 製作者タブ（リンクボタンおよび不要な紹介カードを完全削除） -->
       <div id="menu-tab-creator" class="menu-tab-content">
         <div class="creator-section-container">
           <div class="creator-message-card">
             <div class="creator-message-line">遊んでくれてありがとうございます！</div>
             <div class="creator-message-line highlight">楽しかったら右上の［…］から いいね を押してね</div>
             <div class="creator-message-line">ご意見やご要望もお気軽にどうぞ！</div>
-          </div>
-
-          <!-- 本アカウント直結ボタン -->
-          <div class="creator-action-btn-card card-main" id="btn-jump-creator-main">
-            <span class="creator-btn-title">${CREATOR_ACCOUNTS.main.title}</span>
-            <span class="creator-btn-subtitle">${CREATOR_ACCOUNTS.main.subtitle}</span>
-          </div>
-
-          <!-- 開発・要望用サブ垢直結ボタン -->
-          <div class="creator-action-btn-card card-sub" id="btn-jump-creator-sub">
-            <span class="creator-btn-title">${CREATOR_ACCOUNTS.sub.title}</span>
-            <span class="creator-btn-subtitle">${CREATOR_ACCOUNTS.sub.subtitle}</span>
           </div>
         </div>
       </div>
@@ -415,29 +380,6 @@ export function initGameMenuDOM() {
         if (msg) handleSendMessage(msg);
       });
     });
-
-    // ★【完全一本化】走者と全く同一の openProfile をキック（touchend + click の両方で確実に補足）
-    const jumpMain = (e) => {
-      if (e) {
-        e.preventDefault();
-        e.stopPropagation();
-      }
-      GravityRouter.openProfile(CREATOR_ACCOUNTS.main.id, CREATOR_ACCOUNTS.main.url);
-    };
-    const btnMain = document.getElementById('btn-jump-creator-main');
-    btnMain?.addEventListener('click', jumpMain);
-    btnMain?.addEventListener('touchend', jumpMain);
-
-    const jumpSub = (e) => {
-      if (e) {
-        e.preventDefault();
-        e.stopPropagation();
-      }
-      GravityRouter.openProfile(CREATOR_ACCOUNTS.sub.id, CREATOR_ACCOUNTS.sub.url);
-    };
-    const btnSub = document.getElementById('btn-jump-creator-sub');
-    btnSub?.addEventListener('click', jumpSub);
-    btnSub?.addEventListener('touchend', jumpSub);
   }
 }
 
