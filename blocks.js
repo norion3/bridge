@@ -1,13 +1,17 @@
 // blocks.js: 床ブロック管理・補充・スポーン・決定論的一意キー（blockId）マルチ同期専用モジュール
-// ★ 先行ステージ事前スポーン ＆ 到着前ビジュアル拡充版：
-//   1. 【次ステージへの事前ブロック補充 (ハゲ山・目の前ポップ根絶)】
+// ★ 4人プレイ拡張版（緑チーム補充対応 ＆ 先行ステージ事前スポーン）：
+//   1. 【緑チーム（GREEN: #10b981）ブロック補充・スポーン完全対応】
+//      applyRemoteBlockSpawned および spawnSingleBlock において、
+//      teamId === 'green' の場合に sharedMats.blockGreen をバインド。
+//      BLOCK_TYPES（4色）と自動連動し、4走者全員の色のブロックが均等に散らばる島を形成。
+//   2. 【次ステージへの事前ブロック補充 (ハゲ山・目の前ポップ根絶)】
 //      走者の現在地ステージだけでなく、進行方向の先行ステージ（直列次の島および二股分岐先の左右島）へ
 //      走者が到着する前からブロックを自動補充。階段登攀中や手前の島から奥を見下ろした際にも
 //      カラフルなブロックが散らばっている美しい景観を実現。
-//   2. 【先行ステージブロックのプール回収保護】
+//   3. 【先行ステージブロックのプール回収保護】
 //      findSafePoolItem における activeStages 除外セットに先行ステージ（nextStageIdx）を追加。
 //      これから向かう次の島のブロックが古いブロックとして回収・強奪される欠陥を完全防止。
-//   3. 【PRNG汚染遮断 ＆ ゼロアロケーション純粋算術丸めの完全維持】
+//   4. 【PRNG汚染遮断 ＆ ゼロアロケーション純粋算術丸めの完全維持】
 //      Math.random() による世界生成PRNG保護、round2 による数値丸め、一意キー同期（spパケット）は100%維持。
 
 import {
@@ -110,7 +114,7 @@ function findSafePoolItem() {
 
 /**
  * ホストから新ブロック補充パケット（blockId付き）を受信した際の反映ハンドラ（単体）
- * ★ round2 による純粋算術丸めで文字列オブジェクト生成を完全排除
+ * ★ 4色対応（青・赤・黄・緑）
  */
 export function applyRemoteBlockSpawned(stageIdx, poolIdx, x, y, z, teamId, blockId = null) {
   const stageInfo = STAGES[stageIdx];
@@ -144,6 +148,7 @@ export function applyRemoteBlockSpawned(stageIdx, poolIdx, x, y, z, teamId, bloc
   if (teamId === 'blue') mat = sharedMats.blockBlue;
   else if (teamId === 'red') mat = sharedMats.blockRed;
   else if (teamId === 'yellow') mat = sharedMats.blockYellow;
+  else if (teamId === 'green') mat = sharedMats.blockGreen;
   else mat = sharedMats.blockNeutral;
 
   poolItem.mesh.material = mat;
@@ -189,7 +194,7 @@ if (typeof window !== 'undefined') {
 
 /**
  * 単一床ブロックの出現位置判定および内部配置
- * ★【核心改修】seededRandom() を Math.random() へ置換し、世界生成PRNGの汚染を100%防止
+ * ★ 4色対応（青・赤・黄・緑）
  */
 export function spawnSingleBlock(scene, stageIdx, targetTeam = null, shouldBroadcastImmediately = true) {
   const stageInfo = STAGES[stageIdx];
@@ -265,6 +270,7 @@ export function spawnSingleBlock(scene, stageIdx, targetTeam = null, shouldBroad
   if (team.id === 'blue') mat = sharedMats.blockBlue;
   else if (team.id === 'red') mat = sharedMats.blockRed;
   else if (team.id === 'yellow') mat = sharedMats.blockYellow;
+  else if (team.id === 'green') mat = sharedMats.blockGreen;
   else mat = sharedMats.blockNeutral;
 
   globalBlockSpawnCounter++;
@@ -308,8 +314,7 @@ export function spawnSingleBlock(scene, stageIdx, targetTeam = null, shouldBroad
 }
 
 /**
- * 全走者の滞在ステージおよび先行ステージに応じた床ブロック定期補充
- * ★【核心改修】次ステージ（二股分岐含む）へ到着する前にブロックを事前配置
+ * 全走者の滞在ステージおよび先行ステージに応じた床ブロック定期補充（4色対応）
  */
 export function manageBlockSpawns(scene, isGameOver = false) {
   if (isGameOver) return;
@@ -353,7 +358,7 @@ export function manageBlockSpawns(scene, isGameOver = false) {
 
     for (let tIdx = 0; tIdx < BLOCK_TYPES.length; tIdx++) {
       const team = BLOCK_TYPES[tIdx];
-      // 現在地ステージはたっぷり、先行ステージも到着前に十分な密度を事前配置
+      // 自機（青）は多め、ライバル（赤・黄・緑）も均等にたっぷり事前配置
       const targetCount = isCurrentStage
         ? ((team.id === 'blue') ? 13 : 7)
         : ((team.id === 'blue') ? 10 : 6);

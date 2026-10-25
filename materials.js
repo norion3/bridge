@@ -1,4 +1,9 @@
 // 描画リソース・共有マテリアル・ジオメトリ・キャッシュ・破棄管理
+// ★ 4人プレイ拡張版（緑チーム追加）：
+//   1. COLOR_GREEN_PLANK (0x10b981) 定義
+//   2. sharedMats.greenPlank, sharedMats.blockGreen, sharedMats.charGreen 追加
+//   3. botGreenStackMaterials 配列および共有セット登録
+
 import {
   TEAMS,
   MAX_VISUAL_STACK,
@@ -13,6 +18,7 @@ export const COLOR_NEUTRAL_PLANK = new THREE.Color(0xd1d5db);
 export const COLOR_BLUE_PLANK = new THREE.Color(TEAMS.BLUE.hex);
 export const COLOR_RED_PLANK = new THREE.Color(TEAMS.RED.hex);
 export const COLOR_YELLOW_PLANK = new THREE.Color(TEAMS.YELLOW.hex);
+export const COLOR_GREEN_PLANK = new THREE.Color(TEAMS.GREEN.hex);
 
 // 共有ジオメトリ
 export const blockGeometry = new THREE.BoxGeometry(0.95, 0.36, 0.60);
@@ -282,10 +288,12 @@ export const sharedMats = {
   bluePlank: new THREE.MeshStandardMaterial({ color: TEAMS.BLUE.hex, emissive: TEAMS.BLUE.emissive, emissiveIntensity: 0.20, roughness: 0.28 }),
   redPlank: new THREE.MeshStandardMaterial({ color: TEAMS.RED.hex, emissive: TEAMS.RED.emissive, emissiveIntensity: 0.15, roughness: 0.3 }),
   yellowPlank: new THREE.MeshStandardMaterial({ color: TEAMS.YELLOW.hex, emissive: TEAMS.YELLOW.emissive, emissiveIntensity: 0.15, roughness: 0.3 }),
+  greenPlank: new THREE.MeshStandardMaterial({ color: TEAMS.GREEN.hex, emissive: TEAMS.GREEN.emissive, emissiveIntensity: 0.15, roughness: 0.3 }),
 
   blockBlue: new THREE.MeshStandardMaterial({ color: TEAMS.BLUE.hex, emissive: TEAMS.BLUE.emissive, emissiveIntensity: 0.25, roughness: 0.30, metalness: 0.05 }),
   blockRed: new THREE.MeshStandardMaterial({ color: TEAMS.RED.hex, emissive: TEAMS.RED.emissive, emissiveIntensity: 0.2, roughness: 0.35 }),
   blockYellow: new THREE.MeshStandardMaterial({ color: TEAMS.YELLOW.hex, emissive: TEAMS.YELLOW.emissive, emissiveIntensity: 0.2, roughness: 0.35 }),
+  blockGreen: new THREE.MeshStandardMaterial({ color: TEAMS.GREEN.hex, emissive: TEAMS.GREEN.emissive, emissiveIntensity: 0.2, roughness: 0.35 }),
   blockNeutral: new THREE.MeshStandardMaterial({ color: TEAMS.NEUTRAL.hex, emissive: TEAMS.NEUTRAL.emissive, emissiveIntensity: 0.2, roughness: 0.35 }),
 
   // キャラクター：単色ポップ造形マテリアル
@@ -298,6 +306,7 @@ export const sharedMats = {
   }),
   charRed: new THREE.MeshStandardMaterial({ color: TEAMS.RED.hex, roughness: 0.25, metalness: 0.05 }),
   charYellow: new THREE.MeshStandardMaterial({ color: TEAMS.YELLOW.hex, roughness: 0.25, metalness: 0.05 }),
+  charGreen: new THREE.MeshStandardMaterial({ color: TEAMS.GREEN.hex, roughness: 0.25, metalness: 0.05 }),
   
   charVisor: new THREE.MeshStandardMaterial({ color: 0x0f172a, roughness: 0.1, metalness: 0.85 }),
   charAccent: new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.3, metalness: 0.05 }),
@@ -552,6 +561,7 @@ for (let i = 0; i < MAX_VISUAL_STACK; i++) {
 
 export const botRedStackMaterials = [];
 export const botYellowStackMaterials = [];
+export const botGreenStackMaterials = [];
 for (let i = 0; i < MAX_VISUAL_STACK; i++) {
   botRedStackMaterials.push(new THREE.MeshStandardMaterial({
     color: TEAMS.RED.hex,
@@ -562,6 +572,12 @@ for (let i = 0; i < MAX_VISUAL_STACK; i++) {
   botYellowStackMaterials.push(new THREE.MeshStandardMaterial({
     color: TEAMS.YELLOW.hex,
     emissive: TEAMS.YELLOW.emissive,
+    emissiveIntensity: 0.15,
+    roughness: 0.3
+  }));
+  botGreenStackMaterials.push(new THREE.MeshStandardMaterial({
+    color: TEAMS.GREEN.hex,
+    emissive: TEAMS.GREEN.emissive,
     emissiveIntensity: 0.15,
     roughness: 0.3
   }));
@@ -615,6 +631,7 @@ Object.values(sharedMats).forEach(mat => sharedMaterialsSet.add(mat));
 playerStackMaterials.forEach(mat => sharedMaterialsSet.add(mat));
 botRedStackMaterials.forEach(mat => sharedMaterialsSet.add(mat));
 botYellowStackMaterials.forEach(mat => sharedMaterialsSet.add(mat));
+botGreenStackMaterials.forEach(mat => sharedMaterialsSet.add(mat));
 
 export const sharedGeometriesSet = new Set([
   blockGeometry,

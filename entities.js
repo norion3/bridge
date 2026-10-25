@@ -1,14 +1,9 @@
 // entities.js: 飛翔体・雷・ドレイン・マグネット・演出パーティクル・浮遊雲の毎フレーム更新モジュール
-// ★ Phase 2 完全同期版（スキル着弾散乱ブロードキャスト保証 ＆ O(1)スワップPOP ＆ GPUカリング連動）：
-//   1. 【クリスタル着弾時 scatterBricks に forceBroadcast = true を明示伝達】
-//      ホストがゲストに命中させた際やゲストがホストに命中させた際にも、
-//      combat.js の shouldBroadcast 判定を確実に通過させ、散乱パケット（sc）を相手画面へブロードキャスト。
-//   2. 【サンダー着弾時 scatterBricks に forceBroadcast = true を明示伝達】
-//      落雷直撃時の散乱ブロックも全端末へ確実にパケット配信。
-//   3. 【activeMagnetBlocks の O(1) スワップPOP化（V8ヒープ断片化根絶）】
-//      吸着完了時の配列前詰めシフトコピーを末尾スワップ＆pop()へ刷新。
-//   4. 【画面外オブジェクトの GPU ドローコール完全カリング連動】
-//      前後40m/55mの視界外判定時に mesh.visible = false を連動させ、描画負荷を低減。
+// ★ 4人対戦対応版（緑チームドレインカラー対応 ＆ スキル着弾散乱ブロードキャスト保証 ＆ O(1)スワップPOP）：
+//   1. 【緑チーム（GREEN: #10b981）ドレインブロック色バインド追加】
+//      クリスタルおよびサンダー命中時、shooterChar.team.id === 'green' の場合に
+//      sharedMats.blockGreen をバインドし、緑チームがブロックを奪った際のビジュアル抜けを根絶。
+//   2. 【散乱パケット・GPUカリング・O(1)スワップPOPの完全維持】
 
 import {
   sharedMats,
@@ -46,16 +41,11 @@ import {
 
 /**
  * シーン内の飛翔体、エフェクト、雲、アイテム演出を一括更新
- * @param {THREE.Scene} scene 
- * @param {number} dt 
- * @param {number} timeSec 
- * @param {Object} player 
- * @param {Object} sound 
  */
 export function updateSceneEntities(scene, dt, timeSec, player, sound) {
   const playerZ = player ? player.pos.z : 0;
 
-  // 1. 床置きアイテムの自転・浮遊アニメーション ＆ GPUカリング連動（前後40m以内の視界内のみ計算）
+  // 1. 床置きアイテムの自転・浮遊アニメーション ＆ GPUカリング連動
   for (let i = 0; i < floorItems.length; i++) {
     const item = floorItems[i];
     if (item.active && item.group) {
@@ -131,7 +121,6 @@ export function updateSceneEntities(scene, dt, timeSec, player, sound) {
     }
 
     if (p.progress >= 1.0) {
-      // 命中音の再生（自機が関与しているか、近くで発生した場合）
       if (sound) {
         const isNearLocal = player && Math.hypot(player.pos.x - p.targetPos.x, player.pos.z - p.targetPos.z) < 32.0;
         if ((p.shooter && p.shooter.isPlayer) || (p.target && p.target.isPlayer) || isNearLocal) {
@@ -152,10 +141,9 @@ export function updateSceneEntities(scene, dt, timeSec, player, sound) {
           hitTarget.meshObj.root.rotation.x = 0.55;
         }
 
-        // ★【核心改修】第4引数 forceBroadcast = true を明示的に渡し、散乱パケットを相手画面へ確実に同期
         scatterBricks(scene, hitTarget, 3, true);
 
-        // ★ 全端末共通ドレインブロック生成
+        // ★ ドレインブロック生成（4色対応）
         const drainCount = 4;
         let spawned = 0;
         for (let d = 0; d < drainBlockPool.length && spawned < drainCount; d++) {
@@ -168,12 +156,15 @@ export function updateSceneEntities(scene, dt, timeSec, player, sound) {
             db.progress = 0;
             db.duration = 0.85;
 
+            // ★ 4色対応分岐
             if (shooterChar.team && shooterChar.team.id === 'blue') {
               db.mesh.material = sharedMats.blockBlue;
             } else if (shooterChar.team && shooterChar.team.id === 'red') {
               db.mesh.material = sharedMats.blockRed;
             } else if (shooterChar.team && shooterChar.team.id === 'yellow') {
               db.mesh.material = sharedMats.blockYellow;
+            } else if (shooterChar.team && shooterChar.team.id === 'green') {
+              db.mesh.material = sharedMats.blockGreen;
             } else {
               db.mesh.material = sharedMats.blockNeutral;
             }
@@ -283,10 +274,9 @@ export function updateSceneEntities(scene, dt, timeSec, player, sound) {
           hitTarget.meshObj.root.rotation.x = 0.45;
         }
 
-        // ★【核心改修】第4引数 forceBroadcast = true を明示的に渡し、散乱パケットを相手画面へ確実に同期
         scatterBricks(scene, hitTarget, 2, true);
 
-        // ★ 全端末共通ドレインブロック生成
+        // ★ ドレインブロック生成（4色対応）
         const drainCount = 4;
         let spawned = 0;
         for (let d = 0; d < drainBlockPool.length && spawned < drainCount; d++) {
@@ -299,12 +289,15 @@ export function updateSceneEntities(scene, dt, timeSec, player, sound) {
             db.progress = 0;
             db.duration = 0.85;
 
+            // ★ 4色対応分岐
             if (shooterChar.team && shooterChar.team.id === 'blue') {
               db.mesh.material = sharedMats.blockBlue;
             } else if (shooterChar.team && shooterChar.team.id === 'red') {
               db.mesh.material = sharedMats.blockRed;
             } else if (shooterChar.team && shooterChar.team.id === 'yellow') {
               db.mesh.material = sharedMats.blockYellow;
+            } else if (shooterChar.team && shooterChar.team.id === 'green') {
+              db.mesh.material = sharedMats.blockGreen;
             } else {
               db.mesh.material = sharedMats.blockNeutral;
             }
@@ -333,7 +326,7 @@ export function updateSceneEntities(scene, dt, timeSec, player, sound) {
     }
   }
 
-  // 4. 被弾ドレインブロックの吸引飛行更新（全走者の背中へ追従）
+  // 4. 被弾ドレインブロックの吸引飛行更新
   for (let i = 0; i < drainBlockPool.length; i++) {
     const d = drainBlockPool[i];
     if (!d.active) continue;
@@ -373,21 +366,17 @@ export function updateSceneEntities(scene, dt, timeSec, player, sound) {
       if (d.targetChar) {
         addBrickToCharacter(d.targetChar, d.targetChar.team, 1);
 
-        // 自機・リモート問わず背中バウンドタイマーとスケールを起動
         d.targetChar.dockBounceTimer = 0.15;
         if (d.targetChar.meshObj && d.targetChar.meshObj.stackGroup) {
           d.targetChar.meshObj.stackGroup.scale.set(1.15, 1.20, 1.15);
         }
 
-        // リモートキャラなら背中スタック外観を再同期
         if (typeof window !== 'undefined' && typeof window.refreshRemoteStackVisuals === 'function') {
           window.refreshRemoteStackVisuals(d.targetChar);
         }
 
-        // 背中ドッキング衝撃波
         triggerLandingShockwave(_tempVec3A.x, _tempVec3A.y, _tempVec3A.z, 1.0, 0x0284c7);
 
-        // 音響フィードバック
         if (sound) {
           if (d.targetChar.isPlayer) {
             sound.playDrainCollect(d.index || 0);
@@ -401,7 +390,7 @@ export function updateSceneEntities(scene, dt, timeSec, player, sound) {
     }
   }
 
-  // 5. マグネット吸引ブロックの背中への誘導飛行更新（★ O(1) スワップPOP によるメモリ断片化根絶）
+  // 5. マグネット吸引ブロックの背中への誘導飛行更新（O(1) スワップPOP）
   for (let i = activeMagnetBlocks.length - 1; i >= 0; i--) {
     const mb = activeMagnetBlocks[i];
     const flightDuration = Math.max(mb.duration || 0.36, 0.55);
@@ -439,7 +428,6 @@ export function updateSceneEntities(scene, dt, timeSec, player, sound) {
           if (sound) sound.playMagnetDock(incMagnetDockStep());
           triggerLandingShockwave(_tempVec3A.x, _tempVec3A.y, _tempVec3A.z, 0.95, 0xa855f7);
         } else {
-          // リモート走者の吸着時も衝撃波と外観リフレッシュを発火
           triggerLandingShockwave(_tempVec3A.x, _tempVec3A.y, _tempVec3A.z, 0.95, 0xa855f7);
           if (typeof window !== 'undefined' && typeof window.refreshRemoteStackVisuals === 'function') {
             window.refreshRemoteStackVisuals(mb.targetChar);
@@ -460,7 +448,6 @@ export function updateSceneEntities(scene, dt, timeSec, player, sound) {
         mb.poolItem.attracting = false;
       }
 
-      // ★ splice(i, 1) による配列全要素シフトコピー（O(N)）を廃止し、O(1) スワップPOP を適用
       const lastItem = activeMagnetBlocks.pop();
       if (i < activeMagnetBlocks.length) {
         activeMagnetBlocks[i] = lastItem;
@@ -500,7 +487,7 @@ export function updateSceneEntities(scene, dt, timeSec, player, sound) {
     }
   }
 
-  // 8. アトラクションボーナスブロックの自転・浮遊 ＆ GPUカリング連動（前後40m以内の視界内のみ計算）
+  // 8. アトラクションボーナスブロックの自転・浮遊 ＆ GPUカリング連動
   for (let i = 0; i < curvedSlideBonusBlocks.length; i++) {
     const blk = curvedSlideBonusBlocks[i];
     if (!blk.collected && blk.mesh) {
@@ -551,7 +538,7 @@ export function updateSceneEntities(scene, dt, timeSec, player, sound) {
     }
   }
 
-  // 9. 浮遊雲のふわふわ揺れ ＆ GPUカリング連動（前後55m以内の視界内のみ計算）
+  // 9. 浮遊雲のふわふわ揺れ ＆ GPUカリング連動
   for (let i = 0; i < cloudObjects.length; i++) {
     const c = cloudObjects[i];
     if (Math.abs(c.mesh.position.z - playerZ) > 55) {

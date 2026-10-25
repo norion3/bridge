@@ -1,11 +1,11 @@
 // danmaku.js: ニコニコ動画風 弾幕テキスト演出・レーン管理モジュール
-// ★ 新規作成モジュール：
-//   1. 【画面上部〜中上部の複数レーン分散管理】
+// ★ 4人プレイ拡張版（緑チーム発言者バッジ対応）：
+//   1. 【発言者タグ（緑チーム: .tag-green）スタイル追加】
+//      エメラルドグリーン基調（#10b981）のグラデーション＆ボーダーバッジを定義。
+//   2. 【spawnDanmaku における teamId === 'green' クラス分岐追加】
+//      スロット3（緑Botまたは4人目ゲスト）の発言時に鮮やかな緑バッジを表示。
+//   3. 【画面上部〜中上部の複数レーン分散管理】
 //      走者の足元や階段の視界を塞がない安全領域（画面上部 16% 〜 40%）を4レーンに分割配置。
-//   2. 【高視認性テキストレンダリング】
-//      青空・白い浮島・海面のどこを通過しても明瞭に読める「純白太字フォント ＋ 濃い黒縁取り（2px stroke & shadow）」。
-//   3. 【チームカラー別発言者バッジ】
-//      青・赤・黄・中立のチームカラーに応じた発言者タグを先頭に付与。
 //   4. 【自動DOMプール＆ガベージフリー破棄】
 //      右端から左端へ約4.8秒かけて横断後、animationend イベントでDOMを確実に安全解放。
 
@@ -79,6 +79,10 @@ function injectDanmakuStyles() {
       background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
       border: 1px solid #fde047;
     }
+    .tag-green {
+      background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+      border: 1px solid #34d399;
+    }
     .tag-neutral {
       background: linear-gradient(135deg, #64748b 0%, #475569 100%);
       border: 1px solid #94a3b8;
@@ -136,7 +140,7 @@ function getNextLane() {
  * ニコニコ風弾幕テキストを画面上に生成して流す
  * @param {string} rawText 送信メッセージ（全角15文字以内推奨）
  * @param {string} senderName 発言者名（例: 'norion', 'ゲスト1'）
- * @param {string} teamId チームID ('blue' | 'red' | 'yellow' | 'neutral')
+ * @param {string} teamId チームID ('blue' | 'red' | 'yellow' | 'green' | 'neutral')
  */
 export function spawnDanmaku(rawText, senderName = '', teamId = 'blue') {
   if (!rawText) return;
@@ -149,10 +153,11 @@ export function spawnDanmaku(rawText, senderName = '', teamId = 'blue') {
   const item = document.createElement('div');
   item.className = 'danmaku-item';
 
-  // チームカラータグのクラス決定
+  // チームカラータグのクラス決定（緑チーム対応）
   let tagClass = 'danmaku-sender-tag tag-blue';
   if (teamId === 'red') tagClass = 'danmaku-sender-tag tag-red';
   else if (teamId === 'yellow') tagClass = 'danmaku-sender-tag tag-yellow';
+  else if (teamId === 'green') tagClass = 'danmaku-sender-tag tag-green';
   else if (teamId === 'neutral') tagClass = 'danmaku-sender-tag tag-neutral';
 
   const shortSender = senderName ? String(senderName).slice(0, 6) : '';

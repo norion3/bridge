@@ -1,11 +1,8 @@
 // net_protocol.js: ゼロアロケーション純粋算術丸め・ビットマスク・極小タプルパッカー専用モジュール
-// ★ network.js から計算・配列シリアライズロジックを完全分離（Package 3）
-//   1. 【外部依存ゼロの純粋関数群】
-//      Three.js や DOM、ネットワークソケットに一切依存せず、単体での信頼性と可読性を最大化。
-//   2. 【ゼロアロケーション純粋算術丸め】
-//      round1（10cm単位）、round2（1cm/0.01rad単位）による一時文字列オブジェクト生成ゼロ化。
-//   3. 【11要素タプルパック・透過デコード】
-//      走者座標・ステータスフラグ（5種ビットマスク）・ギミック状態の相互変換。
+// ★ 4人プレイ拡張版（緑チーム追加）：
+//   1. getTeamIdBySlot(slot) に slot === 3 -> 'green' を追加（4色完全対応）。
+//   2. 外部依存ゼロの純粋関数群・ゼロアロケーション純粋算術丸め（round1/round2）の完全維持。
+//   3. 11要素タプルパック・透過デコードの100%維持。
 
 // --- 高速・ゼロアロケーション純粋算術丸めヘルパー（文字列インスタンス生成ゼロ） ---
 export const round1 = (val) => Math.round(val * 10) / 10;
@@ -33,12 +30,13 @@ export const ID_TO_ACTION_STATE = [
 ];
 
 /**
- * スロット番号に応じたチームカラーID取得ヘルパー
+ * スロット番号に応じたチームカラーID取得ヘルパー（4人対戦対応）
  */
 export function getTeamIdBySlot(slot) {
   if (slot === 0) return 'blue';
   if (slot === 1) return 'red';
   if (slot === 2) return 'yellow';
+  if (slot === 3) return 'green';
   return 'neutral';
 }
 

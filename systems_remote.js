@@ -1,19 +1,18 @@
 // systems_remote.js: 他端末・ホストから届いたアクションパケットのシーン反映ハンドラ専用モジュール
-// ★ systems.js から受信ディスパッチロジックを完全分離（Package 2）
-//   1. 【段板架橋同期 (applyRemotePlankBuilt)】
-//      分離された laneIdx (左: 0, 右: 2, 通常: 0/1/2) に基づき、目的の橋の段板実体化とチーム色を即時反映。
-//   2. 【床ブロック取得同期 (applyRemoteBlockPicked)】
-//      blockId 一致および近接座標マッチングにより、相手やAIのブロック取得・マグネット吸引を完全再現。
-//   3. 【オブジェクト消費同期 (applyRemoteObjectConsumed)】
-//      他端末で消費されたアイテムやゲートの消去を同期。
-//   4. 【敵モブ吹飛同期 (applyRemoteBlowMob)】
-//      他走者のダッシュ衝突によるモブの吹き飛びベクトルと衝撃波を同期。
+// ★ 4人プレイ拡張版（緑チーム架橋カラー同期対応）：
+//   1. 【緑チーム（GREEN: #10b981）架橋カラー同期対応】
+//      COLOR_GREEN_PLANK を materials.js からインポート。
+//      applyRemotePlankBuilt において teamId === 'green' の場合に
+//      solidMesh.setColorAt(plankIdx, COLOR_GREEN_PLANK) を反映。
+//   2. 【二股分岐 Pattern B 左右レーン分離（左: 0, 右: 2）の完全維持】
+//   3. 【床ブロック取得・消費・モブ吹き飛び受信ハンドラの100%維持】
 
 import { LANES } from './constants.js';
 import {
   COLOR_BLUE_PLANK,
   COLOR_RED_PLANK,
-  COLOR_YELLOW_PLANK
+  COLOR_YELLOW_PLANK,
+  COLOR_GREEN_PLANK
 } from './materials.js';
 import {
   characters,
@@ -34,7 +33,7 @@ const dummyPlankObj = new THREE.Object3D();
 
 /**
  * リモートプレイヤーが階段を設置した際の受信ハンドラ（段板カラー即時同期 ＆ スタック整合）
- * ★ 二股分岐の左右の橋（左: laneIdx 0, 右: laneIdx 2）を誤認なく一意に特定
+ * ★ 4色対応（青・赤・黄・緑）
  */
 export function applyRemotePlankBuilt(stageIdx, laneIdx, plankIdx, teamId) {
   const localBridges = bridgesByStage.get(stageIdx) || [];
@@ -67,9 +66,11 @@ export function applyRemotePlankBuilt(stageIdx, laneIdx, plankIdx, teamId) {
   onBridge.solidMesh.setMatrixAt(plankIdx, dummyPlankObj.matrix);
   onBridge.solidMesh.instanceMatrix.needsUpdate = true;
 
+  // ★ 4チーム対応カラー分岐（緑チーム追加）
   if (teamId === 'blue') onBridge.solidMesh.setColorAt(plankIdx, COLOR_BLUE_PLANK);
   else if (teamId === 'red') onBridge.solidMesh.setColorAt(plankIdx, COLOR_RED_PLANK);
   else if (teamId === 'yellow') onBridge.solidMesh.setColorAt(plankIdx, COLOR_YELLOW_PLANK);
+  else if (teamId === 'green') onBridge.solidMesh.setColorAt(plankIdx, COLOR_GREEN_PLANK);
 
   if (onBridge.solidMesh.instanceColor) {
     onBridge.solidMesh.instanceColor.needsUpdate = true;

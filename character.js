@@ -1,13 +1,13 @@
 // 3Dキャラクター外観構築・手足メッシュ・スタックプール・トロリー・ホバー展望リフト・スカイダイブ＆トラップドア姿勢管理・足元手前側（カメラ方向）フロスト投影ネームバッジ
-// ★ Phase 3 実装版（ネームプレート静止時追従ガード ＆ CanvasTexture再生成VRAMキャッシュ保護）：
-//   1. 【静止・放置時の行列更新バイパス】
-//      updateNameplatePosition において、前フレームからの移動距離が微小（1mm未満）の場合は
-//      position.set および Three.js のワールド行列再計算をスキップ。放置撮影時のCPU負荷を極小化。
-//   2. 【CanvasTexture 重複生成の完全遮断】
-//      updatePlayerName や resetCharacterToStageZero 等で名前が同一の場合は
-//      新規テクスチャの生成と旧マテリアル破棄をバイパスし、VRAMメモリリークを完全防止。
-//   3. 【既存の交代時慣性リセット・スロット境界保護の完全維持】
-//      Stage 0 リセット、AIスタックタイマー消去、直立整列処理は100%維持。
+// ★ 4人プレイ拡張版（緑チーム追加 ＆ スタート整列安全化）：
+//   1. 【4走者目（Slot 3 / 緑Bot / CPU 3）の完全初期化】
+//      setupCharacters, resetCharacters, resetCharacterToStageZero, bindLocalPlayerSlot を4スロット対応に拡張。
+//   2. 【初期島スタート整列の安全化 (X = [-4.8, -1.6, 1.6, 4.8])】
+//      走者間距離を 3.2m に均等配分。タックル接触判定（半径1.38m）に対して安全マージン（約1.8m）を確保し、
+//      ゲーム開始直後の意図しないタックル誤暴発を物理的に完全遮断。
+//   3. 【緑チーム用マテリアル・スタック配列バインド】
+//      sharedMats.charGreen, botGreenStackMaterials を配備。
+//   4. 【静止時行列更新バイパス・VRAMキャッシュ保護の完全維持】
 
 import {
   TEAMS,
@@ -22,6 +22,7 @@ import {
   playerStackMaterials,
   botRedStackMaterials,
   botYellowStackMaterials,
+  botGreenStackMaterials,
   updatePlayerStackMaterials,
   elevatorPlatformFloorGeo,
   elevatorHandrailPostGeo,
@@ -102,7 +103,6 @@ export const createNameplateSprite = createNameplateMesh;
 
 /**
  * GRAVITYで取得された名前を自キャラ足元に遅延なく即時反映する安全関数
- * ★【Phase 3 改善】名前同一時の不要なCanvas/Texture再生成をスキップしてVRAMを保護
  */
 export function updatePlayerName(newName) {
   if (!newName) return;
@@ -133,21 +133,27 @@ export function updatePlayerName(newName) {
 }
 
 /**
- * 先行していたキャラを Stage 0 スタート地点へ安全に初期化する関数
+ * 先行していたキャラを Stage 0 スタート地点へ安全に初期化する関数（4人安全配置対応）
  */
 export function resetCharacterToStageZero(char, nameText = null, isLocal = false) {
   if (!char) return;
 
-  // 1. スロット固有の Stage 0 デフォルト座標を算出
-  let defaultX = 0.0;
+  // 1. スロット固有の Stage 0 デフォルト座標を算出（4人均等整列: [-4.8, -1.6, 1.6, 4.8]）
+  let defaultX = -1.6;
   if (char.team && char.team.id === 'red') {
-    defaultX = -4.0;
+    defaultX = -4.8;
+  } else if (char.team && char.team.id === 'blue') {
+    defaultX = -1.6;
   } else if (char.team && char.team.id === 'yellow') {
-    defaultX = 4.0;
+    defaultX = 1.6;
+  } else if (char.team && char.team.id === 'green') {
+    defaultX = 4.8;
   } else {
     const idx = characters.indexOf(char);
-    if (idx === 1) defaultX = -4.0;
-    else if (idx === 2) defaultX = 4.0;
+    if (idx === 1) defaultX = -4.8;
+    else if (idx === 0) defaultX = -1.6;
+    else if (idx === 2) defaultX = 1.6;
+    else if (idx === 3) defaultX = 4.8;
   }
 
   char.pos.set(defaultX, 0.0, 4.0);
@@ -260,11 +266,11 @@ export function resetCharacterToStageZero(char, nameText = null, isLocal = false
 }
 
 /**
- * 自他ネームプレート境界保護版 bindLocalPlayerSlot
+ * 自他ネームプレート境界保護版 bindLocalPlayerSlot（4スロット対応）
  */
 export function bindLocalPlayerSlot(slotIndex) {
-  if (!characters || characters.length < 3) return;
-  const targetSlot = Math.max(0, Math.min(2, Number(slotIndex) || 0));
+  if (!characters || characters.length < 4) return;
+  const targetSlot = Math.max(0, Math.min(3, Number(slotIndex) || 0));
 
   let myResolvedName = 'YOU';
   if (typeof window !== 'undefined' && window.GRAVITY_USER_NAME) {
@@ -300,7 +306,7 @@ export function bindLocalPlayerSlot(slotIndex) {
       if (c.nameplateSprite) {
         if (c.nameplateSprite.material) {
           if (c.nameplateSprite.material.map) {
-            c.nameplateSprite.material.map.dispose();
+            char.nameplateSprite.material.map.dispose();
           }
           c.nameplateSprite.material.dispose();
         }
@@ -319,7 +325,7 @@ export function bindLocalPlayerSlot(slotIndex) {
 
       let otherName = c.name;
       if (!otherName || otherName === 'YOU' || otherName === myResolvedName) {
-        otherName = (idx === 0) ? 'norion' : (idx === 1 ? 'CPU 1' : 'CPU 2');
+        otherName = (idx === 0) ? 'norion' : (idx === 1 ? 'CPU 1' : (idx === 2 ? 'CPU 2' : 'CPU 3'));
       }
       c.name = otherName;
 
@@ -349,7 +355,6 @@ export function bindLocalPlayerSlot(slotIndex) {
 
 /**
  * 足元追従：見下ろしカメラから見て開けている画面手前側（カメラ方向: +Z 1.15m）へオフセット配置
- * ★【Phase 3 改善】前フレームからの移動距離が微小（1mm未満）の静止時は position.set をスキップ
  */
 export function updateNameplatePosition(char) {
   if (!char || !char.nameplateSprite) return;
@@ -379,7 +384,6 @@ export function updateNameplatePosition(char) {
   const targetY = char.pos.y + 0.05;
   const targetZ = char.pos.z + (isShrunk ? 0.82 : 1.15);
 
-  // ★ 前フレームの位置から移動していない場合（放置撮影時・静止時）は行列再計算をスキップ
   const curPos = char.nameplateSprite.position;
   const dx = curPos.x - targetX;
   const dy = curPos.y - targetY;
@@ -494,7 +498,9 @@ export function createCharacterMesh(team) {
   let mat;
   if (team.id === 'blue') mat = sharedMats.charBlue;
   else if (team.id === 'red') mat = sharedMats.charRed;
-  else mat = sharedMats.charYellow;
+  else if (team.id === 'yellow') mat = sharedMats.charYellow;
+  else if (team.id === 'green') mat = sharedMats.charGreen;
+  else mat = sharedMats.charBlue;
 
   const bodyGeo = new THREE.SphereGeometry(0.42, 20, 20);
   const body = new THREE.Mesh(bodyGeo, mat);
@@ -558,6 +564,7 @@ export function createCharacterMesh(team) {
   let defaultMat;
   if (team.id === 'red') defaultMat = botRedStackMaterials[0];
   else if (team.id === 'yellow') defaultMat = botYellowStackMaterials[0];
+  else if (team.id === 'green') defaultMat = botGreenStackMaterials[0];
   else defaultMat = playerStackMaterials[0];
 
   for (let i = 0; i < MAX_VISUAL_STACK; i++) {
@@ -607,6 +614,8 @@ export function getBrickMaterialForStackIndex(char, index) {
     return botRedStackMaterials[safeIdx];
   } else if (char.team.id === 'yellow') {
     return botYellowStackMaterials[safeIdx];
+  } else if (char.team.id === 'green') {
+    return botGreenStackMaterials[safeIdx];
   } else if (char.team.id === 'blue') {
     return playerStackMaterials[safeIdx];
   }
@@ -742,7 +751,11 @@ export function removeBrickFromCharacter(char, updateHUD = null) {
 export function setupCharacters(scene, STAGES) {
   characters.length = 0;
 
-  // 1. スロット0: 青（ホスト担当枠）
+  // ★ 4走者均等整列 X座標: [-4.8, -1.6, 1.6, 4.8]（間隔3.2mでタックル誤暴発を遮断）
+  const stage0Z = STAGES[0].z + 4.0;
+  const stage0Y = STAGES[0].y;
+
+  // 1. スロット0: 青（ホスト担当枠: X = -1.6）
   const pMesh = createCharacterMesh(TEAMS.BLUE);
   pMesh.root.rotation.set(0, Math.PI, 0);
   scene.add(pMesh.root);
@@ -757,7 +770,7 @@ export function setupCharacters(scene, STAGES) {
     nameplateSprite: pNameplate,
     team: TEAMS.BLUE,
     meshObj: pMesh,
-    pos: new THREE.Vector3(0, STAGES[0].y, STAGES[0].z + 4),
+    pos: new THREE.Vector3(-1.6, stage0Y, stage0Z),
     rotation: Math.PI,
     stackCount: 0,
     currentStage: 0,
@@ -813,7 +826,7 @@ export function setupCharacters(scene, STAGES) {
   characters.push(char0);
   player = char0;
 
-  // 2. スロット1: 赤（ゲスト1担当枠 / 初期はCPU 1）
+  // 2. スロット1: 赤（ゲスト1担当枠 / 初期はCPU 1: X = -4.8）
   const b1Mesh = createCharacterMesh(TEAMS.RED);
   b1Mesh.root.rotation.set(0, Math.PI, 0);
   scene.add(b1Mesh.root);
@@ -828,7 +841,7 @@ export function setupCharacters(scene, STAGES) {
     nameplateSprite: b1Nameplate,
     team: TEAMS.RED,
     meshObj: b1Mesh,
-    pos: new THREE.Vector3(-4.0, STAGES[0].y, STAGES[0].z + 4),
+    pos: new THREE.Vector3(-4.8, stage0Y, stage0Z),
     rotation: Math.PI,
     stackCount: 0,
     currentStage: 0,
@@ -891,7 +904,7 @@ export function setupCharacters(scene, STAGES) {
   updateNameplatePosition(char1);
   characters.push(char1);
 
-  // 3. スロット2: 黄（ゲスト2担当枠 / 初期はCPU 2）
+  // 3. スロット2: 黄（ゲスト2担当枠 / 初期はCPU 2: X = 1.6）
   const b2Mesh = createCharacterMesh(TEAMS.YELLOW);
   b2Mesh.root.rotation.set(0, Math.PI, 0);
   scene.add(b2Mesh.root);
@@ -906,7 +919,7 @@ export function setupCharacters(scene, STAGES) {
     nameplateSprite: b2Nameplate,
     team: TEAMS.YELLOW,
     meshObj: b2Mesh,
-    pos: new THREE.Vector3(4.0, STAGES[0].y, STAGES[0].z + 4),
+    pos: new THREE.Vector3(1.6, stage0Y, stage0Z),
     rotation: Math.PI,
     stackCount: 0,
     currentStage: 0,
@@ -968,6 +981,84 @@ export function setupCharacters(scene, STAGES) {
   b2Mesh.root.position.copy(char2.pos);
   updateNameplatePosition(char2);
   characters.push(char2);
+
+  // 4. スロット3: 緑（ゲスト3担当枠 / 初期はCPU 3: X = 4.8）
+  const b3Mesh = createCharacterMesh(TEAMS.GREEN);
+  b3Mesh.root.rotation.set(0, Math.PI, 0);
+  scene.add(b3Mesh.root);
+
+  const b3Nameplate = createNameplateMesh('CPU 3', false);
+  scene.add(b3Nameplate);
+
+  const char3 = {
+    isPlayer: false,
+    isAI: true,
+    name: 'CPU 3',
+    nameplateSprite: b3Nameplate,
+    team: TEAMS.GREEN,
+    meshObj: b3Mesh,
+    pos: new THREE.Vector3(4.8, stage0Y, stage0Z),
+    rotation: Math.PI,
+    stackCount: 0,
+    currentStage: 0,
+    aiState: 'COLLECT',
+    aiCapacityGoal: 16,
+    stunTimer: 0,
+    shrinkTimer: 0,
+    invulnerableTimer: 0,
+    walkCycle: 0,
+    isJumping: false,
+    activeJumpTier: null,
+    onSlide: false,
+    onCurvedSlide: false,
+    curvedSlideProgress: 0,
+    curvedSlideOffset: 0,
+    slideCooldown: 0,
+    onZipline: false,
+    ziplineProgress: 0,
+    activeZipline: null,
+    onElevator: false,
+    elevatorProgress: 0,
+    activeElevator: null,
+    elevatorLane: 0,
+    elevatorChoice: undefined,
+    elevatorExiting: false,
+    elevatorExitTimer: 0,
+
+    onSkydive: false,
+    skydiveProgress: 0,
+    activeSkydive: null,
+    skydiveX: 0,
+    skydiveRoll: 0,
+
+    onTrapdoor: false,
+    trapdoorProgress: 0,
+    activeTrapdoor: null,
+    trapdoorX: 0,
+
+    onFreefall: false,
+    freefallProgress: 0,
+    activeFreefall: null,
+    freefallX: 0,
+    freefallRoll: 0,
+
+    isGhostStacked: false,
+    jumpProgress: 0,
+    lastPlankIdx: -1,
+    botSlideOffsetTarget: 0,
+    speedBoostActive: false,
+    speedBoostTimer: 0,
+    puffTimer: 0,
+    magnetActive: false,
+    magnetTimer: 0,
+    aiDirX: 0,
+    aiDirZ: -1,
+    searchCooldown: 0.08,
+    targetBlock: null
+  };
+  b3Mesh.root.position.copy(char3.pos);
+  updateNameplatePosition(char3);
+  characters.push(char3);
 
   if (typeof window !== 'undefined' && window.MY_PLAYER_SLOT !== undefined) {
     bindLocalPlayerSlot(window.MY_PLAYER_SLOT);
@@ -1048,20 +1139,29 @@ export function resetCharacters(STAGES) {
     resetCharacterPose(c);
   });
 
+  const stage0Z = STAGES[0] ? (STAGES[0].z + 4.0) : 4.0;
+  const stage0Y = STAGES[0] ? STAGES[0].y : 0.0;
+
+  // 4走者の初期位置整列
   if (characters[0] && STAGES[0]) {
-    characters[0].pos.set(0, STAGES[0].y, STAGES[0].z + 4);
+    characters[0].pos.set(-1.6, stage0Y, stage0Z);
     characters[0].meshObj.root.position.copy(characters[0].pos);
     updateNameplatePosition(characters[0]);
   }
   if (characters[1] && STAGES[0]) {
-    characters[1].pos.set(-4.0, STAGES[0].y, STAGES[0].z + 4);
+    characters[1].pos.set(-4.8, stage0Y, stage0Z);
     characters[1].meshObj.root.position.copy(characters[1].pos);
     updateNameplatePosition(characters[1]);
   }
   if (characters[2] && STAGES[0]) {
-    characters[2].pos.set(4.0, STAGES[0].y, STAGES[0].z + 4);
+    characters[2].pos.set(1.6, stage0Y, stage0Z);
     characters[2].meshObj.root.position.copy(characters[2].pos);
     updateNameplatePosition(characters[2]);
+  }
+  if (characters[3] && STAGES[0]) {
+    characters[3].pos.set(4.8, stage0Y, stage0Z);
+    characters[3].meshObj.root.position.copy(characters[3].pos);
+    updateNameplatePosition(characters[3]);
   }
 
   if (player && typeof window !== 'undefined' && window.GRAVITY_USER_NAME) {

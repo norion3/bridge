@@ -1,16 +1,10 @@
 // dom.js: 画面UI・HUD・ロビー・待機室・超ミニマルエントリーシールドの動的生成モジュール
-// ★ 確定仕様（ソロプレイ「1人で遊ぶ」即時起動 ＆ 超ミニマルエントリーシールド完全連動版）：
-//   1. 【「1人で遊ぶ（#btn-start-solo）」タップ即時ゲーム始動の実装】
-//      タップ時に UIController.showGame()、ロビー画面完全非表示化、スロット0バインド、
-//      launchGameEngine() を確実にキックし、1人で遊ぶが確実に起動するように修正。
-//      スマホ実機でのタップ抜けを防ぐため touchend と click の双方を確実にバインド。
-//   2. 【初期スタイル強制非表示によるFOUC完全遮断】
-//      #test-lobby-overlay の初期スタイルを display: none !important; に設定。
-//      ローダー消去から判定完了までの間に素のロビー画面が露出する事故を物理的に根絶。
-//   3. 【超ミニマル・エントリーシールド（#entry-shield）の完全維持】
-//      極細ネオンスピナー＋ルーム番号＋合流中テキストのみの最軽量すりガラスシールド。
-//   4. 【公開ルーム一覧の独立スクロール ＆ 1行Ellipsisの完全維持】
-//      max-height: 210px の慣性スクロールと1行省略レイアウトを100%維持。
+// ★ 4人プレイ拡張版（Phase 5：緑チームバッジ ＆ 定員4名表示対応）：
+//   1. 【緑チーム（.slot-green）スタイル定義追加】
+//      待機画面等のスロットバッジにエメラルドグリーン（#10b981）を追加。
+//   2. 【ロビー最大定員4名（/ 4名）完全連動】
+//      公开ルーム一覧等の表示ロジックを最大4名規格へ安全拡張。
+//   3. 【「1人で遊ぶ」即時起動 ＆ 超ミニマルエントリーシールドの100%維持】
 
 import { updatePlayerName, bindLocalPlayerSlot } from './character.js';
 
@@ -52,7 +46,6 @@ export function injectStyles() {
     }
 
     /* ロビー画面 ＆ 待機画面：ポップで爽やかな青空・マリンフロストデザイン */
-    /* ★ 初期状態は強制非表示（display: none !important）にしてFOUCを根絶 */
     .gravity-screen-overlay,
     #test-lobby-overlay {
       position: absolute;
@@ -69,7 +62,6 @@ export function injectStyles() {
       -webkit-overflow-scrolling: touch;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
     }
-    /* 表示命令（active-screen）が付与された時のみ表示 */
     .gravity-screen-overlay.active-screen,
     #test-lobby-overlay.active-screen {
       display: flex !important;
@@ -150,7 +142,6 @@ export function injectStyles() {
       margin-top: 6px;
     }
 
-    /* 公開ルーム一覧コンテナの独立スクロール領域 */
     #room-list-container {
       max-height: 210px;
       overflow-y: auto;
@@ -159,7 +150,6 @@ export function injectStyles() {
       margin-top: 8px;
     }
 
-    /* 薄型シアンのカスタムスクロールバー */
     #room-list-container::-webkit-scrollbar {
       width: 4px;
     }
@@ -208,8 +198,10 @@ export function injectStyles() {
     .slot-blue { background-color: #0284c7; }
     .slot-red { background-color: #ef4444; }
     .slot-yellow { background-color: #f59e0b; }
+    /* ★ 緑チームバッジ */
+    .slot-green { background-color: #10b981; }
 
-    /* ★ 超ミニマル・エントリーシールド スタイル */
+    /* 超ミニマル・エントリーシールド */
     .entry-shield-minimal {
       position: absolute;
       inset: 0;
@@ -253,18 +245,12 @@ export function injectStyles() {
   `;
 }
 
-/**
- * GRAVITYアプリの上部インセット（除外エリア）を取得
- */
 export function getTopInset() {
   const isGravity = typeof window !== 'undefined' && !!window.AgentSDK;
   if (!isGravity) return 24;
   return window.innerHeight >= 812 ? 112 : 96;
 }
 
-/**
- * GRAVITY AgentSDKからユーザー名を取得してロビー画面および自キャラ足元に即座に反映する
- */
 export async function syncGravityUserName() {
   let displayName = 'プレイヤー';
 
@@ -286,23 +272,17 @@ export async function syncGravityUserName() {
     }
   }
 
-  // 1. 動的テンプレート内の挨拶文を更新
   const dynamicGreeting = document.getElementById('lobby-user-greeting');
   if (dynamicGreeting) {
     dynamicGreeting.innerHTML = `ようこそ <span style="color: #fde047; font-weight: 800;">${displayName}</span> さん`;
   }
 
-  // 2. GRAVITY側HTMLに最初からある既存ロビーの挨拶文も更新
   const staticGreeting = document.querySelector('#test-lobby-overlay .lobby-card > div:nth-child(2)');
   if (staticGreeting) {
     staticGreeting.innerHTML = `ようこそ <span style="color: #fde047; font-weight: 800;">${displayName}</span> さん`;
   }
 }
 
-/**
- * 既存のHTML要素（#test-lobby-overlay）を最新青空ロビーへ完全上書き整形
- * ★「1人で遊ぶ」ボタンに確実なゲーム始動処理をバインド
- */
 export function patchExistingLobbyLabels() {
   const overlay = document.getElementById('test-lobby-overlay');
   if (!overlay) return;
@@ -310,7 +290,6 @@ export function patchExistingLobbyLabels() {
   const card = overlay.querySelector('.lobby-card');
   if (!card) return;
 
-  // タイトル：「階段を架けろ！」
   const titleEl = card.querySelector('div:nth-child(1)');
   if (titleEl) {
     titleEl.textContent = '階段を架けろ！';
@@ -322,7 +301,6 @@ export function patchExistingLobbyLabels() {
     titleEl.style.margin = '4px 0 2px 0';
   }
 
-  // 挨拶テキスト
   const greetingEl = card.querySelector('div:nth-child(2)');
   if (greetingEl) {
     greetingEl.style.color = '#bae6fd';
@@ -330,7 +308,6 @@ export function patchExistingLobbyLabels() {
     greetingEl.style.marginBottom = '6px';
   }
 
-  // ★【核心】メインボタン「1人で遊ぶ」の始動イベント完全バインド
   const soloBtn = document.getElementById('btn-start-solo');
   if (soloBtn) {
     soloBtn.textContent = '▶ 1人で遊ぶ';
@@ -345,12 +322,10 @@ export function patchExistingLobbyLabels() {
           e.stopPropagation();
         }
 
-        // 1. ユーザー名同期
         if (window.GRAVITY_USER_NAME) {
           updatePlayerName(window.GRAVITY_USER_NAME);
         }
 
-        // 2. ソロプレイモードの確定（マルチフラグ解除 ＆ スロット0バインド）
         if (window.NetworkManager) {
           window.NetworkManager.isMultiplayerActive = false;
           window.NetworkManager.isHost = true;
@@ -363,7 +338,6 @@ export function patchExistingLobbyLabels() {
           window.bindLocalPlayerSlot(0);
         }
 
-        // 3. ロビー画面および全オーバーレイの完全消去
         if (typeof UIController !== 'undefined' && typeof UIController.showGame === 'function') {
           UIController.showGame();
         } else if (window.UIController && typeof window.UIController.showGame === 'function') {
@@ -383,7 +357,6 @@ export function patchExistingLobbyLabels() {
           startModal.style.setProperty('display', 'none', 'important');
         }
 
-        // 4. ゲームエンジンの起動
         if (typeof window.launchGameEngine === 'function') {
           window.launchGameEngine();
         }
@@ -399,12 +372,10 @@ export function patchExistingLobbyLabels() {
     }
   }
 
-  // DOMツリー上で soloBtn を挨拶文の直後へ移動
   if (soloBtn && greetingEl && soloBtn.previousElementSibling !== greetingEl) {
     greetingEl.after(soloBtn);
   }
 
-  // ボタンテキストで確実に「公開ルームを作成」「プライベートルームを作成」を特定し、IDを付与＆onclickアラートを除去
   const allButtons = card.querySelectorAll('button');
   allButtons.forEach(btn => {
     const text = btn.textContent || '';
@@ -421,7 +392,6 @@ export function patchExistingLobbyLabels() {
     }
   });
 
-  // 公開ルーム一覧の外観調整 ＆ 更新ボタンに ID を付与
   const roomSection = card.querySelector('div:last-child');
   if (roomSection) {
     roomSection.classList.add('room-list-box');
@@ -451,9 +421,6 @@ export function patchExistingLobbyLabels() {
   }
 }
 
-/**
- * 超ミニマル・エントリーシールド コントローラー
- */
 export const EntryShield = {
   show(roomText = 'CONNECTING...', statusText = 'ルームへ合流中...') {
     let el = document.getElementById('entry-shield');
@@ -504,16 +471,11 @@ if (typeof window !== 'undefined') {
   window.EntryShield = EntryShield;
 }
 
-/**
- * 指定されたコンテナ要素内に、全画面UI（3Dコンテナ、HUD、ロビー、待機室、シールド）を一括マウント
- * @param {HTMLElement} container 
- */
 export function mountAllUI(container) {
   if (!container) return;
   injectStyles();
   const topInset = getTopInset();
 
-  // 既存の canvas-container がない場合のみフルマウント
   if (!document.getElementById('canvas-container')) {
     container.innerHTML = `
       <div id="canvas-container"></div>
@@ -521,7 +483,6 @@ export function mountAllUI(container) {
     `;
   }
 
-  // 待機部屋画面（#screen-waiting）がまだなければ動的追加
   if (!document.getElementById('screen-waiting')) {
     const waitScreen = document.createElement('div');
     waitScreen.id = 'screen-waiting';
@@ -539,7 +500,6 @@ export function mountAllUI(container) {
     container.appendChild(waitScreen);
   }
 
-  // 超ミニマル・エントリーシールドがまだなければ動的追加
   if (!document.getElementById('entry-shield')) {
     const shield = document.createElement('div');
     shield.id = 'entry-shield';
@@ -555,7 +515,6 @@ export function mountAllUI(container) {
   patchExistingLobbyLabels();
   syncGravityUserName();
 
-  // 「ロビーへ戻る」ボタン押下時のハンドリング
   const leaveBtn = document.getElementById('btn-leave-room');
   if (leaveBtn && !leaveBtn._hasCustomListener) {
     leaveBtn._hasCustomListener = true;
@@ -568,15 +527,11 @@ export function mountAllUI(container) {
     });
   }
 
-  // network.js のイベントバインドを再実行
   if (typeof window !== 'undefined' && window.NetworkManager && typeof window.hookLobbyNetworkEvents === 'function') {
     window.hookLobbyNetworkEvents();
   }
 }
 
-/**
- * UIステート表示切り替え制御
- */
 export const UIController = {
   showLobby() {
     const screenLobby = document.getElementById('screen-lobby');
@@ -665,9 +620,6 @@ if (typeof window !== 'undefined') {
   window.UIController = UIController;
 }
 
-/**
- * 初期化実行ルーチン
- */
 export function initDOMEnhancements() {
   injectStyles();
   patchExistingLobbyLabels();
@@ -680,7 +632,6 @@ if (document.readyState === 'loading') {
   initDOMEnhancements();
 }
 
-// network.js を安全に読み込んでイベントをバインド
 import('./network.js').then(module => {
   if (module && typeof module.hookLobbyNetworkEvents === 'function') {
     window.hookLobbyNetworkEvents = module.hookLobbyNetworkEvents;

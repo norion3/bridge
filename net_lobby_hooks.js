@@ -1,9 +1,5 @@
 // net_lobby_hooks.js: ロビーDOMイベント監視・部屋作成/参加二重タップ防止デバウンスモジュール
-// ★ network.js からレース中非稼働のロビーDOM処理を完全分離（Package 3）
-//   1. 【二重タップ・連打排他ガード】
-//      1000ms以内の連打・ゴーストクリックを破棄し、ルーム多重生成を物理遮断。
-//   2. 【公開ルーム一覧の動的描画 ＆ 参加バインド】
-//      getPublicRoomList の結果を 1行Ellipsis レイアウトへ安全に流し込み。
+// ★ 4人対戦対応版（最大定員フォールバック 4名拡張版）
 
 import { NetworkManager } from './network.js';
 
@@ -85,10 +81,11 @@ export function hookLobbyNetworkEvents() {
         const item = document.createElement('div');
         item.className = 'gravity-room-item';
         const strRoomId = String(r.room_id);
+        // ★ 最大定員フォールバックを 4名 に完全拡張
         item.innerHTML = `
           <div style="min-width: 0; flex: 1; margin-right: 10px; display: flex; flex-direction: column; gap: 2px;">
             <span style="font-weight: 800; color: #ffffff; font-size: 13px; letter-spacing: 0.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">ROOM #${strRoomId}</span>
-            <span style="font-size: 12px; color: #bae6fd;">走者: ${r.gamer_num || 1} / ${r.max_players || 3}名</span>
+            <span style="font-size: 12px; color: #bae6fd;">走者: ${r.gamer_num || 1} / ${r.max_players || 4}名</span>
           </div>
           <button type="button" class="gravity-btn-green" style="flex-shrink: 0; width: auto; padding: 6px 14px; font-size: 13px; border-radius: 8px;">参加</button>
         `;

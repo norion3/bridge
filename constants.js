@@ -1,12 +1,17 @@
 // チーム設定、コース構成規格、およびエレベーター・スカイダイブ・トラップドア物理・カメラ定数
+// ★ 4人プレイ拡張版（緑チーム追加）：
+//   1. TEAMS に GREEN（id: 'green', hex: 0x10b981, emissive: 0x059669）を追加。
+//   2. BLOCK_TYPES に TEAMS.GREEN を追加（4色化）。
+
 export const TEAMS = {
   BLUE: { id: 'blue', name: 'あなた (青)', hex: 0x0066ff, emissive: 0x1d4ed8 },
   RED: { id: 'red', name: '赤Bot', hex: 0xef4444, emissive: 0xb91c1c },
   YELLOW: { id: 'yellow', name: '黄Bot', hex: 0xf59e0b, emissive: 0xb45309 },
+  GREEN: { id: 'green', name: '緑Bot', hex: 0x10b981, emissive: 0x059669 },
   NEUTRAL: { id: 'neutral', name: '中立', hex: 0x94a3b8, emissive: 0x475569 }
 };
 
-export const BLOCK_TYPES = [TEAMS.BLUE, TEAMS.RED, TEAMS.YELLOW];
+export const BLOCK_TYPES = [TEAMS.BLUE, TEAMS.RED, TEAMS.YELLOW, TEAMS.GREEN];
 export const MAX_VISUAL_STACK = 20;
 
 export const TRAMPOLINE_TIERS = {

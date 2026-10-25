@@ -1,13 +1,13 @@
 // systems.js: 自機・AIの物理移動計算・島内判定・階段架橋登攀判定・アトラクション進入判定司令塔
-// ★ Package 2 受信ハンドラ分離＆スリム化司令塔版（systems_remote.js 統合）
-//   1. 【受信ハンドラを systems_remote.js へ完全外注】
-//      applyRemotePlankBuilt, applyRemoteBlockPicked, applyRemoteObjectConsumed, applyRemoteBlowMob を
-//      systems_remote.js からインポート＆再エクスポートし、後方互換性100%を維持。
-//   2. 【自機・AI移動・階段物理計算への専念】
-//      二股分岐における左右レーン（左: 0, 右: 2）の actualBridgeX 基準登攀判定、
-//      6大アトラクション進入判定、お邪魔モブ・ゲート衝突判定に特化。
-//   3. 【GCスパイク防止の静的再利用バッファ完全維持】
-//      reusableLocalBridges による配列生成ゼロ化、衝突調停は100%維持。
+// ★ 4人プレイ拡張版（緑チーム架橋色塗り対応）：
+//   1. 【緑チーム（GREEN: #10b981）架橋カラー対応】
+//      COLOR_GREEN_PLANK を materials.js からインポート。
+//      handleCourseMovement の階段架橋ブロック設置処理において、
+//      char.team.id === 'green' の場合に段板を COLOR_GREEN_PLANK で美しく着色。
+//   2. 【Package 2 受信ハンドラ分離 ＆ 後方互換性100%維持】
+//      applyRemotePlankBuilt, applyRemoteBlockPicked, applyRemoteObjectConsumed, applyRemoteBlowMob
+//      を systems_remote.js からインポート＆再エクスポート。
+//   3. 【GCスパイク防止の静的再利用バッファ・早期定数タックル判定の完全維持】
 
 import {
   TRAMPOLINE_TIERS,
@@ -19,6 +19,7 @@ import {
   COLOR_BLUE_PLANK,
   COLOR_RED_PLANK,
   COLOR_YELLOW_PLANK,
+  COLOR_GREEN_PLANK,
   disposeHierarchy
 } from './materials.js';
 import {
@@ -545,9 +546,11 @@ export function handleCourseMovement(scene, char, nextX, nextZ, inputDirX, input
                   onBridge.solidMesh.setMatrixAt(pIndex, dummyPlankObj.matrix);
                   onBridge.solidMesh.instanceMatrix.needsUpdate = true;
 
+                  // ★ 4チーム対応カラー分岐（緑チーム追加）
                   if (char.team.id === 'blue') onBridge.solidMesh.setColorAt(pIndex, COLOR_BLUE_PLANK);
                   else if (char.team.id === 'red') onBridge.solidMesh.setColorAt(pIndex, COLOR_RED_PLANK);
                   else if (char.team.id === 'yellow') onBridge.solidMesh.setColorAt(pIndex, COLOR_YELLOW_PLANK);
+                  else if (char.team.id === 'green') onBridge.solidMesh.setColorAt(pIndex, COLOR_GREEN_PLANK);
 
                   if (onBridge.solidMesh.instanceColor) {
                     onBridge.solidMesh.instanceColor.needsUpdate = true;

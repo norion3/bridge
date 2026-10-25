@@ -1,15 +1,15 @@
 // network.js: AgentSDK公式仕様完全準拠 ＆ 10Hz POS 送受信ループ ＆ 自律ホスト昇格 ＆ スナップショット復元司令塔
-// ★ Phase 4 修正版（意図しない自爆退室防止 ＆ 入室直後CPU戻り根絶 ＆ 電波耐性ウォッチドッグ）：
-//   1. 【safeExitCurrentRoom の同一ルーム判定ガード (自爆退室の根絶)】
-//      DM招待リンク等でネイティブ層が先行入室している場合、joinRoom から safeExitCurrentRoom(targetRoomId) を
-//      呼んでも現在アクティブな部屋と同一であれば exit() をバイパス。ゲスト自身の自爆退室を完全に阻止。
-//   2. 【_handleUserExited の入室直後デバウンス保護 (CPU誤戻り根絶)】
-//      ゲスト入室から 2000ms 以内に届いた exit 通知はネイティブの一時的重複・誤爆として破棄。
-//      「一瞬ゲストに入った直後にすぐCPUに戻ってしまう」現象を物理的に根絶。
-//   3. 【ホスト昇格ウォッチドッグの電波揺らぎ耐性向上】
-//      4G電波揺らぎやスナップショット受信ラグでの誤昇格（スプリットブレイン）を防ぐため、
-//      タイムアウト閾値を初弾待機 6.0s -> 8.0s、通常対戦中 3.5s -> 5.0s に緩和。
-//   4. 【1KB安全バッチ化・Catch-up事前コース伸長・カメラダイレクトスナップの100%維持】
+// ★ 4人プレイ拡張版（Phase 5：緑チーム・スロット3完全対応 ＆ 自爆退室防止 ＆ 1KB安全化）：
+//   1. 【ルーム定員4名化 (max_players: 4)】
+//      AgentSDK.room.create({ max_players: 4 })、getPublicRooms の定員判定を4名に拡張。
+//   2. 【スロット3（緑チーム: #10b981）の通信・AI復帰完全同期】
+//      slots 初期配列にスロット3（CPU 3 / 緑）を追加。
+//      _restoreAllVacantSlotsToAI、_restoreSlotToAI、_handleUserExited におけるCPU 3フォールバックを完備。
+//   3. 【ブロック補充パケット (sp) チーム番号5値化】
+//      t: 0:blue, 1:red, 2:yellow, 3:green, 4:neutral へ拡張し、緑ブロック補充同期を完全実現。
+//   4. 【合流スポーン (Catch-up Spawn) 4走者均等X配置】
+//      合流時のX座標オフセットを 4走者安全整列（X = [-4.8, -1.6, 1.6, 4.8]）に同期。
+//   5. 【自爆退室防止 ＆ 2000ms退室デバウンス ＆ 1KB安全バッチの完全維持】
 
 import {
   player,
@@ -225,10 +225,12 @@ export const NetworkManager = {
   clientId: generateClientId(),
   myUser: { name: 'YOU', user_id: 'local_user', portrait: '' },
   
+  // ★ 4走者スロット枠（青・赤・黄・緑）
   slots: [
     { slot: 0, clientId: null, userId: null, name: 'norion', portrait: '', isAI: false, joinTime: 0 },
     { slot: 1, clientId: null, userId: null, name: 'CPU 1', portrait: '', isAI: true, joinTime: 0 },
-    { slot: 2, clientId: null, userId: null, name: 'CPU 2', portrait: '', isAI: true, joinTime: 0 }
+    { slot: 2, clientId: null, userId: null, name: 'CPU 2', portrait: '', isAI: true, joinTime: 0 },
+    { slot: 3, clientId: null, userId: null, name: 'CPU 3', portrait: '', isAI: true, joinTime: 0 }
   ],
   
   isHost: false,
@@ -237,7 +239,7 @@ export const NetworkManager = {
   isSlotConfirmed: false,
   currentSeed: 12345678,
   _seedApplied: false,
-  _hasCaughtUp: false, // 途中参加時の合流スポーン完了フラグ
+  _hasCaughtUp: false,
 
   _hasRegisteredListener: false,
   _lastRefreshTime: 0,
@@ -266,12 +268,9 @@ export const NetworkManager = {
   _pendingKnockouts: [],
   _pendingScatters: [],
   _pendingSpawns: [],
-  // チャットメッセージ蓄積キュー
   _pendingChats: [],
 
   captureWorldSnapshot: captureFullWorldSnapshot,
-
-  // --- アクション蓄積キュー登録API ---
 
   queueChat(messageText) {
     if (!messageText) return;
@@ -360,14 +359,16 @@ export const NetworkManager = {
     });
   },
 
+  // ★ 4色＋中立対応（0:blue, 1:red, 2:yellow, 3:green, 4:neutral）
   queueSpawnBlocks(spawnedArray) {
     if (!this.isMultiplayerActive || !this.isHost || !Array.isArray(spawnedArray) || spawnedArray.length === 0) return;
     for (let i = 0; i < spawnedArray.length; i++) {
       const b = spawnedArray[i];
-      let tNum = 3;
+      let tNum = 4;
       if (b.teamId === 'blue') tNum = 0;
       else if (b.teamId === 'red') tNum = 1;
       else if (b.teamId === 'yellow') tNum = 2;
+      else if (b.teamId === 'green') tNum = 3;
 
       this._pendingSpawns.push({
         s: b.stageIdx,
@@ -450,7 +451,6 @@ export const NetworkManager = {
       }
 
       const elapsed = performance.now() - this._lastHostPacketTime;
-      // ★ 4G電波揺らぎでの誤昇格（スプリットブレイン）を防ぐため閾値を緩和（3500->5000ms, 6000->8000ms）
       const timeoutThreshold = this._hasReceivedFirstHostPacket ? 5000 : 8000;
 
       if (elapsed > timeoutThreshold) {
@@ -494,7 +494,7 @@ export const NetworkManager = {
       slotData.clientId = null;
       slotData.userId = null;
       slotData.portrait = '';
-      slotData.name = (i === 0) ? 'CPU 0' : (i === 1 ? 'CPU 1' : 'CPU 2');
+      slotData.name = (i === 0) ? 'CPU 0' : (i === 1 ? 'CPU 1' : (i === 2 ? 'CPU 2' : 'CPU 3'));
       slotData.joinTime = 0;
 
       char.isPlayer = false;
@@ -550,7 +550,7 @@ export const NetworkManager = {
       if (Array.isArray(list)) {
         return list.filter(r => {
           const count = Number(r.gamer_num) || 0;
-          const max = Number(r.max_players) || 3;
+          const max = Number(r.max_players) || 4;
           return count > 0 && count < max;
         });
       }
@@ -576,7 +576,8 @@ export const NetworkManager = {
       if (this.isSDKAvailable) {
         try {
           const permission = isPrivate ? 1 : 0;
-          const res = await window.AgentSDK.room.create({ max_players: 3, room_permission: permission });
+          // ★ 最大定員4名で部屋を作成
+          const res = await window.AgentSDK.room.create({ max_players: 4, room_permission: permission });
 
           let isSuccess = false;
           if (res) {
@@ -666,6 +667,7 @@ export const NetworkManager = {
       };
       this.slots[1] = { slot: 1, clientId: null, userId: null, name: 'CPU 1', portrait: '', isAI: true, joinTime: 0 };
       this.slots[2] = { slot: 2, clientId: null, userId: null, name: 'CPU 2', portrait: '', isAI: true, joinTime: 0 };
+      this.slots[3] = { slot: 3, clientId: null, userId: null, name: 'CPU 3', portrait: '', isAI: true, joinTime: 0 };
 
       recordParticipant(this.myUser.user_id, this.myUser.name, this.myUser.portrait, 'blue', true);
 
@@ -703,7 +705,6 @@ export const NetworkManager = {
 
     try {
       await this.init();
-      // ★ 本命ルーム入室時の自爆退室を防止（safeRoomId を渡し、すでにその部屋にいれば exit() を呼ばない）
       await safeExitCurrentRoom(safeRoomId);
 
       if (this.isSDKAvailable) {
@@ -819,7 +820,7 @@ export const NetworkManager = {
           name: guestName,
           portrait: portrait,
           isAI: false,
-          joinTime: performance.now() // 入室時刻を記録（退室デバウンス保護用）
+          joinTime: performance.now()
         };
         this._bindRemoteSlot(targetSlot, guestName);
 
@@ -843,7 +844,6 @@ export const NetworkManager = {
       const fullSnapshot = captureFullWorldSnapshot();
       this._snapshotQueue.length = 0;
 
-      // 1KB上限遵守：スナップショットのチャンクバッチサイズを安全圏（500〜700B）へ圧縮
       if (Array.isArray(fullSnapshot.planks) && fullSnapshot.planks.length > 0) {
         const BATCH_SIZE = 10;
         for (let i = 0; i < fullSnapshot.planks.length; i += BATCH_SIZE) {
@@ -1181,10 +1181,11 @@ export const NetworkManager = {
           });
         }
 
+        // ★ 4色対応デコード（0:blue, 1:red, 2:yellow, 3:green, その他:neutral）
         const spawnsList = packet.sp;
         if (Array.isArray(spawnsList) && spawnsList.length > 0 && typeof window.applyRemoteBlockSpawned === 'function') {
           spawnsList.forEach(sp => {
-            const teamStr = (sp.t === 0) ? 'blue' : (sp.t === 1 ? 'red' : (sp.t === 2 ? 'yellow' : 'neutral'));
+            const teamStr = (sp.t === 0) ? 'blue' : (sp.t === 1 ? 'red' : (sp.t === 2 ? 'yellow' : (sp.t === 3 ? 'green' : 'neutral')));
             window.applyRemoteBlockSpawned(sp.s, sp.pi, sp.x, undefined, sp.z, teamStr, sp.id);
           });
         }
@@ -1334,7 +1335,7 @@ export const NetworkManager = {
           updatePlayerName(myRealName);
         }
 
-        // ゲスト端末側での「ホスト現在地合流スポーン（Catch-up）」
+        // ゲスト端末側での「ホスト現在地合流スポーン（Catch-up）」★ 4人均等X配置連動
         if (!this.isHost && !this._hasCaughtUp && typeof hostStage === 'number' && hostStage > 0 && player) {
           this._hasCaughtUp = true;
 
@@ -1353,7 +1354,13 @@ export const NetworkManager = {
           const targetStageObj = STAGES[hostStage] || STAGES[0];
           if (targetStageObj) {
             const centerX = targetStageObj.x || 0.0;
-            const spawnX = centerX + ((this.mySlot === 1) ? -2.2 : (this.mySlot === 2 ? 2.2 : 0.0));
+            // 4走者スロット配置: 0: -1.6, 1: -4.8, 2: 1.6, 3: 4.8
+            let spawnXOffset = -1.6;
+            if (this.mySlot === 1) spawnXOffset = -4.8;
+            else if (this.mySlot === 2) spawnXOffset = 1.6;
+            else if (this.mySlot === 3) spawnXOffset = 4.8;
+
+            const spawnX = centerX + spawnXOffset;
             const spawnY = targetStageObj.y;
             const spawnZ = targetStageObj.z + 1.8;
 
@@ -1417,7 +1424,7 @@ export const NetworkManager = {
     if (playerName && playerName !== 'YOU' && playerName !== 'null') {
       targetChar.name = playerName;
     } else if (!targetChar.name || targetChar.name === 'YOU') {
-      targetChar.name = (slotIndex === 0 ? 'norion' : (slotIndex === 1 ? 'ゲスト1' : 'ゲスト2'));
+      targetChar.name = (slotIndex === 0 ? 'norion' : (slotIndex === 1 ? 'ゲスト1' : (slotIndex === 2 ? 'ゲスト2' : 'ゲスト3')));
     }
 
     if (targetChar.nameplateSprite) {
@@ -1431,13 +1438,18 @@ export const NetworkManager = {
       targetChar.nameplateSprite.visible = true;
     }
 
-    // ホスト端末上でゲストを受け入れる際の現在地合流スポーン
+    // ホスト端末上でゲストを受け入れる際の現在地合流スポーン（4走者均等X配置連動）
     const hostCurrentStage = (this.isHost && player && typeof player.currentStage === 'number') ? player.currentStage : 0;
 
     if (hostCurrentStage > 0 && STAGES[hostCurrentStage]) {
       const stageObj = STAGES[hostCurrentStage];
       const centerX = stageObj.x || 0.0;
-      const spawnX = centerX + ((slotIndex === 1) ? -2.2 : (slotIndex === 2 ? 2.2 : 0.0));
+      let spawnXOffset = -1.6;
+      if (slotIndex === 1) spawnXOffset = -4.8;
+      else if (slotIndex === 2) spawnXOffset = 1.6;
+      else if (slotIndex === 3) spawnXOffset = 4.8;
+
+      const spawnX = centerX + spawnXOffset;
       const spawnY = stageObj.y;
       const spawnZ = stageObj.z + 1.8;
 
@@ -1454,7 +1466,11 @@ export const NetworkManager = {
       } else if (typeof window.resetCharacterToStageZero === 'function') {
         window.resetCharacterToStageZero(targetChar, targetChar.name, false);
       } else {
-        const defaultX = (slotIndex === 1) ? -4.0 : (slotIndex === 2 ? 4.0 : 0.0);
+        let defaultX = -1.6;
+        if (slotIndex === 1) defaultX = -4.8;
+        else if (slotIndex === 2) defaultX = 1.6;
+        else if (slotIndex === 3) defaultX = 4.8;
+
         const stage0Y = (STAGES[0] ? STAGES[0].y : 0);
         const stage0Z = (STAGES[0] ? (STAGES[0].z + 4.0) : 4.0);
         targetChar.currentStage = 0;
@@ -1483,7 +1499,7 @@ export const NetworkManager = {
     targetChar.isRemote = false;
     targetChar.aiState = 'COLLECT';
     targetChar.targetNetPos = null;
-    targetChar.name = (slotIndex === 0) ? 'CPU 0' : (slotIndex === 1 ? 'CPU 1' : 'CPU 2');
+    targetChar.name = (slotIndex === 0) ? 'CPU 0' : (slotIndex === 1 ? 'CPU 1' : (slotIndex === 2 ? 'CPU 2' : 'CPU 3'));
 
     targetChar.netVelocity = { x: 0, z: 0 };
     targetChar.remoteActionState = 'NORMAL';
@@ -1534,10 +1550,10 @@ export const NetworkManager = {
     const packetName = (packet.name && packet.name !== 'YOU' && packet.name !== 'null') ? packet.name : null;
     let resolvedName = packetName || targetChar.name;
     if (!resolvedName || resolvedName === 'YOU') {
-      resolvedName = (packet.slot === 0 ? 'norion' : (packet.slot === 1 ? 'ゲスト1' : 'ゲスト2'));
+      resolvedName = (packet.slot === 0 ? 'norion' : (packet.slot === 1 ? 'ゲスト1' : (packet.slot === 2 ? 'ゲスト2' : 'ゲスト3')));
     }
 
-    const isGenericGuestName = (targetChar.name === 'ゲスト' || targetChar.name === 'ゲスト1' || targetChar.name === 'ゲスト2' || targetChar.name === 'CPU 0');
+    const isGenericGuestName = (targetChar.name === 'ゲスト' || targetChar.name === 'ゲスト1' || targetChar.name === 'ゲスト2' || targetChar.name === 'ゲスト3' || targetChar.name === 'CPU 0');
     const isUpgradedToRealName = isGenericGuestName && packetName && packetName !== targetChar.name;
 
     if (targetChar.name !== resolvedName || isUpgradedToRealName) {
@@ -1671,7 +1687,6 @@ export const NetworkManager = {
 
     if (exitedSlotIdx !== -1) {
       const slotObj = this.slots[exitedSlotIdx];
-      // ★【Phase 4 核心改善】入室直後（2秒以内）の一時的ネイティブ重複イベントによる誤爆退室を破棄
       const timeSinceJoin = performance.now() - (slotObj.joinTime || 0);
       if (timeSinceJoin < 2000 && !slotObj.isAI) {
         console.warn(`[NetworkManager] Ignored false user exit (grace period ${Math.round(timeSinceJoin)}ms): Slot ${exitedSlotIdx}, User ${userId}`);
@@ -1684,7 +1699,7 @@ export const NetworkManager = {
         slot: exitedSlotIdx,
         clientId: null,
         userId: null,
-        name: (exitedSlotIdx === 0) ? 'CPU 0' : (exitedSlotIdx === 1 ? 'CPU 1' : 'CPU 2'),
+        name: (exitedSlotIdx === 0) ? 'CPU 0' : (exitedSlotIdx === 1 ? 'CPU 1' : (exitedSlotIdx === 2 ? 'CPU 2' : 'CPU 3')),
         portrait: '',
         isAI: true,
         joinTime: 0
