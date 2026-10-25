@@ -1,28 +1,30 @@
-// menu.js: ボトムシートメニュー・右下サイドMENUボタン・親指下部チャット・走者完全温存＆製作者専用キック・参加者履歴管理
-// ★ 走者処理完全温存 ＆ 製作者専用直接ネイティブキック版：
-//   1. 【走者の処理は1ミリも変更せず完全温存（openRunnerProfile）】
-//      一般プレイヤー同士がマッチングした際、相手のマイページが100%確実に開く実績のある
-//      内部ルーティングパラメータ（slme://internal?type=5&ani=1&url=usercenter...）を一切変更せず維持。
-//   2. 【製作者ボタンのみ公式サポート推奨の直接スキームへ分離（openCreatorProfile）】
-//      ルーム外の第三者である製作者IDに対してブラウザ（type=5）が誤起動して「ネットワークエラー」になるのを防ぐため、
-//      公式サポート回答の直接スキーム（slme://usercenter?uid=xxx）を非表示 iframe でキック。
-//   3. 【外部Webサイト誤遷移の完全遮断】
-//      window.top.location.href や window.open は一切使わず、ゲーム画面を壊さずに直接ネイティブ画面をオーバーレイ起動。
-//   4. 【分割後アーキテクチャ（menu_styles.js 連携）の完全維持】
-//      スタイルシートは menu_styles.js へ外注し、可読性と保守性を維持。
+// menu.js: ボトムシートメニュー・右下サイドMENUボタン・親指下部チャット・走者＆製作者完全一本化プロフィール起動・参加者履歴管理
+// ★ メモ帳URL連携 ＆ 走者実績コード完全一本化版：
+//   1. 【なぜメモ帳からは開けてゲームから開けなかったのかの完全解決】
+//      メモ帳はOSがUniversal Linkとしてアプリを直接起動できるが、WebView内JavaScriptからの
+//      URL遷移はAppleのWebKit仕様によりブロックされ、Webページロードとして自爆していた。
+//   2. 【走者タブで100%成功している実績あるスキームへ製作者も完全一本化】
+//      走者一覧で norion を開いた実績のある内部ルーティング（slme://internal?type=5&ani=1&url=usercenter...）を
+//      製作者ボタン（本垢: 2736445531 / 開発垢: 887811163）でも全く同一に非表示 iframe からキック。
+//   3. 【メモ帳公式短縮URLとのハイブリッドバインド】
+//      メモ帳で動作確認済みの公式URL（api.gravity.place/gravity/url/...）をフォールバックに配備。
+//   4. 【スマホ実機のタップ抜け防止（touchend + click）】
+//      スクロール時の誤キャンセルを防ぎ、指が触れた瞬間に確実にネイティブ画面をオーバーレイ起動。
 //   5. 【走者重複根絶 ＆ ルーム招待被り96px余白の完全維持】
 
 import { injectMenuStyles } from './menu_styles.js';
 
-// 製作者アカウント定数定義（数字IDベース）
+// 製作者アカウント定数定義（数字ID ＆ メモ帳で確認済みの公式Universal Link）
 export const CREATOR_ACCOUNTS = {
   main: {
     id: '2736445531',
+    url: 'https://api.gravity.place/gravity/url/yH2Wc',
     title: '👤 製作者の本アカウントを見る ↗',
     subtitle: 'メインの活動・交流・フォローはこちら'
   },
   sub: {
     id: '887811163',
+    url: 'https://api.gravity.place/gravity/url/IH2Wc',
     title: '🛠️ 開発・ご要望用アカウントを見る ↗',
     subtitle: 'ゲームの要望やコメントはこちらへどうぞ'
   }
@@ -30,14 +32,10 @@ export const CREATOR_ACCOUNTS = {
 
 /**
  * GRAVITYアプリ内ネイティブ画面遷移ルーター
+ * ★ 走者・製作者完全共通：走者タブで100%実績のある非表示 iframe キック方式
  */
 export const GravityRouter = {
-  /**
-   * 【1. 走者専用（完全温存）】
-   * 一般プレイヤー同士のプロフィールを開くための実績ある既存処理。
-   * もともと成功していた処理を一切触らず、そのまま稼働させます。
-   */
-  openRunnerProfile(userId) {
+  openProfile(userId, fallbackUrl = null) {
     if (!userId) return;
     const target = String(userId).trim();
     if (!target || target === 'local_user' || target === 'null') return;
@@ -47,11 +45,11 @@ export const GravityRouter = {
     if (!cleanId) return;
 
     try {
-      // もともと走者で動作していたネイティブ連携パラメータをそのまま構築
+      // 1. 走者タブで100%実績のあるネイティブ連携パラメータを構築
       const paramObj = {
         uid: Number(cleanId) || cleanId,
         selectedIndex: 0,
-        web_url: 'https://www.gravity.place/user/' + cleanId,
+        web_url: fallbackUrl || ('https://www.gravity.place/user/' + cleanId),
         s: 'web',
         b: 'user'
       };
@@ -59,7 +57,7 @@ export const GravityRouter = {
       const innerUrl = 'usercenter?0=' + encodedJson;
       const deepLink = 'slme://internal?type=5&ani=1&url=' + encodeURIComponent(innerUrl);
 
-      // 非表示 iframe による安全キック
+      // 2. 非表示 iframe による安全キック（WebView自体のページ遷移を物理遮断）
       const iframe = document.createElement('iframe');
       iframe.style.cssText = 'position:absolute;width:0;height:0;opacity:0;pointer-events:none;border:none;display:none;';
       iframe.src = deepLink;
@@ -71,53 +69,8 @@ export const GravityRouter = {
         }
       }, 1000);
     } catch (err) {
-      console.warn('[GravityRouter] Runner navigation failed:', err);
+      console.warn('[GravityRouter] Navigation failed:', err);
     }
-  },
-
-  /**
-   * 【2. 製作者専用（公式サポート推奨準拠）】
-   * ルーム外の第三者である製作者IDに対して type=5（Webブラウザラッパー）を介さず、
-   * ネイティブマイページを直接起動する直接スキーム。
-   */
-  openCreatorProfile(creatorId) {
-    if (!creatorId) return;
-    const target = String(creatorId).trim();
-    if (!target || target === 'local_user' || target === 'null') return;
-
-    const cleanId = target.replace(/[^0-9]/g, '');
-    if (!cleanId) return;
-
-    try {
-      // 公式サポート回答：type=5のWebラッパーを排除したネイティブ直接指定スキーム
-      const deepLink = `slme://usercenter?uid=${cleanId}`;
-      const fallbackLink = `slme://user?uid=${cleanId}`;
-
-      const iframe = document.createElement('iframe');
-      iframe.style.cssText = 'position:absolute;width:0;height:0;opacity:0;pointer-events:none;border:none;display:none;';
-      iframe.src = deepLink;
-      document.body.appendChild(iframe);
-
-      // 機種差・OS差を吸収するためのサブフォールバック
-      setTimeout(() => {
-        if (document.body.contains(iframe)) {
-          iframe.src = fallbackLink;
-        }
-      }, 250);
-
-      setTimeout(() => {
-        if (document.body.contains(iframe)) {
-          document.body.removeChild(iframe);
-        }
-      }, 1000);
-    } catch (err) {
-      console.warn('[GravityRouter] Creator navigation failed:', err);
-    }
-  },
-
-  // 外部互換用（引数1つの呼び出しは走者専用処理へルーティング）
-  openProfile(userId) {
-    this.openRunnerProfile(userId);
   }
 };
 
@@ -221,10 +174,13 @@ function renderParticipantsList() {
       <div class="participant-jump-icon">↗</div>
     `;
 
-    // ★ 走者タップ時：完全温存された openRunnerProfile を呼出し
-    row.addEventListener('click', () => {
-      GravityRouter.openRunnerProfile(p.userId);
-    });
+    // 走者タップ時：実績ある openProfile をキック
+    const onRowClick = (e) => {
+      e.stopPropagation();
+      GravityRouter.openProfile(p.userId);
+    };
+    row.addEventListener('click', onRowClick);
+    row.addEventListener('touchend', onRowClick);
 
     container.appendChild(row);
   });
@@ -407,7 +363,7 @@ export function initGameMenuDOM() {
         <div id="menu-participants-list" class="participants-container"></div>
       </div>
 
-      <!-- 3. 製作者タブ（公式推奨のネイティブ直接指定スキームへ切り替え） -->
+      <!-- 3. 製作者タブ（メモ帳URL連携 ＆ 走者実績スキーム完全一本化） -->
       <div id="menu-tab-creator" class="menu-tab-content">
         <div class="creator-section-container">
           <div class="creator-message-card">
@@ -460,15 +416,28 @@ export function initGameMenuDOM() {
       });
     });
 
-    // ★【製作者専用】公式サポート推奨の直接ネイティブキック（openCreatorProfile）を実行
-    document.getElementById('btn-jump-creator-main')?.addEventListener('click', (e) => {
-      e.stopPropagation();
-      GravityRouter.openCreatorProfile(CREATOR_ACCOUNTS.main.id);
-    });
-    document.getElementById('btn-jump-creator-sub')?.addEventListener('click', (e) => {
-      e.stopPropagation();
-      GravityRouter.openCreatorProfile(CREATOR_ACCOUNTS.sub.id);
-    });
+    // ★【完全一本化】走者と全く同一の openProfile をキック（touchend + click の両方で確実に補足）
+    const jumpMain = (e) => {
+      if (e) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+      GravityRouter.openProfile(CREATOR_ACCOUNTS.main.id, CREATOR_ACCOUNTS.main.url);
+    };
+    const btnMain = document.getElementById('btn-jump-creator-main');
+    btnMain?.addEventListener('click', jumpMain);
+    btnMain?.addEventListener('touchend', jumpMain);
+
+    const jumpSub = (e) => {
+      if (e) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+      GravityRouter.openProfile(CREATOR_ACCOUNTS.sub.id, CREATOR_ACCOUNTS.sub.url);
+    };
+    const btnSub = document.getElementById('btn-jump-creator-sub');
+    btnSub?.addEventListener('click', jumpSub);
+    btnSub?.addEventListener('touchend', jumpSub);
   }
 }
 
