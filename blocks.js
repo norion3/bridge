@@ -1,16 +1,14 @@
 // blocks.js: 床ブロック管理・補充・スポーン・決定論的一意キー（blockId）マルチ同期専用モジュール
-// ★ PRNG汚染完全遮断 ＆ ゼロアロケーション最適化版（Phase 1）：
-//   1. 【世界生成用疑似乱数（seededRandom）の汚染・ズレを完全根絶】
-//      ホスト端末のみで定期実行される spawnSingleBlock 内の seededRandom() を Math.random() へ置換。
-//      床ブロック補充によって世界生成用PRNGの内部ポインタが消費されてホストとゲストでズレる事故を物理的に根絶。
-//      （補充されたブロック座標はパケット sp でゲストへ完全送信されるため、Math.random() で100%安全かつ完璧に機能）
-//   2. 【床ブロック補充レコードのゼロアロケーション純粋算術丸め化】
-//      round2(val) によるCPUレジスタ内完結の数値丸めを維持し、補充バッチ時の一時文字列（String）生成・GC負荷を根絶。
-//   3. 【現在滞在ステージの強制リサイクル強奪を完全遮断】
-//      プール枯渇時に走者が現在滞在しているステージのアクティブブロックが奥の島へ
-//      強制テレポートされて消滅する欠陥を防止。安全な非アクティブ枠・過去ステージからのみリサイクル。
-//   4. 【決定論的ブロックID ＆ 重複生成ガードの維持】
-//      連番ID（b_ステージ番号_カウンター）および近接座標判定（0.45m以内）による二重生成防止を100%維持。
+// ★ 先行ステージ事前スポーン ＆ 到着前ビジュアル拡充版：
+//   1. 【次ステージへの事前ブロック補充 (ハゲ山・目の前ポップ根絶)】
+//      走者の現在地ステージだけでなく、進行方向の先行ステージ（直列次の島および二股分岐先の左右島）へ
+//      走者が到着する前からブロックを自動補充。階段登攀中や手前の島から奥を見下ろした際にも
+//      カラフルなブロックが散らばっている美しい景観を実現。
+//   2. 【先行ステージブロックのプール回収保護】
+//      findSafePoolItem における activeStages 除外セットに先行ステージ（nextStageIdx）を追加。
+//      これから向かう次の島のブロックが古いブロックとして回収・強奪される欠陥を完全防止。
+//   3. 【PRNG汚染遮断 ＆ ゼロアロケーション純粋算術丸めの完全維持】
+//      Math.random() による世界生成PRNG保護、round2 による数値丸め、一意キー同期（spパケット）は100%維持。
 
 import {
   BLOCK_TYPES,
@@ -57,19 +55,30 @@ export function getFloorBlocksForStage(stageIdx) {
 
 /**
  * 安全なプールアイテムの取得ヘルパー
- * ★ 走者が現在滞在しているステージのアクティブブロックは絶対にリサイクルしない
+ * ★ 走者が現在滞在しているステージおよび直近の先行ステージのアクティブブロックは絶対にリサイクルしない
  */
 function findSafePoolItem() {
   // 1. 非アクティブな空きアイテムを最優先
   let poolItem = floorBlockPool.find(b => !b.active);
   if (poolItem) return poolItem;
 
-  // 2. 空きがない場合、全キャラが現在滞在しているステージ以外の古いブロックからリサイクル
+  // 2. 空きがない場合、現在滞在ステージおよび先行ステージ以外の古いブロックからリサイクル
   const activeStages = new Set();
   if (Array.isArray(characters)) {
     characters.forEach(c => {
       if (c && typeof c.currentStage === 'number') {
         activeStages.add(c.currentStage);
+        // 先行ステージ（二股分岐含む）もリサイクル保護対象に追加
+        const stageBridges = bridgesByStage.get(c.currentStage);
+        if (stageBridges && stageBridges.length > 0) {
+          stageBridges.forEach(b => {
+            if (typeof b.nextStageIdx === 'number') {
+              activeStages.add(b.nextStageIdx);
+            }
+          });
+        } else {
+          activeStages.add(c.currentStage + 1);
+        }
       }
     });
   }
@@ -79,7 +88,7 @@ function findSafePoolItem() {
 
   for (let k = 0; k < floorBlockPool.length; k++) {
     const blk = floorBlockPool[k];
-    // 現在走者がいるステージ、または吸引中のブロックは絶対に奪わない
+    // 保護ステージ、または吸引中のブロックは絶対に奪わない
     if (blk.active && !blk.attracting && !activeStages.has(blk.stageIdx)) {
       if (blk.stageIdx < minStageIdx) {
         minStageIdx = blk.stageIdx;
@@ -299,8 +308,8 @@ export function spawnSingleBlock(scene, stageIdx, targetTeam = null, shouldBroad
 }
 
 /**
- * 全走者の滞在ステージに応じた床ブロック定期補充
- * ★【確定仕様】全ステージで湧いた新ブロックを単一の配列に集約し、100ms周期POSキューへ預ける
+ * 全走者の滞在ステージおよび先行ステージに応じた床ブロック定期補充
+ * ★【核心改修】次ステージ（二股分岐含む）へ到着する前にブロックを事前配置
  */
 export function manageBlockSpawns(scene, isGameOver = false) {
   if (isGameOver) return;
@@ -311,26 +320,43 @@ export function manageBlockSpawns(scene, isGameOver = false) {
   // ゲスト端末はホストからのパケットのみを受信するためローカル補充は行わない
   if (isMulti && !isHost) return;
 
-  // 全ステージで新しく生成されたブロックを単一配列に集約
-  const allNewlySpawned = [];
+  // 走者現在地ステージと、その直近の先行ステージ（二股分岐含む）を収集
+  const currentStagesSet = new Set();
+  const stagesToSpawn = new Set();
 
   for (let cIdx = 0; cIdx < characters.length; cIdx++) {
     const s = characters[cIdx].currentStage;
+    if (typeof s === 'number') {
+      currentStagesSet.add(s);
+      stagesToSpawn.add(s);
 
-    let alreadyChecked = false;
-    for (let prevIdx = 0; prevIdx < cIdx; prevIdx++) {
-      if (characters[prevIdx].currentStage === s) {
-        alreadyChecked = true;
-        break;
+      // 先行ステージ（次の島・二股分岐の左右島）も補充対象に追加
+      const stageBridges = bridgesByStage.get(s);
+      if (stageBridges && stageBridges.length > 0) {
+        stageBridges.forEach(b => {
+          if (typeof b.nextStageIdx === 'number' && b.nextStageIdx < STAGES.length) {
+            stagesToSpawn.add(b.nextStageIdx);
+          }
+        });
+      } else if (s + 1 < STAGES.length) {
+        stagesToSpawn.add(s + 1);
       }
     }
-    if (alreadyChecked) continue;
+  }
 
+  // 全ステージで新しく生成されたブロックを単一配列に集約
+  const allNewlySpawned = [];
+
+  stagesToSpawn.forEach(s => {
+    const isCurrentStage = currentStagesSet.has(s);
     const stageBlocks = getFloorBlocksForStage(s);
 
     for (let tIdx = 0; tIdx < BLOCK_TYPES.length; tIdx++) {
       const team = BLOCK_TYPES[tIdx];
-      const targetCount = (team.id === 'blue') ? 13 : 7;
+      // 現在地ステージはたっぷり、先行ステージも到着前に十分な密度を事前配置
+      const targetCount = isCurrentStage
+        ? ((team.id === 'blue') ? 13 : 7)
+        : ((team.id === 'blue') ? 10 : 6);
 
       let currentCount = 0;
       for (let bIdx = 0; bIdx < stageBlocks.length; bIdx++) {
@@ -348,8 +374,10 @@ export function manageBlockSpawns(scene, isGameOver = false) {
       }
 
       const needed = targetCount - currentCount;
-      // 1回の周期で過剰なバーストが起きないよう上限を4個までに抑制
-      const spawnLimit = Math.min(needed, 4);
+      if (needed <= 0) continue;
+
+      // 1回の周期で過剰なバーストが起きないよう上限を抑制
+      const spawnLimit = Math.min(needed, isCurrentStage ? 4 : 3);
 
       for (let k = 0; k < spawnLimit; k++) {
         const spawned = spawnSingleBlock(scene, s, team, false);
@@ -358,7 +386,7 @@ export function manageBlockSpawns(scene, isGameOver = false) {
         }
       }
     }
-  }
+  });
 
   // 生送信を完全排除し、NetworkManager.queueSpawnBlocks 経由で次の100msパケットへ同封
   if (isMulti && isHost && allNewlySpawned.length > 0 && window.NetworkManager) {

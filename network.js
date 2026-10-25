@@ -1,17 +1,15 @@
 // network.js: AgentSDK公式仕様完全準拠 ＆ 10Hz POS 送受信ループ ＆ 自律ホスト昇格 ＆ スナップショット復元司令塔
-// ★ Phase 3 修正版（1KBパケット安全バッチ化 ＆ Catch-up事前コース伸長 ＆ カメラダイレクトスナップ）：
-//   1. 【スナップショットの1KB安全バッチ化 (Buffer Bloat根絶)】
-//      親アプリの1024バイト制限を厳格に遵守するため、各チャンクのバッチサイズを再設計
-//      （Planks: 30->10個、Blocks: 25->8個、Items: 20->8個、Bonuses: 25->15個）。
-//      ネイティブJSBridgeのキュー詰まりやパケットのサイレント破棄・切断を根絶。
-//   2. 【途中参加 Catch-up Spawn 時のコース決定論的自動伸長】
-//      ホストが Stage 7 以降に進んでいる状態でゲストが入室した際、STAGES 配列が追いつくまで
-//      window.extendCourse(activeScene) を同期ループ実行。
-//      未生成ステージへのフォールバックによる海面浮遊・ブロック散乱を100%防止。
-//   3. 【合流時のカメラ即時ダイレクトスナップ】
-//      Catch-up Spawn 時に window.currentCameraRef を合流先の島へ即座に移動させ、
-//      海の上を150m以上超高速すっ飛びする不快なカメラ挙動を完全に抑止。
-//   4. 【既存の11要素タプル通信・自律ホスト昇格・チャット相乗りの100%維持】
+// ★ Phase 4 修正版（意図しない自爆退室防止 ＆ 入室直後CPU戻り根絶 ＆ 電波耐性ウォッチドッグ）：
+//   1. 【safeExitCurrentRoom の同一ルーム判定ガード (自爆退室の根絶)】
+//      DM招待リンク等でネイティブ層が先行入室している場合、joinRoom から safeExitCurrentRoom(targetRoomId) を
+//      呼んでも現在アクティブな部屋と同一であれば exit() をバイパス。ゲスト自身の自爆退室を完全に阻止。
+//   2. 【_handleUserExited の入室直後デバウンス保護 (CPU誤戻り根絶)】
+//      ゲスト入室から 2000ms 以内に届いた exit 通知はネイティブの一時的重複・誤爆として破棄。
+//      「一瞬ゲストに入った直後にすぐCPUに戻ってしまう」現象を物理的に根絶。
+//   3. 【ホスト昇格ウォッチドッグの電波揺らぎ耐性向上】
+//      4G電波揺らぎやスナップショット受信ラグでの誤昇格（スプリットブレイン）を防ぐため、
+//      タイムアウト閾値を初弾待機 6.0s -> 8.0s、通常対戦中 3.5s -> 5.0s に緩和。
+//   4. 【1KB安全バッチ化・Catch-up事前コース伸長・カメラダイレクトスナップの100%維持】
 
 import {
   player,
@@ -60,9 +58,10 @@ import { hookLobbyNetworkEvents } from './net_lobby_hooks.js';
 export { hookLobbyNetworkEvents };
 
 /**
- * 未入室時の exit() による無限保留（Promiseハング）を確実に防ぐ安全退出ヘルパー
+ * 未入室時の exit() による無限保留（Promiseハング）および本命ルーム誤退室を防ぐ安全退出ヘルパー
+ * ★ targetRoomId が指定され、現在の部屋と一致している場合は exit() を絶対に呼ばない
  */
-async function safeExitCurrentRoom() {
+async function safeExitCurrentRoom(targetRoomId = null) {
   if (typeof window === 'undefined' || !window.AgentSDK || !window.AgentSDK.room) return;
   try {
     if (typeof window.AgentSDK.room.getRoomId === 'function') {
@@ -71,6 +70,11 @@ async function safeExitCurrentRoom() {
         ? res.room_id
         : (res && res.data && res.data.room_id ? res.data.room_id : '');
       if (!activeRoomId || activeRoomId === '') {
+        return;
+      }
+      // これから入ろうとしている本命の部屋に既にネイティブ先行入室している場合は exit() をスキップ
+      if (targetRoomId && String(activeRoomId) === String(targetRoomId)) {
+        console.log(`[network.js] Already in target room #${activeRoomId}. Skipping redundant exit().`);
         return;
       }
     }
@@ -222,9 +226,9 @@ export const NetworkManager = {
   myUser: { name: 'YOU', user_id: 'local_user', portrait: '' },
   
   slots: [
-    { slot: 0, clientId: null, userId: null, name: 'norion', portrait: '', isAI: false },
-    { slot: 1, clientId: null, userId: null, name: 'CPU 1', portrait: '', isAI: true },
-    { slot: 2, clientId: null, userId: null, name: 'CPU 2', portrait: '', isAI: true }
+    { slot: 0, clientId: null, userId: null, name: 'norion', portrait: '', isAI: false, joinTime: 0 },
+    { slot: 1, clientId: null, userId: null, name: 'CPU 1', portrait: '', isAI: true, joinTime: 0 },
+    { slot: 2, clientId: null, userId: null, name: 'CPU 2', portrait: '', isAI: true, joinTime: 0 }
   ],
   
   isHost: false,
@@ -446,7 +450,8 @@ export const NetworkManager = {
       }
 
       const elapsed = performance.now() - this._lastHostPacketTime;
-      const timeoutThreshold = this._hasReceivedFirstHostPacket ? 3500 : 6000;
+      // ★ 4G電波揺らぎでの誤昇格（スプリットブレイン）を防ぐため閾値を緩和（3500->5000ms, 6000->8000ms）
+      const timeoutThreshold = this._hasReceivedFirstHostPacket ? 5000 : 8000;
 
       if (elapsed > timeoutThreshold) {
         console.warn(`[NetworkManager] Host packet timeout (${Math.round(elapsed)}ms). Promoting to Host...`);
@@ -490,6 +495,7 @@ export const NetworkManager = {
       slotData.userId = null;
       slotData.portrait = '';
       slotData.name = (i === 0) ? 'CPU 0' : (i === 1 ? 'CPU 1' : 'CPU 2');
+      slotData.joinTime = 0;
 
       char.isPlayer = false;
       char.isAI = true;
@@ -563,7 +569,7 @@ export const NetworkManager = {
 
     try {
       await this.init();
-      await safeExitCurrentRoom();
+      await safeExitCurrentRoom(null);
 
       let createdRoomId = 'local_room_' + Math.floor(Math.random() * 1000);
 
@@ -655,10 +661,11 @@ export const NetworkManager = {
         userId: this.myUser.user_id,
         name: this.myUser.name,
         portrait: this.myUser.portrait || '',
-        isAI: false
+        isAI: false,
+        joinTime: performance.now()
       };
-      this.slots[1] = { slot: 1, clientId: null, userId: null, name: 'CPU 1', portrait: '', isAI: true };
-      this.slots[2] = { slot: 2, clientId: null, userId: null, name: 'CPU 2', portrait: '', isAI: true };
+      this.slots[1] = { slot: 1, clientId: null, userId: null, name: 'CPU 1', portrait: '', isAI: true, joinTime: 0 };
+      this.slots[2] = { slot: 2, clientId: null, userId: null, name: 'CPU 2', portrait: '', isAI: true, joinTime: 0 };
 
       recordParticipant(this.myUser.user_id, this.myUser.name, this.myUser.portrait, 'blue', true);
 
@@ -696,7 +703,8 @@ export const NetworkManager = {
 
     try {
       await this.init();
-      await safeExitCurrentRoom();
+      // ★ 本命ルーム入室時の自爆退室を防止（safeRoomId を渡し、すでにその部屋にいれば exit() を呼ばない）
+      await safeExitCurrentRoom(safeRoomId);
 
       if (this.isSDKAvailable) {
         try {
@@ -810,7 +818,8 @@ export const NetworkManager = {
           userId: userId,
           name: guestName,
           portrait: portrait,
-          isAI: false
+          isAI: false,
+          joinTime: performance.now() // 入室時刻を記録（退室デバウンス保護用）
         };
         this._bindRemoteSlot(targetSlot, guestName);
 
@@ -834,9 +843,9 @@ export const NetworkManager = {
       const fullSnapshot = captureFullWorldSnapshot();
       this._snapshotQueue.length = 0;
 
-      // ★【Phase 3 核心改善①】1KB上限遵守：スナップショットのチャンクバッチサイズを安全圏（500〜700B）へ圧縮
+      // 1KB上限遵守：スナップショットのチャンクバッチサイズを安全圏（500〜700B）へ圧縮
       if (Array.isArray(fullSnapshot.planks) && fullSnapshot.planks.length > 0) {
-        const BATCH_SIZE = 10; // 30 -> 10個（約300B）
+        const BATCH_SIZE = 10;
         for (let i = 0; i < fullSnapshot.planks.length; i += BATCH_SIZE) {
           this._snapshotQueue.push({
             t: 'planks',
@@ -846,7 +855,7 @@ export const NetworkManager = {
       }
 
       if (Array.isArray(fullSnapshot.blocks) && fullSnapshot.blocks.length > 0) {
-        const BATCH_SIZE = 8; // 25 -> 8個（約480B：Buffer Bloat完全防止）
+        const BATCH_SIZE = 8;
         for (let i = 0; i < fullSnapshot.blocks.length; i += BATCH_SIZE) {
           this._snapshotQueue.push({
             t: 'blocks',
@@ -856,7 +865,7 @@ export const NetworkManager = {
       }
 
       if (Array.isArray(fullSnapshot.items) && fullSnapshot.items.length > 0) {
-        const BATCH_SIZE = 8; // 20 -> 8個（約480B）
+        const BATCH_SIZE = 8;
         for (let i = 0; i < fullSnapshot.items.length; i += BATCH_SIZE) {
           this._snapshotQueue.push({
             t: 'items',
@@ -866,7 +875,7 @@ export const NetworkManager = {
       }
 
       if (Array.isArray(fullSnapshot.bonuses) && fullSnapshot.bonuses.length > 0) {
-        const BATCH_SIZE = 15; // 25 -> 15個（約375B）
+        const BATCH_SIZE = 15;
         for (let i = 0; i < fullSnapshot.bonuses.length; i += BATCH_SIZE) {
           this._snapshotQueue.push({
             t: 'bonuses',
@@ -1325,7 +1334,7 @@ export const NetworkManager = {
           updatePlayerName(myRealName);
         }
 
-        // ★【Phase 3 核心改善②】ゲスト端末側での「ホスト現在地合流スポーン（Catch-up）」
+        // ゲスト端末側での「ホスト現在地合流スポーン（Catch-up）」
         if (!this.isHost && !this._hasCaughtUp && typeof hostStage === 'number' && hostStage > 0 && player) {
           this._hasCaughtUp = true;
 
@@ -1346,7 +1355,7 @@ export const NetworkManager = {
             const centerX = targetStageObj.x || 0.0;
             const spawnX = centerX + ((this.mySlot === 1) ? -2.2 : (this.mySlot === 2 ? 2.2 : 0.0));
             const spawnY = targetStageObj.y;
-            const spawnZ = targetStageObj.z + 1.8; // 島の平地中央手前側
+            const spawnZ = targetStageObj.z + 1.8;
 
             player.pos.set(spawnX, spawnY, spawnZ);
             if (player.meshObj && player.meshObj.root) {
@@ -1354,7 +1363,7 @@ export const NetworkManager = {
               player.meshObj.root.rotation.set(0, Math.PI, 0);
             }
 
-            // ★【Phase 3 核心改善③】カメラを超高速すっ飛びさせず、合流先の島へ即時ダイレクトスナップ！
+            // カメラを超高速すっ飛びさせず、合流先の島へ即時ダイレクトスナップ
             if (typeof window.currentCameraRef !== 'undefined' && window.currentCameraRef) {
               const cam = window.currentCameraRef;
               cam.position.set(spawnX * 0.75, spawnY + 24, spawnZ + 12);
@@ -1661,6 +1670,14 @@ export const NetworkManager = {
     const exitedSlotIdx = this.slots.findIndex(s => s.userId && String(s.userId) === userId);
 
     if (exitedSlotIdx !== -1) {
+      const slotObj = this.slots[exitedSlotIdx];
+      // ★【Phase 4 核心改善】入室直後（2秒以内）の一時的ネイティブ重複イベントによる誤爆退室を破棄
+      const timeSinceJoin = performance.now() - (slotObj.joinTime || 0);
+      if (timeSinceJoin < 2000 && !slotObj.isAI) {
+        console.warn(`[NetworkManager] Ignored false user exit (grace period ${Math.round(timeSinceJoin)}ms): Slot ${exitedSlotIdx}, User ${userId}`);
+        return;
+      }
+
       const isExitedSlotHost = (exitedSlotIdx === 0 && !this.isHost);
 
       this.slots[exitedSlotIdx] = {
@@ -1669,7 +1686,8 @@ export const NetworkManager = {
         userId: null,
         name: (exitedSlotIdx === 0) ? 'CPU 0' : (exitedSlotIdx === 1 ? 'CPU 1' : 'CPU 2'),
         portrait: '',
-        isAI: true
+        isAI: true,
+        joinTime: 0
       };
 
       this._restoreSlotToAI(exitedSlotIdx);
@@ -1708,7 +1726,7 @@ export const NetworkManager = {
       markParticipantInactive(this.myUser.user_id);
     }
 
-    await safeExitCurrentRoom();
+    await safeExitCurrentRoom(null);
     this.currentRoomId = null;
     this.isHost = false;
     this.isMultiplayerActive = false;
