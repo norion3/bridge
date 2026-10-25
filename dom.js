@@ -1,10 +1,15 @@
 // dom.js: 画面UI・HUD・ロビー・待機室・超ミニマルエントリーシールドの動的生成モジュール
-// ★ 4人プレイ拡張版（Phase 5：緑チームバッジ ＆ 定員4名表示対応）：
-//   1. 【緑チーム（.slot-green）スタイル定義追加】
-//      待機画面等のスロットバッジにエメラルドグリーン（#10b981）を追加。
-//   2. 【ロビー最大定員4名（/ 4名）完全連動】
-//      公开ルーム一覧等の表示ロジックを最大4名規格へ安全拡張。
-//   3. 【「1人で遊ぶ」即時起動 ＆ 超ミニマルエントリーシールドの100%維持】
+// ★ 確定仕様（ソロプレイ「1人で遊ぶ」即時起動 ＆ 超ミニマルエントリーシールド完全連動版）：
+//   1. 【「1人で遊ぶ（#btn-start-solo）」タップ即時ゲーム始動の実装】
+//      タップ時に UIController.showGame()、ロビー画面完全非表示化、スロット0バインド、
+//      launchGameEngine() を確実にキックし、1人で遊ぶが確実に起動するように修正。
+//      スマホ実機でのタップ抜けを防ぐため touchend と click の双方を確実にバインド。
+//      防壁（try-catch）により、他モジュールの例外で起動が中断される事故を物理遮断。
+//   2. 【初期スタイル強制非表示によるFOUC完全遮断】
+//      #test-lobby-overlay の初期スタイルを display: none !important; に設定。
+//      ローダー消去から判定完了までの間に素のロビー画面が露出する事故を物理的に根絶。
+//   3. 【超ミニマル・エントリーシールド（#entry-shield）の完全維持】
+//   4. 【緑チームバッジ（.slot-green: #10b981）の完全定義】
 
 import { updatePlayerName, bindLocalPlayerSlot } from './character.js';
 
@@ -198,7 +203,6 @@ export function injectStyles() {
     .slot-blue { background-color: #0284c7; }
     .slot-red { background-color: #ef4444; }
     .slot-yellow { background-color: #f59e0b; }
-    /* ★ 緑チームバッジ */
     .slot-green { background-color: #10b981; }
 
     /* 超ミニマル・エントリーシールド */
@@ -322,26 +326,40 @@ export function patchExistingLobbyLabels() {
           e.stopPropagation();
         }
 
-        if (window.GRAVITY_USER_NAME) {
-          updatePlayerName(window.GRAVITY_USER_NAME);
+        // 1. ユーザー名同期
+        try {
+          if (window.GRAVITY_USER_NAME) {
+            updatePlayerName(window.GRAVITY_USER_NAME);
+          }
+        } catch (err) {
+          console.warn('[dom.js] updatePlayerName safe catch:', err);
         }
 
-        if (window.NetworkManager) {
-          window.NetworkManager.isMultiplayerActive = false;
-          window.NetworkManager.isHost = true;
-          window.NetworkManager.mySlot = 0;
+        // 2. ソロプレイモードの確定
+        try {
+          if (window.NetworkManager) {
+            window.NetworkManager.isMultiplayerActive = false;
+            window.NetworkManager.isHost = true;
+            window.NetworkManager.mySlot = 0;
+          }
+          if (typeof bindLocalPlayerSlot === 'function') {
+            bindLocalPlayerSlot(0);
+          } else if (typeof window.bindLocalPlayerSlot === 'function') {
+            window.bindLocalPlayerSlot(0);
+          }
+        } catch (err) {
+          console.warn('[dom.js] bindLocalPlayerSlot safe catch:', err);
         }
 
-        if (typeof bindLocalPlayerSlot === 'function') {
-          bindLocalPlayerSlot(0);
-        } else if (typeof window.bindLocalPlayerSlot === 'function') {
-          window.bindLocalPlayerSlot(0);
-        }
-
-        if (typeof UIController !== 'undefined' && typeof UIController.showGame === 'function') {
-          UIController.showGame();
-        } else if (window.UIController && typeof window.UIController.showGame === 'function') {
-          window.UIController.showGame();
+        // 3. ロビー画面および全オーバーレイの完全消去
+        try {
+          if (typeof UIController !== 'undefined' && typeof UIController.showGame === 'function') {
+            UIController.showGame();
+          } else if (window.UIController && typeof window.UIController.showGame === 'function') {
+            window.UIController.showGame();
+          }
+        } catch (err) {
+          console.warn('[dom.js] UIController.showGame safe catch:', err);
         }
 
         const allOverlays = document.querySelectorAll('.gravity-screen-overlay, #test-lobby-overlay');
@@ -357,13 +375,22 @@ export function patchExistingLobbyLabels() {
           startModal.style.setProperty('display', 'none', 'important');
         }
 
-        if (typeof window.launchGameEngine === 'function') {
-          window.launchGameEngine();
+        // 4. ゲームエンジンの起動
+        try {
+          if (typeof window.launchGameEngine === 'function') {
+            window.launchGameEngine();
+          }
+        } catch (err) {
+          console.warn('[dom.js] launchGameEngine safe catch:', err);
         }
 
         const startBtn = document.getElementById('btn-start');
         if (startBtn) {
-          startBtn.click();
+          try {
+            startBtn.click();
+          } catch (err) {
+            console.warn('[dom.js] startBtn.click safe catch:', err);
+          }
         }
       };
 

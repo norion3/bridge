@@ -1,13 +1,13 @@
-// 3Dキャラクター外観構築・手足メッシュ・スタックプール・トロリー・ホバー展望リフト・スカイダイブ＆トラップドア姿勢管理・足元手前側（カメラ方向）フロスト投影ネームバッジ
-// ★ 4人プレイ拡張版（緑チーム追加 ＆ スタート整列安全化）：
-//   1. 【4走者目（Slot 3 / 緑Bot / CPU 3）の完全初期化】
-//      setupCharacters, resetCharacters, resetCharacterToStageZero, bindLocalPlayerSlot を4スロット対応に拡張。
-//   2. 【初期島スタート整列の安全化 (X = [-4.8, -1.6, 1.6, 4.8])】
-//      走者間距離を 3.2m に均等配分。タックル接触判定（半径1.38m）に対して安全マージン（約1.8m）を確保し、
-//      ゲーム開始直後の意図しないタックル誤暴発を物理的に完全遮断。
-//   3. 【緑チーム用マテリアル・スタック配列バインド】
-//      sharedMats.charGreen, botGreenStackMaterials を配備。
-//   4. 【静止時行列更新バイパス・VRAMキャッシュ保護の完全維持】
+// character.js: 3Dキャラクター外観構築・手足メッシュ・スタックプール・トロリー・ホバー展望リフト・スカイダイブ＆トラップドア姿勢管理・足元手前側（カメラ方向）フロスト投影ネームバッジ
+// ★ 完全安定化修正版（ReferenceError 根絶 ＆ ガード条件緩和 ＆ 4走者安全整列）：
+//   1. 【ReferenceError: char is not defined の完全根絶】
+//      bindLocalPlayerSlot 内のタイポ（char.nameplateSprite -> c.nameplateSprite）を修正し、
+//      ソロプレイ開始時のスクリプト強制停止を100%解消。
+//   2. 【ガード条件の安全性向上】
+//      characters.length < 4 での早期リターンを廃止し、characters.length === 0 でのみリターン。
+//      初期化タイミングやスロット数に関わらず確実に localPlayer がバインドされるよう保護。
+//   3. 【緑チーム（GREEN: #10b981）スタックマテリアルの未定義フォールバック】
+//   4. 【4走者均等整列 X = [-4.8, -1.6, 1.6, 4.8] の完全維持】
 
 import {
   TEAMS,
@@ -109,7 +109,6 @@ export function updatePlayerName(newName) {
 
   const targetChar = player || (typeof window !== 'undefined' && window.MY_PLAYER_SLOT !== undefined ? characters[window.MY_PLAYER_SLOT] : null);
   if (targetChar) {
-    // 既に同一の名前が表示されている場合はマテリアル再生成をスキップ
     if (targetChar.name === newName && targetChar.nameplateSprite && targetChar.nameplateSprite.visible) {
       return;
     }
@@ -266,11 +265,11 @@ export function resetCharacterToStageZero(char, nameText = null, isLocal = false
 }
 
 /**
- * 自他ネームプレート境界保護版 bindLocalPlayerSlot（4スロット対応）
+ * 自他ネームプレート境界保護版 bindLocalPlayerSlot（安全堅牢ガード版）
  */
 export function bindLocalPlayerSlot(slotIndex) {
-  if (!characters || characters.length < 4) return;
-  const targetSlot = Math.max(0, Math.min(3, Number(slotIndex) || 0));
+  if (!characters || characters.length === 0) return;
+  const targetSlot = Math.max(0, Math.min(characters.length - 1, Number(slotIndex) || 0));
 
   let myResolvedName = 'YOU';
   if (typeof window !== 'undefined' && window.GRAVITY_USER_NAME) {
@@ -280,6 +279,8 @@ export function bindLocalPlayerSlot(slotIndex) {
   }
 
   characters.forEach((c, idx) => {
+    if (!c) return;
+
     if (c.meshObj) {
       if (c.meshObj.trolleyGroup) c.meshObj.trolleyGroup.visible = false;
       if (c.meshObj.elevatorGroup) c.meshObj.elevatorGroup.visible = false;
@@ -305,8 +306,9 @@ export function bindLocalPlayerSlot(slotIndex) {
 
       if (c.nameplateSprite) {
         if (c.nameplateSprite.material) {
+          // ★【重要バグ修正】char ではなく c を参照
           if (c.nameplateSprite.material.map) {
-            char.nameplateSprite.material.map.dispose();
+            c.nameplateSprite.material.map.dispose();
           }
           c.nameplateSprite.material.dispose();
         }
@@ -564,8 +566,9 @@ export function createCharacterMesh(team) {
   let defaultMat;
   if (team.id === 'red') defaultMat = botRedStackMaterials[0];
   else if (team.id === 'yellow') defaultMat = botYellowStackMaterials[0];
-  else if (team.id === 'green') defaultMat = botGreenStackMaterials[0];
-  else defaultMat = playerStackMaterials[0];
+  else if (team.id === 'green') {
+    defaultMat = (botGreenStackMaterials && botGreenStackMaterials[0]) ? botGreenStackMaterials[0] : botYellowStackMaterials[0];
+  } else defaultMat = playerStackMaterials[0];
 
   for (let i = 0; i < MAX_VISUAL_STACK; i++) {
     const itemMat = (team.id === 'blue') ? playerStackMaterials[i] : defaultMat;
@@ -615,7 +618,7 @@ export function getBrickMaterialForStackIndex(char, index) {
   } else if (char.team.id === 'yellow') {
     return botYellowStackMaterials[safeIdx];
   } else if (char.team.id === 'green') {
-    return botGreenStackMaterials[safeIdx];
+    return (botGreenStackMaterials && botGreenStackMaterials[safeIdx]) ? botGreenStackMaterials[safeIdx] : botYellowStackMaterials[safeIdx];
   } else if (char.team.id === 'blue') {
     return playerStackMaterials[safeIdx];
   }
@@ -752,8 +755,8 @@ export function setupCharacters(scene, STAGES) {
   characters.length = 0;
 
   // ★ 4走者均等整列 X座標: [-4.8, -1.6, 1.6, 4.8]（間隔3.2mでタックル誤暴発を遮断）
-  const stage0Z = STAGES[0].z + 4.0;
-  const stage0Y = STAGES[0].y;
+  const stage0Z = STAGES[0] ? (STAGES[0].z + 4.0) : 4.0;
+  const stage0Y = STAGES[0] ? STAGES[0].y : 0.0;
 
   // 1. スロット0: 青（ホスト担当枠: X = -1.6）
   const pMesh = createCharacterMesh(TEAMS.BLUE);
