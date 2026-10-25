@@ -1,14 +1,19 @@
 // network.js: AgentSDK公式仕様完全準拠 ＆ 10Hz POS 送受信ループ ＆ 自律ホスト昇格 ＆ スナップショット復元司令塔
-// ★ Package 3 プロトコル・ロビー分離＆スリム化司令塔版（net_protocol.js ＆ net_lobby_hooks.js 統合）：
-//   1. 【純粋タプル計算・ビット演算を net_protocol.js へ完全外注】
-//      round1, round2, encodeCharacterToTuple, decodeTupleToCharacterPacket,
-//      getTeamIdBySlot, generateClientId を外部モジュールからインポート。
-//   2. 【レース中非稼働のロビーDOM処理を net_lobby_hooks.js へ完全外注】
-//      hookLobbyNetworkEvents を外部モジュールからインポート＆再エクスポートし、後方互換100%を維持。
-//   3. 【走者重複根絶・入退室ステータス整合・ホストアバター完全同期の100%維持】
-//      joinRoom先行仮登録、フォールバックID解決、無条件isActive復帰、slots[0].portrait伝達を完全維持。
+// ★ 途中参加ホスト現在地合流スポーン（Catch-up Spawn）実装版：
+//   1. 【ホスト現在ステージの同期伝達（hostStage パケット拡張）】
+//      ホストが先に進んでいる状態でゲストが入室した際、ROOM_MEMBERS_SYNC パケットに
+//      ホストの最新ステージ番号（hostStage = player.currentStage）を同封して送信。
+//   2. 【ゲスト端末のホスト島直接合流スポーン（画像4・5の海面浮遊・散乱根絶）】
+//      ゲスト端末側で hostStage > 0 を検知した場合、すでに消去された Stage 0 ではなく、
+//      ホストがいる最新の島（STAGES[hostStage]）の中央安全平地に自機（player）を直接配置。
+//      カメラも即座にその島へ追従し、足場のない海に落ちる事故を物理的に根絶。
+//   3. 【ホスト端末上での受入ゲスト配置の最適化】
+//      _bindRemoteSlot において、ホストが先に進んでいる場合は受入ゲストキャラ（characters[slot]）を
+//      ホストと同じ現在ステージの島の上に配置。ホスト画面でゲストが海に浮く現象を解消。
+//   4. 【走者重複根絶・入退室ステータス整合・ゼロアロケーション通信の100%維持】
 
 import {
+  player,
   characters,
   createNameplateMesh,
   updatePlayerName,
@@ -227,6 +232,7 @@ export const NetworkManager = {
   isSlotConfirmed: false,
   currentSeed: 12345678,
   _seedApplied: false,
+  _hasCaughtUp: false, // 途中参加時の合流スポーン完了フラグ
 
   _hasRegisteredListener: false,
   _lastRefreshTime: 0,
@@ -603,6 +609,7 @@ export const NetworkManager = {
       this.isSlotConfirmed = true;
       this.isMultiplayerActive = true;
       this._seedApplied = true;
+      this._hasCaughtUp = true;
 
       this._stopHostWatchdog();
       if (this._syncIntervalId) {
@@ -723,6 +730,7 @@ export const NetworkManager = {
       this.isHost = false;
       this.isMultiplayerActive = true;
       this._seedApplied = false;
+      this._hasCaughtUp = false;
 
       if (this._syncIntervalId) {
         clearInterval(this._syncIntervalId);
@@ -814,10 +822,14 @@ export const NetworkManager = {
         this.slots[0].portrait = this.myUser.portrait || this.slots[0].portrait || '';
       }
 
+      // ★【核心改善①】ホストの現在ステージ（hostStage）を同封してパケット送出
+      const hostCurrentStage = (player && typeof player.currentStage === 'number') ? player.currentStage : 0;
+
       this._sendCustomMessage({
         event: 'ROOM_MEMBERS_SYNC',
         slots: this.slots,
         seed: this.currentSeed,
+        hostStage: hostCurrentStage,
         hasChunks: true
       });
 
@@ -1196,7 +1208,7 @@ export const NetworkManager = {
 
       switch (eventType) {
         case 'ROOM_MEMBERS_SYNC':
-          this._applyRoomMembersSync(packet.slots, packet.seed, packet.snapshot);
+          this._applyRoomMembersSync(packet.slots, packet.seed, packet.snapshot, packet.hostStage);
           if (!this.isHost && this.isMultiplayerActive && !this._syncIntervalId) {
             this._startPositionBroadcasting();
           }
@@ -1219,7 +1231,7 @@ export const NetworkManager = {
     }
   },
 
-  _applyRoomMembersSync(syncedSlots, seed, snapshot = null) {
+  _applyRoomMembersSync(syncedSlots, seed, snapshot = null, hostStage = 0) {
     if (!Array.isArray(syncedSlots)) return;
     this.slots = syncedSlots;
 
@@ -1313,6 +1325,29 @@ export const NetworkManager = {
             : this.myUser.name;
           updatePlayerName(myRealName);
         }
+
+        // ★【核心改善②】ゲスト端末側での「ホスト現在地合流スポーン（Catch-up）」
+        if (!this.isHost && !this._hasCaughtUp && typeof hostStage === 'number' && hostStage > 0 && player) {
+          this._hasCaughtUp = true;
+          player.currentStage = hostStage;
+
+          const targetStageObj = STAGES[hostStage] || STAGES[0];
+          if (targetStageObj) {
+            const centerX = targetStageObj.x || 0.0;
+            const spawnX = centerX + ((this.mySlot === 1) ? -2.2 : (this.mySlot === 2 ? 2.2 : 0.0));
+            const spawnY = targetStageObj.y;
+            const spawnZ = targetStageObj.z + 1.8; // 島の平地中央手前側
+
+            player.pos.set(spawnX, spawnY, spawnZ);
+            if (player.meshObj && player.meshObj.root) {
+              player.meshObj.root.position.copy(player.pos);
+              player.meshObj.root.rotation.set(0, Math.PI, 0);
+            }
+
+            console.log(`[NetworkManager] Catch-up Spawn: ホスト現在地 (Stage ${hostStage}, Z=${Math.round(spawnZ)}m) へ合流配置完了`);
+          }
+        }
+
         recordParticipant(this.myUser.user_id, this.myUser.name, this.myUser.portrait, getTeamIdBySlot(this.mySlot), true);
         notifyRestartButtonVisibility();
         return;
@@ -1370,19 +1405,39 @@ export const NetworkManager = {
       targetChar.nameplateSprite.visible = true;
     }
 
-    if (typeof resetCharacterToStageZero === 'function') {
-      resetCharacterToStageZero(targetChar, targetChar.name, false);
-    } else if (typeof window.resetCharacterToStageZero === 'function') {
-      window.resetCharacterToStageZero(targetChar, targetChar.name, false);
-    } else {
-      const defaultX = (slotIndex === 1) ? -4.0 : (slotIndex === 2 ? 4.0 : 0.0);
-      const stage0Y = (STAGES[0] ? STAGES[0].y : 0);
-      const stage0Z = (STAGES[0] ? (STAGES[0].z + 4.0) : 4.0);
-      targetChar.currentStage = 0;
-      targetChar.pos.set(defaultX, stage0Y, stage0Z);
+    // ★【核心改善③】ホスト端末上でゲストを受け入れる際の現在地合流スポーン
+    // ホストが既にステージを進めていて Stage 0 が消えている場合、ホストがいる現在の島の上にスポーンさせる
+    const hostCurrentStage = (this.isHost && player && typeof player.currentStage === 'number') ? player.currentStage : 0;
+
+    if (hostCurrentStage > 0 && STAGES[hostCurrentStage]) {
+      const stageObj = STAGES[hostCurrentStage];
+      const centerX = stageObj.x || 0.0;
+      const spawnX = centerX + ((slotIndex === 1) ? -2.2 : (slotIndex === 2 ? 2.2 : 0.0));
+      const spawnY = stageObj.y;
+      const spawnZ = stageObj.z + 1.8;
+
+      targetChar.currentStage = hostCurrentStage;
+      targetChar.pos.set(spawnX, spawnY, spawnZ);
+
       if (targetChar.meshObj && targetChar.meshObj.root) {
         targetChar.meshObj.root.position.copy(targetChar.pos);
         targetChar.meshObj.root.rotation.set(0, Math.PI, 0);
+      }
+    } else {
+      if (typeof resetCharacterToStageZero === 'function') {
+        resetCharacterToStageZero(targetChar, targetChar.name, false);
+      } else if (typeof window.resetCharacterToStageZero === 'function') {
+        window.resetCharacterToStageZero(targetChar, targetChar.name, false);
+      } else {
+        const defaultX = (slotIndex === 1) ? -4.0 : (slotIndex === 2 ? 4.0 : 0.0);
+        const stage0Y = (STAGES[0] ? STAGES[0].y : 0);
+        const stage0Z = (STAGES[0] ? (STAGES[0].z + 4.0) : 4.0);
+        targetChar.currentStage = 0;
+        targetChar.pos.set(defaultX, stage0Y, stage0Z);
+        if (targetChar.meshObj && targetChar.meshObj.root) {
+          targetChar.meshObj.root.position.copy(targetChar.pos);
+          targetChar.meshObj.root.rotation.set(0, Math.PI, 0);
+        }
       }
     }
 
@@ -1609,10 +1664,12 @@ export const NetworkManager = {
         console.warn(`[NetworkManager] Host (Slot 0) exited room. Promoting to Host...`);
         this.promoteToHost();
       } else if (this.isHost) {
+        const hostCurrentStage = (player && typeof player.currentStage === 'number') ? player.currentStage : 0;
         this._sendCustomMessage({
           event: 'ROOM_MEMBERS_SYNC',
           slots: this.slots,
           seed: this.currentSeed,
+          hostStage: hostCurrentStage,
           hasChunks: false
         });
       }
@@ -1629,6 +1686,7 @@ export const NetworkManager = {
     this._snapshotQueue.length = 0;
     this._lastSentSnapshot = null;
     this._idleKeepAliveCounter = 0;
+    this._hasCaughtUp = false;
 
     if (this.myUser && this.myUser.user_id) {
       markParticipantInactive(this.myUser.user_id);
