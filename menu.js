@@ -1,17 +1,21 @@
-// menu.js: ボトムシートメニュー・右下サイドMENUボタン・親指下部チャット・走者プロフィール安全起動・製作者メッセージ
-// ★ 製作者リンクボタン完全削除・走者機能完全温存版：
-//   1. 【製作者タブのリンクボタンを完全削除】
-//      ご指示通り、製作者タブ内のジャンプボタンを完全に撤廃。
-//      余計な紹介カードなども追加せず、メッセージのみのシンプルな構成に。
-//   2. 【走者一覧からのプロフィール遷移は完全温存】
-//      走者タブで正常に動作している非表示 iframe キック方式（slme://internal...）は1文字も触らず維持。
-//   3. 【右下MENUボタン・チャット・右上いいね誘導・UIスタイルの完全維持】
+// menu.js: ボトムシートメニュー・右下サイドMENUボタン・親指下部チャット・走者プロフィール安全起動・製作者メッセージ＆安全プロフィール導線
+// ★ 製作者プロフィール安全導線（バリエーションA・ルーム招待干渉ゼロ・デフォルト配置版）：
+//   1. 【製作者メッセージカードの完全維持】
+//      文章・配色・スタイルを1文字も変えずに100%維持。
+//   2. 【メッセージカード直下の安全領域にコンパクト2連ボタンを配置】
+//      初期表示（デフォルト）でスクロールしなくても、右下の「ルーム招待 ⇧」ボタンに
+//      約35px以上の安全クリアランスを保ち、1ミリも被らない配置（合計高さ約86px）。
+//      ・上段：👤 製作者プロフィール ↗（ID: 2736445531）
+//      ・下段：📢 ゲーム開発・告知 ↗（ID: 887811163）
+//   3. 【非表示 iframe キック方式（slme://internal...usercenter）の完全流用】
+//      走者一覧と同じく WebKit クラッシュリスク 0% で親アプリのネイティブマイページを起動。
+//   4. 【製作者以外の全機能・全モジュール連携の完全温存】
 
 import { injectMenuStyles } from './menu_styles.js';
 
 /**
  * GRAVITYアプリ内ネイティブ画面遷移ルーター
- * ★ 走者専用（完全温存）：走者タブで100%実績のある非表示 iframe キック方式
+ * ★ 走者・製作者共通：実績ある非表示 iframe キック方式（slme://internal...）
  */
 export const GravityRouter = {
   openProfile(userId) {
@@ -340,13 +344,29 @@ export function initGameMenuDOM() {
         <div id="menu-participants-list" class="participants-container"></div>
       </div>
 
-      <!-- 3. 製作者タブ（リンクボタンおよび不要な紹介カードを完全削除） -->
+      <!-- 3. 製作者タブ（現行メッセージカード完全維持 ＋ デフォルト非干渉2連ボタン） -->
       <div id="menu-tab-creator" class="menu-tab-content">
         <div class="creator-section-container">
+          <!-- 現行メッセージカード（文章・スタイル・クラス完全維持） -->
           <div class="creator-message-card">
             <div class="creator-message-line">遊んでくれてありがとうございます！</div>
             <div class="creator-message-line highlight">楽しかったら右上の［…］から いいね を押してね</div>
             <div class="creator-message-line">ご意見やご要望もお気軽にどうぞ！</div>
+          </div>
+
+          <!-- 追加：安全領域（メッセージ直下）に収まる2連ボタン（合計高さ約86px） -->
+          <div style="display: flex; flex-direction: column; gap: 8px; width: 100%; margin-top: 12px;">
+            <!-- 上段：製作者プロフィール (ID: 2736445531) -->
+            <button id="btn-creator-main" type="button" style="width: 100%; height: 40px; background: linear-gradient(135deg, #0284c7 0%, #0369a1 100%); color: #ffffff; font-weight: 800; font-size: 13px; border: 1px solid rgba(56, 189, 248, 0.5); border-radius: 10px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px; box-shadow: 0 3px 10px rgba(2, 132, 199, 0.25);">
+              <span>👤 製作者プロフィール</span>
+              <span style="font-size: 11px; opacity: 0.85;">↗</span>
+            </button>
+            
+            <!-- 下段：ゲーム開発・告知 (ID: 887811163) -->
+            <button id="btn-creator-sub" type="button" style="width: 100%; height: 38px; background: rgba(255, 255, 255, 0.08); color: #bae6fd; font-weight: 700; font-size: 12px; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 10px; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 6px;">
+              <span>📢 ゲーム開発・告知</span>
+              <span style="font-size: 11px; opacity: 0.85;">↗</span>
+            </button>
           </div>
         </div>
       </div>
@@ -380,6 +400,35 @@ export function initGameMenuDOM() {
         if (msg) handleSendMessage(msg);
       });
     });
+
+    // ★ 製作者ボタン イベントバインド（touchend + click 双対応・タップ抜け完全防止）
+    const btnCreatorMain = document.getElementById('btn-creator-main');
+    if (btnCreatorMain && !btnCreatorMain._hasListener) {
+      btnCreatorMain._hasListener = true;
+      const onOpenMain = (e) => {
+        if (e) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+        GravityRouter.openProfile('2736445531');
+      };
+      btnCreatorMain.addEventListener('touchend', onOpenMain, { passive: false });
+      btnCreatorMain.addEventListener('click', onOpenMain);
+    }
+
+    const btnCreatorSub = document.getElementById('btn-creator-sub');
+    if (btnCreatorSub && !btnCreatorSub._hasListener) {
+      btnCreatorSub._hasListener = true;
+      const onOpenSub = (e) => {
+        if (e) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+        GravityRouter.openProfile('887811163');
+      };
+      btnCreatorSub.addEventListener('touchend', onOpenSub, { passive: false });
+      btnCreatorSub.addEventListener('click', onOpenSub);
+    }
   }
 }
 
