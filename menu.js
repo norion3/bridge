@@ -1,17 +1,24 @@
-// menu.js: ボトムシートメニュー・右下サイドMENUボタン・親指下部チャット・走者プロフィール安全起動・製作者メッセージ
-// ★ 製作者リンクボタン完全削除・走者機能完全温存版：
-//   1. 【製作者タブのリンクボタンを完全削除】
-//      ご指示通り、製作者タブ内のジャンプボタンを完全に撤廃。
-//      余計な紹介カードなども追加せず、メッセージのみのシンプルな構成に。
-//   2. 【走者一覧からのプロフィール遷移は完全温存】
-//      走者タブで正常に動作している非表示 iframe キック方式（slme://internal...）は1文字も触らず維持。
-//   3. 【右下MENUボタン・チャット・右上いいね誘導・UIスタイルの完全維持】
+// menu.js: ボトムシートメニュー・右下サイドMENUボタン・親指下部チャット・走者プロフィール安全起動・製作者メッセージ＆走者互換div導線
+// ★ 走者一覧完全互換（divタグ構造）製作者プロフィール導線版：
+//   1. 【製作者メッセージカードの完全維持】
+//      文章・配色・スタイルを1文字も変えずに100%維持。
+//   2. 【<button>タグの完全撤廃 ＆ 走者一覧と同一の<div>構造を採用】
+//      WebKitがボタン特有のエラーハンドラーを誤発動させないよう、
+//      走者一覧と全く同じ <div class="participant-row"> 構造で2行の導線を配置。
+//      初期表示（デフォルト）でスクロールしなくても、右下の「ルーム招待 ⇧」ボタンに
+//      約35px以上の安全余白を保ち、1ミリも被らない配置（合計高さ約88px）。
+//      ・上段：👤 製作者プロフィール ↗（ID: 2736445531）
+//      ・下段：📢 ゲーム開発・告知 ↗（ID: 887811163）
+//   3. 【走者一覧と100%同一のイベント処理（e.preventDefault 撤廃）】
+//      走者一覧と同じく e.stopPropagation() のみを使用し、preventDefault は一切呼ばない。
+//      他機能に一切影響しないローカル変数でミリ秒単位の touchend / click 重複発火のみを安全に遮断。
+//   4. 【製作者以外の全機能・全モジュール連携の完全温存】
 
 import { injectMenuStyles } from './menu_styles.js';
 
 /**
  * GRAVITYアプリ内ネイティブ画面遷移ルーター
- * ★ 走者専用（完全温存）：走者タブで100%実績のある非表示 iframe キック方式
+ * ★ 走者・製作者共通：実績ある非表示 iframe キック方式（slme://internal...）
  */
 export const GravityRouter = {
   openProfile(userId) {
@@ -340,13 +347,39 @@ export function initGameMenuDOM() {
         <div id="menu-participants-list" class="participants-container"></div>
       </div>
 
-      <!-- 3. 製作者タブ（リンクボタンおよび不要な紹介カードを完全削除） -->
+      <!-- 3. 製作者タブ（現行メッセージカード完全維持 ＋ 走者一覧完全互換div導線） -->
       <div id="menu-tab-creator" class="menu-tab-content">
         <div class="creator-section-container">
+          <!-- 現行メッセージカード（文章・スタイル・クラス完全維持） -->
           <div class="creator-message-card">
             <div class="creator-message-line">遊んでくれてありがとうございます！</div>
             <div class="creator-message-line highlight">楽しかったら右上の［…］から いいね を押してね</div>
             <div class="creator-message-line">ご意見やご要望もお気軽にどうぞ！</div>
+          </div>
+
+          <!-- 追加：走者一覧と完全同一の div 構造による2行導線（合計高さ約88px・招待ボタン干渉ゼロ） -->
+          <div style="display: flex; flex-direction: column; gap: 8px; width: 100%; margin-top: 12px;">
+            <!-- 上段：製作者プロフィール (ID: 2736445531) -->
+            <div id="btn-creator-main" class="participant-row" style="background: linear-gradient(135deg, rgba(2, 132, 199, 0.45) 0%, rgba(3, 105, 161, 0.45) 100%); border: 1px solid rgba(56, 189, 248, 0.4); margin-bottom: 0; cursor: pointer;">
+              <div class="participant-left">
+                <div class="participant-avatar" style="background: #0284c7; display: flex; align-items: center; justify-content: center; font-size: 14px;">👤</div>
+                <div class="participant-info">
+                  <span class="participant-name" style="font-size: 13px; font-weight: 800; color: #ffffff;">製作者プロフィール</span>
+                </div>
+              </div>
+              <div class="participant-jump-icon">↗</div>
+            </div>
+
+            <!-- 下段：ゲーム開発・告知 (ID: 887811163) -->
+            <div id="btn-creator-sub" class="participant-row" style="background: rgba(255, 255, 255, 0.08); border: 1px solid rgba(255, 255, 255, 0.18); margin-bottom: 0; cursor: pointer;">
+              <div class="participant-left">
+                <div class="participant-avatar" style="background: #475569; display: flex; align-items: center; justify-content: center; font-size: 14px;">📢</div>
+                <div class="participant-info">
+                  <span class="participant-name" style="font-size: 13px; font-weight: 800; color: #bae6fd;">ゲーム開発・告知</span>
+                </div>
+              </div>
+              <div class="participant-jump-icon">↗</div>
+            </div>
           </div>
         </div>
       </div>
@@ -380,6 +413,37 @@ export function initGameMenuDOM() {
         if (msg) handleSendMessage(msg);
       });
     });
+
+    // ★ 製作者プロフィール導線イベント（走者一覧完全互換：stopPropagation のみ ＋ 局所連打ガード）
+    const btnCreatorMain = document.getElementById('btn-creator-main');
+    if (btnCreatorMain && !btnCreatorMain._hasListener) {
+      btnCreatorMain._hasListener = true;
+      let lastTapMain = 0;
+      const onMainClick = (e) => {
+        if (e && e.stopPropagation) e.stopPropagation();
+        const now = Date.now();
+        if (now - lastTapMain < 800) return;
+        lastTapMain = now;
+        GravityRouter.openProfile('2736445531');
+      };
+      btnCreatorMain.addEventListener('click', onMainClick);
+      btnCreatorMain.addEventListener('touchend', onMainClick);
+    }
+
+    const btnCreatorSub = document.getElementById('btn-creator-sub');
+    if (btnCreatorSub && !btnCreatorSub._hasListener) {
+      btnCreatorSub._hasListener = true;
+      let lastTapSub = 0;
+      const onSubClick = (e) => {
+        if (e && e.stopPropagation) e.stopPropagation();
+        const now = Date.now();
+        if (now - lastTapSub < 800) return;
+        lastTapSub = now;
+        GravityRouter.openProfile('887811163');
+      };
+      btnCreatorSub.addEventListener('click', onSubClick);
+      btnCreatorSub.addEventListener('touchend', onSubClick);
+    }
   }
 }
 
