@@ -1,15 +1,17 @@
 // camera.js: ダイナミック並走カメラ専用モジュール
-// ★ 天空のロング下り階段（Downhill Skywalk）シネマティックパノラマ視界導入版（Phase 2 修正）：
-//   1. 【天空のロング下り階段走行時のシネマティック注視点補正 (isDownhillSkywalk)】
-//      Stage 6 の高台（Y=+18m）から Stage 7 の低島（Y=+2m）へ駆け下りる際、
-//      注視点（LookAt）を前方奥（Z = player.pos.z - 11.5m）および下方（Y = player.pos.y - 2.2m）へシフト。
-//      カメラ高度も程よく下げ（Y = player.pos.y + 20m）、前方の水平線と着地先の島が
-//      画面中央〜上部40%ライン（黄金比）に収まる圧倒的な開放感とスピード感を演出。
-//   2. 【着地後のシームレス・スムーズ復帰】
-//      Stage 7 に上陸した瞬間、LERP補間（0.12〜0.14）によりガタつきなく
-//      通常のレース追従カメラへシルクのように自然復帰。
-//   3. 【カウントダウン待機中の4走者画面中央センタリング完全維持】
-//   4. 【全6大アトラクション（スカイダイブ、トラップドア、エレベーター、ジップライン、スライダー、ジャンプ）の完全維持】
+// ★ 超ロング緩傾斜下り階段（Downhill Skywalk）視認性＆パノラマ最適化版（Phase 2 修正）：
+//   1. 【下り坂が一目で直感できるアプローチ視界先行シフト (isApproachingDownhill)】
+//      手前の島の中央を過ぎて階段へ向かっている段階（player.pos.z < islandZ - r*0.15）から、
+//      注視点を前方奥深く（Z = player.pos.z - 16.0m）および海面側（Y = player.pos.y - 1.8m）へ先行シフト。
+//      手前島に立っている時点から奥の島を見下ろすパースを形成し、「上り坂と見誤る錯覚」を完全に解消。
+//   2. 【水平54mの超ロング緩斜面に合わせた見下ろし角＆カメラ高度の最適化】
+//      カメラ高度を程よく下げ（Y = player.pos.y + 17.5m）、見下ろし角を緩やかにすることで、
+//      階段両脇のネオンガイドレールや床面の光る矢印（▼▼▼）が奥へ向かって沈み込む立体感を強調。
+//      視野角（FOV）も 65度（ブースト時 70度）へ広げ、開放感抜群のロング滑走を演出。
+//   3. 【着地後のシームレス・スムーズ復帰】
+//      次の島へ上陸した瞬間、LERP補間（0.12〜0.14）によりガタつきなく通常のレース追従へシルクのように復帰。
+//   4. 【カウントダウン待機中の4走者画面中央センタリング完全維持】
+//   5. 【全6大アトラクション（スカイダイブ、トラップドア、エレベーター、ジップライン、スライダー、ジャンプ）の完全維持】
 
 import {
   SKYDIVE_CONFIG,
@@ -68,9 +70,9 @@ export function updateDynamicCamera(player, camera, dt, dirLight, seaMesh, isCou
   const isSkydive = player.onSkydive;
   const isTrapdoor = (player.onTrapdoor || player.onFreefall);
 
-  // ★【Phase 2 核心】天空のロング下り階段（Downhill Skywalk）走行判定
-  // 現在のステージから次の島への接続が下り階段であり、島の手前〜階段を駆け下りている状態を検出
-  const isDownhillSkywalk = Boolean(
+  // ★【Phase 2 改善】超ロング緩傾斜下り階段（Downhill Skywalk）アプローチ＆滑走判定
+  // 水平54m・緩傾斜（約11.5度）の長大な階段に合わせ、手前島の中央を過ぎて前進している段階からカメラを先行シフト
+  const isApproachingDownhill = Boolean(
     nextConn &&
     nextConn.isDownhill &&
     !isSlideRiding &&
@@ -79,7 +81,7 @@ export function updateDynamicCamera(player, camera, dt, dirLight, seaMesh, isCou
     !isTrapdoor &&
     !isJumping &&
     !isZiplining &&
-    (currentStageObj ? player.pos.z < (currentStageObj.z - currentStageObj.r * 0.4) : true)
+    (currentStageObj ? player.pos.z < (currentStageObj.z - currentStageObj.r * 0.15) : true)
   );
 
   if (wasTrapdoorLastFrame && !isTrapdoor) {
@@ -155,14 +157,19 @@ export function updateDynamicCamera(player, camera, dt, dirLight, seaMesh, isCou
     targetCamZ = player.pos.z + 16;
     targetLookY = player.pos.y + 4;
     targetFOV = 65;
-  } else if (isDownhillSkywalk) {
-    // ★【Phase 2 核心】天空のロング下り階段走行時のパノラマ注視点＆高度補正
-    // 目線を海面側・前方奥へ大きく抜き、前方の海と着地先の島を画面の黄金比ラインに収める
-    targetCamY = player.pos.y + 20.0 + (stackLift * 0.45);
-    targetCamZ = player.pos.z + 11.2;
-    targetLookY = player.pos.y - 2.2;
-    targetLookAheadZ = player.pos.z - 11.5;
-    targetFOV = player.speedBoostActive ? 68 : 63;
+  } else if (isApproachingDownhill) {
+    // ★【超ロング緩傾斜下り階段・絶景パノラマ＆下り坂直感カメラ】
+    // 1. 水平54mの長大なスカイウォークを見通すため、注視点を前方奥（Z = player.pos.z - 16.0m）へ大きく伸長
+    // 2. カメラ高度を程よく抑え（Y = player.pos.y + 17.5m）、見下ろし角を緩やかにすることで
+    //    段板の段差や両脇のネオンガイドレールが奥へ向かって綺麗に沈み込むパースを強調
+    // 3. 視野角（FOV）を広げ、前方の海と水平線が広がる開放感とスピード感を最大化
+    targetCamX = player.pos.x * 0.70;
+    targetCamY = player.pos.y + 17.5 + (stackLift * 0.40);
+    targetCamZ = player.pos.z + 10.5;
+    targetLookX = player.pos.x * 0.60;
+    targetLookY = player.pos.y - 1.8;
+    targetLookAheadZ = player.pos.z - 16.0;
+    targetFOV = player.speedBoostActive ? 70 : 65;
   } else if (isZiplining) {
     targetCamX = player.pos.x + 5.6;
     targetCamY = player.pos.y + 4.2;
@@ -279,7 +286,7 @@ export function updateDynamicCamera(player, camera, dt, dirLight, seaMesh, isCou
     : 0.14;
 
   const lerpFactorX = isTrapdoor ? trapdoorLerp : (isApproachingTrapdoor ? 0.20 : (isSkydive ? 0.40 : (trapdoorLandingRecoveryTimer > 0 ? 0.18 : 0.12)));
-  const lerpFactorY = isTrapdoor ? trapdoorLerp : (isApproachingTrapdoor ? 0.20 : (isSkydive ? 0.40 : (isJumping ? 0.16 : (trapdoorLandingRecoveryTimer > 0 ? 0.18 : (isDownhillSkywalk ? 0.14 : 0.12)))));
+  const lerpFactorY = isTrapdoor ? trapdoorLerp : (isApproachingTrapdoor ? 0.20 : (isSkydive ? 0.40 : (isJumping ? 0.16 : (trapdoorLandingRecoveryTimer > 0 ? 0.18 : (isApproachingDownhill ? 0.14 : 0.12)))));
   const lerpFactorZ = isTrapdoor ? trapdoorLerp : (isApproachingTrapdoor ? 0.20 : (isSkydive ? 0.44 : (trapdoorLandingRecoveryTimer > 0 ? 0.18 : 0.12)));
 
   camera.position.x = THREE.MathUtils.lerp(camera.position.x, targetCamX, lerpFactorX);

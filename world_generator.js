@@ -1,16 +1,18 @@
 // world_generator.js: 決定論的PRNG・コース伸長・二股分岐・橋/アトラクション3D構造体生成専用モジュール
-// ★ 天空のロング下り階段（Downhill Skywalk）導入版（Phase 1 修正）：
-//   1. 【Stage 5 -> 6: オープン展望エレベーターで天空へ上昇】
-//      Stage 6 の到達高度を天空の高台 Y = +18.0m に設定。雲を見下ろす圧倒的な高度感を演出。
-//   2. 【Stage 6 -> 7: 決定的な一手・天空のロング下り階段 (Downhill Skywalk)】
-//      Stage 7 の着地島を海面スレスレの Y = +2.0m に設定（落差 -16.0m）。
-//      水平距離 34m（谷間約 14m）の豪快な下り傾斜階段を自動生成。
-//      下り坂でも 1枚＝1点 として通常通り段板が架かり、スコア加算と絶景ダウンヒルを両立。
-//   3. 【二股分岐（Fork Pattern B）の開始タイミング適正化 (idx === 8)】
-//      下り階段を駆け下りた後の低島（Stage 7）からスムーズに二股分岐へ移行するようインデックスを同期。
-//   4. 【isDownhill フラグの付与】
-//      CONNECTIONS および bridge オブジェクトに isDownhill フラグを付与し、Phase 2 のカメラ連携基盤を確立。
-//   5. 【決定論的PRNG・二股分岐左右レーン分離・全6大アトラクション構造体の完全維持】
+// ★ 天空の超ロング緩傾斜下り階段 ＆ 複数回出現 ＆ 下りネオンガイド完全導入版：
+//   1. 【超ロング・緩傾斜スカイウォーク（長くて緩やかな至福の坂道）】
+//      Stage 6 -> 7 の数値を「水平 54m / 落差 -11.0m（Y=+17m -> +6m）」へ大幅刷新。
+//      傾斜角を約 11.5度（歩道橋や緩やかなスロープ並み）に抑え、段数を約 52段 へ拡大。
+//      前方のパノラマ視界を広々と見渡しながら、ト・ン・ト・ン・ト・ンと爽快に駆け下りるロング滑走を実現。
+//   2. 【一目で下り階段と分かる3大ビジュアルサインの自動配置】
+//      isDownhillBridge 判定時、階段入り口の床面に「光る下向きシェブロン（▼▼▼）」を投影。
+//      さらに階段外周両サイドに傾斜に沿って下る「ネオンガイドレール（手すり＆支柱）」を生成し、
+//      見下ろし視点でも奥に向かって線が沈み込むパースペクティブを強調して錯覚を完全解消。
+//   3. 【5分間のレース中に2〜3回リズミカルに出現（頻度改革）】
+//      DESCENT_GIMMICKS 抽選バッグに正式に 'downhill' を追加。
+//      後半（Stage 8以降）のランダムループでも緩やかな超ロング下り階段が選ばれるようになり、
+//      5分間のレース全体のテンポとメリハリが劇的に向上。
+//   4. 【二股分岐（Fork Pattern B: idx === 8）との完全同期＆決定論的PRNGの100%維持】
 
 import {
   TRAMPOLINE_TIERS,
@@ -96,7 +98,8 @@ export function getDeterministicItemType(stageIdx) {
 
 const dummyPlankObj = new THREE.Object3D();
 
-export const DESCENT_GIMMICKS = ['slide', 'skydive', 'trapdoor', 'curved_slide', 'zipline'];
+// ★ 抽選バッグに正式に 'downhill'（長くて緩やかな下り階段）を追加！
+export const DESCENT_GIMMICKS = ['slide', 'skydive', 'trapdoor', 'curved_slide', 'zipline', 'downhill'];
 export const ASCENT_GIMMICKS = ['elevator', 'vertical', 'jump', 'bridge'];
 export let descentBag = [];
 export let ascentBag = [];
@@ -889,6 +892,58 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       bridge.ghostMesh = ghostMesh;
       bridge.solidMesh = solidMesh;
       bridge.visualMeshes.push(ghostMesh, solidMesh);
+
+      // ★【視認性改革】下り階段専用の3大ビジュアルサイン（ネオンガイドレール ＆ 下向きシェブロン矢印）
+      if (isDownhillBridge) {
+        // 1. 階段両脇のネオンガイドレール（奥へ向かって沈み込むパースを強調し、上りと誤認させない）
+        const isOuterLane = singleLaneOnly ? true : (laneIdx === 0 || laneIdx === 2);
+        if (isOuterLane) {
+          const sideOffset = singleLaneOnly ? 2.1 : (laneIdx === 0 ? -2.1 : 2.1);
+          const railX = startX + sideOffset;
+
+          const rP1 = new THREE.Vector3(railX, startY + 0.85, startZ + 0.35);
+          const rP2 = new THREE.Vector3(railX, endY + 0.85, endZ - 0.35);
+          const railVec = new THREE.Vector3().subVectors(rP2, rP1);
+          const railLen = railVec.length();
+          const railMid = new THREE.Vector3().addVectors(rP1, rP2).multiplyScalar(0.5);
+
+          const railGeo = new THREE.CylinderGeometry(0.08, 0.08, railLen, 8);
+          const railMesh = new THREE.Mesh(railGeo, sharedMats.dropIndicatorNeon);
+          railMesh.position.copy(railMid);
+          railMesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), railVec.clone().normalize());
+          scene.add(railMesh);
+          bridge.visualMeshes.push(railMesh);
+
+          // 支柱（ポスト）を等間隔で配置
+          const numPosts = Math.max(4, Math.floor(railLen / 9.0));
+          for (let pi = 0; pi <= numPosts; pi++) {
+            const ptRatio = pi / numPosts;
+            const postPos = new THREE.Vector3().lerpVectors(rP1, rP2, ptRatio);
+            const postH = 0.85;
+            const postGeo = new THREE.CylinderGeometry(0.05, 0.05, postH, 6);
+            const postMesh = new THREE.Mesh(postGeo, sharedMats.dropPylonSteel);
+            postMesh.position.set(postPos.x, postPos.y - postH / 2, postPos.z);
+            scene.add(postMesh);
+            bridge.visualMeshes.push(postMesh);
+          }
+        }
+
+        // 2. 階段入り口床面に【光る下向きシェブロン矢印（▼▼▼）】を配置（足元を見ただけで下り坂と直感）
+        if (laneIdx === 1 || singleLaneOnly) {
+          const signGroup = new THREE.Group();
+          for (let aIdx = 0; aIdx < 3; aIdx++) {
+            // 円錐をX軸-90度回転させて頂点を奥（-Z: 進行方向）に向け、Yスケールを平たくしてネオン矢印プレート化
+            const arrowGeo = new THREE.ConeGeometry(0.65, 1.1, 3);
+            arrowGeo.rotateX(-Math.PI / 2);
+            const arrowMesh = new THREE.Mesh(arrowGeo, sharedMats.dropIndicatorNeon);
+            arrowMesh.scale.set(1.0, 0.06, 1.0);
+            arrowMesh.position.set(startX, startY + 0.06, startZ + 1.2 + aIdx * 1.35);
+            signGroup.add(arrowMesh);
+          }
+          scene.add(signGroup);
+          bridge.visualMeshes.push(signGroup);
+        }
+      }
     }
 
     if (!bridgesByStage.has(stageIdx)) bridgesByStage.set(stageIdx, []);
@@ -1088,7 +1143,7 @@ export function extendCourse(scene) {
 
   _prngState = (currentWorldSeed + idx * 10007) | 0;
 
-  // ★ Stage 6（天空高台 Y=+18）と Stage 7（海面低島 Y=+2 下り階段）を挟むため、二股分岐の開始を idx === 8 に適正化
+  // ★ Stage 6（天空高台 Y=+17）と Stage 7（低島 Y=+6 超ロング下り階段）を挟むため、二股分岐の開始を idx === 8 に同期
   const stagesSinceLastMerge = (lastMergeStageIdx === -1) ? (idx - 8) : (idx - lastMergeStageIdx);
   const shouldSpawnFork = (lastMergeStageIdx === -1 && idx === 8) || (lastMergeStageIdx !== -1 && stagesSinceLastMerge >= 8);
 
@@ -1130,19 +1185,19 @@ export function extendCourse(scene) {
     r = 10.5;
     lastGimmickCategory = 'descent';
   } else if (idx === 6) {
-    // ★ Stage 5 -> 6: オープン展望エレベーターで天空へ上昇（Y = +18.0m）
+    // ★ Stage 5 -> 6: オープン展望エレベーターで天空へ上昇（Y = +17.0m）
     type = 'elevator';
-    nextY = 18.0;
+    nextY = 17.0;
     distZ = 30;
     r = 11;
     lastGimmickCategory = 'ascent';
   } else if (idx === 7) {
-    // ★ Stage 6 -> 7: 【決定的な一手：天空のロング下り階段（Downhill Skywalk）】
-    // 天空の高台（Y = +18.0m）から海面スレスレの低島（Y = +2.0m）へ一気に駆け下りる
+    // ★ Stage 6 -> 7: 【決定的な一手：超ロング・緩傾斜スカイウォーク（Downhill Skywalk）】
+    // 水平 54m / 落差 -11.0m（傾斜角約11.5度、超緩やか！）、約 52段の至福のロング滑走！
     type = 'bridge';
-    nextY = 2.0;
-    distZ = 34;
-    r = 10.5;
+    nextY = 6.0;
+    distZ = 54;
+    r = 11.5;
     lastGimmickCategory = 'descent';
   } else {
     let pickDescent = (lastGimmickCategory === 'ascent');
@@ -1168,6 +1223,13 @@ export function extendCourse(scene) {
         nextY = Math.max(6.0, prev.y - 8.0);
         distZ = 46;
         r = 11;
+      } else if (type === 'downhill') {
+        // ★【頻度改革】後半ランダムループでも緩やかな超ロング下り階段が定期出現！
+        type = 'bridge';
+        const dropY = 9.0 + seededRandom() * 3.0; // 9〜12mの程よい落差
+        nextY = Math.max(3.0, prev.y - dropY);
+        distZ = 52 + Math.floor(seededRandom() * 6); // 52〜57mの雄大なロング緩斜面
+        r = 11.5;
       } else {
         nextY = Math.max(7.0, prev.y - 12.0);
         distZ = 68;
