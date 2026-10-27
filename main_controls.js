@@ -1,9 +1,12 @@
-// main_controls.js: タッチ・マウス操作・バーチャルスティック・ジェスチャー抑制専用モジュール
-// ★ main.js から入力・操作系ロジックを完全分離（Package 5）
-//   1. 【入力イベントリスナーの完全集約】
+// main_controls.js: タッチ・マウス操作・バーチャルスティック・ジェスチャー抑制・リスタート連打防止モジュール
+// ★ 完全安定化版（Phase 4 修正）：
+//   1. 【リスタートボタン多重発火・連打完全防止（lastRestartTime ガード）】
+//      クイックリスタート（#btn-restart-quick）およびリザルト画面（#btn-restart）において、
+//      スマホ実機で発生しやすい touchend と click の微小時間差（数十ms）による二重実行、
+//      およびプレイヤーの連打による resetGame() 多重キックを 600ms デバウンスで遮断。
+//   2. 【入力イベントリスナー・ジェスチャー抑制の完全維持】
 //      タッチ、マウスドラッグ、ピンチ・ジェスチャー抑制、ダブルタップ拡大防止。
-//   2. 【UIボタンイベントの安全バインド】
-//      クイックリスタート、サウンド切替、スタートボタンのタッチ/クリック排他受付。
+//   3. 【サウンド切替・スタートボタン排他受付の完全維持】
 
 export const input = { x: 0, y: 0, active: false };
 
@@ -101,6 +104,9 @@ export function setupControls(sound, callbacks = {}) {
     });
   }
 
+  // ★ リスタート実行時の共通デバウンス（二重実行・連打ガード）用タイムスタンプ
+  let lastRestartTime = 0;
+
   const quickRestartBtn = document.getElementById('btn-restart-quick');
   if (quickRestartBtn) {
     const onQuickRestart = (e) => {
@@ -108,6 +114,12 @@ export function setupControls(sound, callbacks = {}) {
         e.preventDefault();
         e.stopPropagation();
       }
+      const now = Date.now();
+      if (now - lastRestartTime < 600) {
+        return;
+      }
+      lastRestartTime = now;
+
       if (sound) sound.init();
       if (onResetGame) onResetGame();
     };
@@ -161,8 +173,22 @@ export function setupControls(sound, callbacks = {}) {
 
   const restartBtn = document.getElementById('btn-restart');
   if (restartBtn) {
-    restartBtn.addEventListener('click', () => { if (onResetGame) onResetGame(); });
-    restartBtn.addEventListener('touchend', () => { if (onResetGame) onResetGame(); });
+    const onResultRestart = (e) => {
+      if (e) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+      const now = Date.now();
+      if (now - lastRestartTime < 600) {
+        return;
+      }
+      lastRestartTime = now;
+
+      if (sound) sound.init();
+      if (onResetGame) onResetGame();
+    };
+    restartBtn.addEventListener('click', onResultRestart);
+    restartBtn.addEventListener('touchend', onResultRestart);
   }
 
   if (onRestartVisibilityUpdate) onRestartVisibilityUpdate();

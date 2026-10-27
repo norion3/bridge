@@ -1,10 +1,12 @@
 // main_hud.js: タイマー・スコア演出・リスタート権限・公式スコア送信・画面中央5秒カウントダウンHUD制御モジュール
-// ★ カウントダウンHUD完全統合版（Phase 3）：
-//   1. 【画面中央5秒カウントダウンDOM制御（showCountdownOverlay / updateCountdownHUD / triggerCountdownGo）】
-//      5, 4, 3, 2, 1 の数字切り替え時にスプリングアニメーション（countdownPop）を毎秒再トリガー。
-//      Web Audio API（playCountdownTick / playCountdownGo）と完全連携し、明瞭な電子シグナル音を再生。
-//      GO! 到達時は黄金ネオン演出（countdownGo）を再生し、約0.8秒後に自動非表示化。
-//   2. 【タイマー＆スコア演出・リスタート権限制御・公式スコア送信の100%維持】
+// ★ カウントダウン確実表示・自律フェイルセーフ生成版（Phase 1 修正）：
+//   1. 【自律フェイルセーフDOM生成 (ensureCountdownDOM)】
+//      mountAllUI のスキップやHTML直書きの有無に一切依存せず、showCountdownHUD が呼ばれた瞬間に
+//      #hud-countdown-overlay が存在しない場合は document.body へ即時動的生成・インジェクション。
+//      どのような環境でも画面中央の「5 → 4 → 3 → 2 → 1 → GO!」が100%確実に表示されるよう保証。
+//   2. 【高輝度ネオンスプリングCSS自己注入 (ensureCountdownStyles)】
+//      アニメーションキーフレームが未注入の場合でも自律的にスタイルを適用。
+//   3. 【タイマー＆スコア演出・リスタート権限制御・公式スコア送信の100%維持】
 
 import { player } from './character.js';
 
@@ -28,6 +30,123 @@ let lastPlankPlacedTime = 0;
 let lastCountdownNumber = -1;
 let countdownGoTimer = null;
 
+/**
+ * カウントダウン用CSSの自律注入（フェイルセーフ）
+ */
+function ensureCountdownStyles() {
+  if (document.getElementById('hud-countdown-injected-styles')) return;
+  const style = document.createElement('style');
+  style.id = 'hud-countdown-injected-styles';
+  style.textContent = `
+    #hud-countdown-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 9999 !important;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+    #hud-countdown-overlay.active {
+      display: flex !important;
+    }
+    .countdown-number {
+      font-size: 92px;
+      font-weight: 900;
+      line-height: 1;
+      color: #ffffff;
+      text-shadow:
+        -4px -4px 0 #0284c7,
+         4px -4px 0 #0284c7,
+        -4px  4px 0 #0284c7,
+         4px  4px 0 #0284c7,
+         0 0 35px rgba(56, 189, 248, 1.0),
+         0 8px 18px rgba(0, 0, 0, 0.7);
+      will-change: transform, opacity;
+      animation: countdownPop 0.5s cubic-bezier(0.18, 0.89, 0.32, 1.28) forwards;
+    }
+    .countdown-go {
+      font-size: 82px;
+      font-weight: 900;
+      letter-spacing: 0.05em;
+      color: #fde047;
+      text-shadow:
+        -4px -4px 0 #b45309,
+         4px -4px 0 #b45309,
+        -4px  4px 0 #b45309,
+         4px  4px 0 #b45309,
+         0 0 40px rgba(250, 204, 21, 1.0),
+         0 8px 20px rgba(0, 0, 0, 0.75);
+      will-change: transform, opacity;
+      animation: countdownGo 0.8s ease-out forwards;
+    }
+    .countdown-subtitle {
+      font-size: 16px;
+      font-weight: 800;
+      color: #e0f2fe;
+      letter-spacing: 0.18em;
+      text-shadow: 0 2px 8px rgba(0, 0, 0, 0.9);
+      margin-top: 10px;
+    }
+
+    @keyframes countdownPop {
+      0% {
+        transform: scale(1.65);
+        opacity: 0;
+      }
+      50% {
+        transform: scale(0.92);
+        opacity: 1;
+      }
+      100% {
+        transform: scale(1.0);
+        opacity: 1;
+      }
+    }
+
+    @keyframes countdownGo {
+      0% {
+        transform: scale(0.6);
+        opacity: 0;
+      }
+      35% {
+        transform: scale(1.3);
+        opacity: 1;
+      }
+      70% {
+        transform: scale(1.0);
+        opacity: 1;
+      }
+      100% {
+        transform: scale(1.2);
+        opacity: 0;
+      }
+    }
+  `;
+  document.head.appendChild(style);
+}
+
+/**
+ * カウントダウンDOM要素の確実な取得＆自律動的生成（フェイルセーフ）
+ */
+function ensureCountdownDOM() {
+  ensureCountdownStyles();
+  let overlay = document.getElementById('hud-countdown-overlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'hud-countdown-overlay';
+    overlay.innerHTML = `
+      <div id="countdown-text" class="countdown-number">5</div>
+      <div id="countdown-sub" class="countdown-subtitle">READY...</div>
+    `;
+    const targetContainer = document.getElementById('app-container') || document.body;
+    targetContainer.appendChild(overlay);
+  }
+  return overlay;
+}
+
 export function resetHUDTimers() {
   if (scorePopTimer) {
     clearTimeout(scorePopTimer);
@@ -47,7 +166,7 @@ export function resetHUDTimers() {
  * @param {number} startNumber 初期表示カウント（通常 5）
  */
 export function showCountdownHUD(startNumber = 5) {
-  const overlay = document.getElementById('hud-countdown-overlay');
+  const overlay = ensureCountdownDOM();
   const textEl = document.getElementById('countdown-text');
   const subEl = document.getElementById('countdown-sub');
 
@@ -60,6 +179,7 @@ export function showCountdownHUD(startNumber = 5) {
 
   if (overlay) {
     overlay.classList.add('active');
+    overlay.style.setProperty('display', 'flex', 'important');
   }
 
   if (textEl) {
@@ -153,6 +273,7 @@ export function hideCountdownHUD() {
   const overlay = document.getElementById('hud-countdown-overlay');
   if (overlay) {
     overlay.classList.remove('active');
+    overlay.style.setProperty('display', 'none', 'important');
   }
   const textEl = document.getElementById('countdown-text');
   if (textEl) {

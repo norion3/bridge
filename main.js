@@ -1,18 +1,16 @@
 // main.js: ゲーム全体の起動指揮・Three.js初期化・メインループ・DM招待リンク自動合流司令塔
-// ★ Phase 4 カウントダウン統合 ＆ ソロ/マルチ開始フロー完全制御版：
-//   1. 【リスタート時5秒カウントダウン待機エンジン（ソロ・マルチ完全共通）】
+// ★ 完全実体化保証 ＆ カウントダウン同期安定化版（Phase 3 修正）：
+//   1. 【カウントダウン待機中の全走者不可視化（透明化）完全根絶】
+//      isCountdownActive === true の間、自機および全キャラ（AI・リモート問わず）に対し、
+//      毎フレーム meshObj.root.visible = true および scale(1.0, 1.0, 1.0) を強制適用。
+//      被弾・タックル点滅中にリスタートが押されても、全員が100%確実に実体化して初期島に整列。
+//   2. 【リスタート時5秒カウントダウン待機エンジン（ソロ・マルチ完全共通）】
 //      resetGame() 呼び出し時に startRestartCountdown(5.0) を起動。
 //      画面中央に 5 → 4 → 3 → 2 → 1 → GO! のネオンポップカウントダウンを表示。
-//      カウントダウン中（countdownTimer > 0）は、自機操作を完全ロックし、
-//      AIの思考ルーチン（updateAICharacter）をスキップ、試合制限時間タイマー（timeLeft）の減算を停止。
-//      GO! の到達時に全員一斉スタート！
-//   2. 【「1人で遊ぶ」TAP TO START 待機 ＆ 「マルチ」自動始動の完全分離】
-//      ・ソロ: 初期島に4人が整列した状態で TAP TO START 画面を表示してプレイヤーのタップを待機。
-//      ・マルチ: 部屋作成・参加時はモーダルを挟まず自動で即時スタート（要件準拠）。
-//   3. 【ゲーム始動時（launchGameEngine）でのHUD一元表示確約】
-//      ソロタップ時およびマルチ自動開始時の双方で UIController.showGame() を確実に実行し、
-//      スコア・タイマー・リスタートボタンの常時正常表示を100%保証。
-//   4. 【途中参加合流（Catch-up Spawn）および全モジュール連携の100%維持】
+//      カウントダウン中は自機操作を完全ロック、AI思考スキップ、試合タイマー停止。
+//      GO! 到達時に全員一斉スタート！
+//   3. 【「1人で遊ぶ」TAP TO START 待機 ＆ 「マルチ」自動始動の完全分離】
+//   4. 【ゲーム始動時（launchGameEngine）でのHUD一元表示確約】
 
 import { mountAllUI, UIController, EntryShield } from './dom.js';
 import { SoundEngine } from './audio.js';
@@ -398,11 +396,15 @@ export function animate(currentTime) {
         }
       }
 
-      // カウントダウン中は移動更新を行わず直立不動を固定
+      // ★ カウントダウン中は移動更新を行わず直立不動 ＆ 100%確実な実体化（不可視バグ防止）
       if (isCountdownActive) {
         player.walkCycle = 0;
         resetCharacterPose(player);
-        player.meshObj.root.position.copy(player.pos);
+        if (player.meshObj && player.meshObj.root) {
+          player.meshObj.root.position.copy(player.pos);
+          player.meshObj.root.visible = true;
+          player.meshObj.root.scale.set(1.0, 1.0, 1.0);
+        }
       } else {
         updateSingleCharacter(scene, player, moveDirX, moveDirZ, dt, spawnPuffCloud, spawnSpeedStepRing);
       }
@@ -436,13 +438,17 @@ export function animate(currentTime) {
         }
       }
 
-      // ★ カウントダウン中はAIの自律思考ルーチンを完全スキップ
+      // ★ カウントダウン中はAIの自律思考ルーチンを完全スキップ ＆ 強制実体化（透明化防止）
       const shouldRunAI = (!isCountdownActive) && (!isMulti || isHost) && !isRemotePlayer && c.isAI === true && !c.targetNetPos;
 
       if (isCountdownActive) {
         c.walkCycle = 0;
         resetCharacterPose(c);
-        c.meshObj.root.position.copy(c.pos);
+        if (c.meshObj && c.meshObj.root) {
+          c.meshObj.root.position.copy(c.pos);
+          c.meshObj.root.visible = true;
+          c.meshObj.root.scale.set(1.0, 1.0, 1.0);
+        }
       } else if (shouldRunAI) {
         updateAICharacter(scene, c, dt, spawnPuffCloud, spawnSpeedStepRing);
       } else if (c.targetNetPos) {

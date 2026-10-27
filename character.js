@@ -1,12 +1,11 @@
 // character.js: 3Dキャラクター外観構築・手足メッシュ・スタックプール・トロリー・ホバー展望リフト・スカイダイブ＆トラップドア姿勢管理・足元手前側（カメラ方向）フロスト投影ネームバッジ
-// ★ 完全安定化修正版（ReferenceError 根絶 ＆ ガード条件緩和 ＆ 4走者安全整列）：
-//   1. 【ReferenceError: char is not defined の完全根絶】
-//      bindLocalPlayerSlot 内のタイポ（char.nameplateSprite -> c.nameplateSprite）を修正し、
-//      ソロプレイ開始時のスクリプト強制停止を100%解消。
-//   2. 【ガード条件の安全性向上】
-//      characters.length < 4 での早期リターンを廃止し、characters.length === 0 でのみリターン。
-//      初期化タイミングやスロット数に関わらず確実に localPlayer がバインドされるよう保護。
-//   3. 【緑チーム（GREEN: #10b981）スタックマテリアルの未定義フォールバック】
+// ★ 完全安定化修正版（リスタート時キャラ透明化完全根絶 ＆ 強制実体化保証 ＆ 4走者安全整列）：
+//   1. 【無敵点滅中リセット時の不可視化（透明化）バグを完全根絶】
+//      resetCharacters, resetCharacterToStageZero, resetCharacterPose, bindLocalPlayerSlot 内で
+//      各キャラの meshObj.root.visible = true および scale(1.0, 1.0, 1.0) を強制適用。
+//      被弾・タックル点滅の途中でリスタートが実行されても、キャラが100%確実に実体化して整列。
+//   2. 【ReferenceError: char is not defined 根絶済みの完全維持】
+//   3. 【ガード条件の安全性（characters.length === 0 でのみリターン）の完全維持】
 //   4. 【4走者均等整列 X = [-4.8, -1.6, 1.6, 4.8] の完全維持】
 
 import {
@@ -159,6 +158,9 @@ export function resetCharacterToStageZero(char, nameText = null, isLocal = false
   if (char.meshObj && char.meshObj.root) {
     char.meshObj.root.position.copy(char.pos);
     char.meshObj.root.rotation.set(0, Math.PI, 0);
+    // ★ リセット時の確実な実体化（不可視状態の解除）
+    char.meshObj.root.visible = true;
+    char.meshObj.root.scale.set(1.0, 1.0, 1.0);
   }
   if (!char.targetNetPos) {
     char.targetNetPos = new THREE.Vector3();
@@ -235,6 +237,7 @@ export function resetCharacterToStageZero(char, nameText = null, isLocal = false
     if (char.meshObj.magnetAura) char.meshObj.magnetAura.visible = false;
     if (char.meshObj.trolleyGroup) char.meshObj.trolleyGroup.visible = false;
     if (char.meshObj.elevatorGroup) char.meshObj.elevatorGroup.visible = false;
+    char.meshObj.root.visible = true;
     char.meshObj.root.scale.set(1.0, 1.0, 1.0);
     resetCharacterPose(char);
   }
@@ -284,6 +287,8 @@ export function bindLocalPlayerSlot(slotIndex) {
     if (c.meshObj) {
       if (c.meshObj.trolleyGroup) c.meshObj.trolleyGroup.visible = false;
       if (c.meshObj.elevatorGroup) c.meshObj.elevatorGroup.visible = false;
+      c.meshObj.root.visible = true;
+      c.meshObj.root.scale.set(1.0, 1.0, 1.0);
     }
     c.onZipline = false;
     c.onSlide = false;
@@ -306,7 +311,6 @@ export function bindLocalPlayerSlot(slotIndex) {
 
       if (c.nameplateSprite) {
         if (c.nameplateSprite.material) {
-          // ★【重要バグ修正】char ではなく c を参照
           if (c.nameplateSprite.material.map) {
             c.nameplateSprite.material.map.dispose();
           }
@@ -712,8 +716,15 @@ export function applyTrapdoorPose(char, dirX, timeSec) {
 }
 
 export function resetCharacterPose(char) {
+  if (!char || !char.meshObj) return;
+
   char.meshObj.root.rotation.order = 'XYZ';
   char.meshObj.root.rotation.set(0, Math.PI, 0);
+
+  // ★ リセット時の確実な実体化（不可視状態の強制解除）
+  char.meshObj.root.visible = true;
+  char.meshObj.root.scale.set(1.0, 1.0, 1.0);
+
   char.meshObj.leftArm.position.set(-0.48, 0.68, 0);
   char.meshObj.rightArm.position.set(0.48, 0.68, 0);
   char.meshObj.leftArm.rotation.set(0, 0, 0);
@@ -1076,6 +1087,9 @@ export function resetCharacters(STAGES) {
     refreshCharacterStackVisuals(c);
     c.stunTimer = 0;
     c.shrinkTimer = 0;
+
+    // ★ リセット時の確実な実体化（不可視状態の強制解除 ＆ 等倍復元）
+    c.meshObj.root.visible = true;
     c.meshObj.root.scale.set(1.0, 1.0, 1.0);
     c.invulnerableTimer = 0;
     c.currentStage = 0;
@@ -1149,21 +1163,25 @@ export function resetCharacters(STAGES) {
   if (characters[0] && STAGES[0]) {
     characters[0].pos.set(-1.6, stage0Y, stage0Z);
     characters[0].meshObj.root.position.copy(characters[0].pos);
+    characters[0].meshObj.root.visible = true;
     updateNameplatePosition(characters[0]);
   }
   if (characters[1] && STAGES[0]) {
     characters[1].pos.set(-4.8, stage0Y, stage0Z);
     characters[1].meshObj.root.position.copy(characters[1].pos);
+    characters[1].meshObj.root.visible = true;
     updateNameplatePosition(characters[1]);
   }
   if (characters[2] && STAGES[0]) {
     characters[2].pos.set(1.6, stage0Y, stage0Z);
     characters[2].meshObj.root.position.copy(characters[2].pos);
+    characters[2].meshObj.root.visible = true;
     updateNameplatePosition(characters[2]);
   }
   if (characters[3] && STAGES[0]) {
     characters[3].pos.set(4.8, stage0Y, stage0Z);
     characters[3].meshObj.root.position.copy(characters[3].pos);
+    characters[3].meshObj.root.visible = true;
     updateNameplatePosition(characters[3]);
   }
 
