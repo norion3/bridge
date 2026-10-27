@@ -1,15 +1,16 @@
-// character.js: 3Dキャラクター外観構築・手足メッシュ・スタックプール・トロリー・ホバー展望リフト・スカイダイブ後方姿勢＆トラップドアあがき姿勢管理・足元手前側（カメラ方向）フロスト投影ネームバッジ
-// ★ スカイダイブ後方姿勢復元 ＆ トラップドアあがき伸長 ＆ 着地時丸手原状復帰版（Phase 1 修正）：
-//   1. 【スカイダイブ飛行中の後方ストリームライン姿勢の完全復元 (applySkydivePose)】
-//      前傾姿勢（頭から急降下）に合わせ、両腕を頭上ではなく「後方（+Z方向、背中・腰・お尻の後ろ）」へ
-//      スッと引き、縦に約2.4倍伸長（scale: 0.70, 2.40, 0.70）。
-//      風圧を背中へ受け流して時速80km超で滑空する、鳥人間・ダイバー本来の爽快な飛行フォームを完全復活。
-//   2. 【トラップドア急降下中のあがきバタバタ腕の完全復元 (applyTrapdoorPose)】
+// character.js: 3Dキャラクター外観構築・手足メッシュ・スタックプール・トロリー・ホバー展望リフト・スカイダイブ背中ストリーム姿勢＆トラップドアあがき姿勢管理・足元手前側（カメラ方向）フロスト投影ネームバッジ
+// ★ スカイダイブ背中ストリームライン完全復元版（Phase 1 修正）：
+//   1. 【スカイダイブ腕向きの背中側（-Z方向）完全是正 (applySkydivePose)】
+//      ローカル座標系において、背中側（ブロック側・上空側）である -Z 領域へ腕の基底を配置：
+//      position: (±0.44, 0.62, -0.24), scale: (0.70, 2.50, 0.70), rotation: (1.35, ±0.15, ∓0.28)。
+//      股下・お腹側（海側）へ突き出ていた視覚異常（画像5・6）を100%根絶し、
+//      背負ったブロックの横から斜め後ろ上空へピシッと腕を流す美しいストリームラインフォームを完全復元。
+//   2. 【トラップドア急降下中のあがきバタバタ腕の完全維持 (applyTrapdoorPose)】
 //      垂直自由落下のパニック演出として、腕を縦に約1.8倍伸長（scale: 0.85, 1.80, 0.85）させ、
-//      高周波（30Hz）で上下に激しくパタパタ羽ばたかせるダイナミックなアクションを復元。
+//      高周波（30Hz）で上下に激しくパタパタ羽ばたかせるダイナミックなアクションを維持。
 //   3. 【着地時の通常丸い手 (1.0, 1.0, 1.0) 完全原状復帰 (resetCharacterPose)】
-//      島に降り立った瞬間に、両腕スケールを確実に (1.0, 1.0, 1.0) に戻し、
-//      デザイン通りの愛らしく丸い通常の手へ100%寸分違わず復帰。
+//      島に降り立った瞬間に両腕スケールを確実に (1.0, 1.0, 1.0) に戻し、
+//      通常歩行時はデザイン通りの愛らしく丸い手へ100%寸分違わず復帰。
 //   4. 【ネームプレート最前面描画（depthTest: false ＆ renderOrder = 999）の完全維持】
 //   5. 【無敵点滅中リセット時の不可視化（透明化）バグ完全根絶の維持】
 //   6. 【4走者均等整列 X = [-4.8, -1.6, 1.6, 4.8] の完全維持】
@@ -690,20 +691,20 @@ export function setStackGhostMode(char, isGhost) {
 
 /**
  * スカイダイブ飛行中の姿勢制御
- * ★ 両腕を後方（背中・腰・お尻の後ろ）へピシッと伸ばしたダイビング姿勢の完全復元
+ * ★ 腕を確実に背中側（-Z方向、上空・斜め後方）へ流すストリームライン姿勢の完全復元
  */
 export function applySkydivePose(char, dirX, rollAngle) {
   char.meshObj.root.rotation.order = 'YXZ';
   // 前傾姿勢（約65度）で頭から急降下滑空
   char.meshObj.root.rotation.set(1.15, Math.PI, rollAngle);
 
-  // ★ 腕を後方（+Z方向、背中・お尻の後ろ）へ引き、縦に約2.4倍伸長
-  char.meshObj.leftArm.position.set(-0.42, 0.40, 0.28);
-  char.meshObj.rightArm.position.set(0.42, 0.40, 0.28);
-  char.meshObj.leftArm.scale.set(0.70, 2.40, 0.70);
-  char.meshObj.rightArm.scale.set(0.70, 2.40, 0.70);
-  char.meshObj.leftArm.rotation.set(-1.45, 0, 0.22);
-  char.meshObj.rightArm.rotation.set(-1.45, 0, -0.22);
+  // ★ 腕の基底を「背中側（-Z方向）」へ配置し、正のX回転で斜め後ろ・上空へ綺麗に流す！
+  char.meshObj.leftArm.position.set(-0.44, 0.62, -0.24);
+  char.meshObj.rightArm.position.set(0.44, 0.62, -0.24);
+  char.meshObj.leftArm.scale.set(0.70, 2.50, 0.70);
+  char.meshObj.rightArm.scale.set(0.70, 2.50, 0.70);
+  char.meshObj.leftArm.rotation.set(1.35, 0.15, -0.28);
+  char.meshObj.rightArm.rotation.set(1.35, -0.15, 0.28);
 
   const timeSec = performance.now() * 0.001;
   const flutter = Math.sin(timeSec * 28) * 0.12;
