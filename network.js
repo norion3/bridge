@@ -1,14 +1,17 @@
 // network.js: AgentSDK公式仕様完全準拠 ＆ 10Hz POS 送受信ループ ＆ 自律ホスト昇格 ＆ スナップショット復元司令塔
-// ★ マルチプレイ通信最適化・ブロック取得（pk）2要素タプル規格統合版（推奨案A / Phase 2 修正）：
-//   1. 【ブロック取得の2要素タプル化（packPickTuple / unpackPickTuple 連携）】
-//      queueBlockPick において、ブロック取得情報を [stageIdx, idNum | rawId] の極小配列へ変換して蓄積。
-//      磁石アイテム（Magnet）発動時の10個一斉取得でも、通信量を約520Bから約80B（約84.6%削減）へ圧縮。
-//   2. 【受信側・新旧ハイブリッド安全展開】
-//      _handleCustomMessage において、受信した pk 配列の各要素を unpackPickTuple で自動判別・透過デコード。
-//      従来の window.applyRemoteBlockPicked(s, pi, x, z, id) のシグネチャを完全維持して安全キック。
-//   3. 【途中参加スナップショット内ブロックの5要素タプル化（BATCH_SIZE = 6）の完全維持】
-//   4. 【リスタートパケットの超軽量化（巨大Snapshotの排除・新シードのみ即時送信）の完全維持】
-//   5. 【10Hz POS流量制限（Smart Leaky Bucket: 1パケット最大4個）の完全維持】
+// ★ 入退室ライフサイクル完全クリーンパージ ＆ アトラクション搭乗中次島オートスナップ版（Phase 1 修正）：
+//   1. 【入退室時・セッション遷移時の完全クリーン・パージ (purgeLocalWorldState)】
+//      createRoom, joinRoom, exitRoom, および _applyRoomMembersSync (新シード受信時) において、
+//      floorBlockPool (400個) をすべて active=false, visible=false, position(0, -999, 0) に隔離初期化。
+//      floorBlocksByStage.clear() および resetParticlePools() を確実に実行。
+//      出入りを繰り返しても前セッションの島ブロックが残らず、新セッションの階段に突き刺さる描画崩壊を100%根絶。
+//   2. 【アトラクション搭乗中合流の次島オートスナップ (isPlayerOnAttraction)】
+//      ホストがエレベーター、スカイダイブ、スライダー、ジップライン、トラップドア等に乗っている最中に
+//      ゲストが入室してきた場合、通知する hostStage を「出発元」ではなく「到着先の島 (currentStage + 1)」へ自動補正。
+//      ゲストを到着先の島の安全な平地へ先行スポーンさせ、ホストの着地を美しく迎える完璧な同期リンクを実現。
+//   3. 【スナップショット内ブロック収集の隔離ガード (pos.y > -100)】
+//      captureFullWorldSnapshot において、非アクティブ・描画隔離されたブロックの混入を物理遮断。
+//   4. 【ブロック取得タプル化 (pk) ＆ 補充タプル化 (sp) ＆ 10Hz POS流量制限の完全維持】
 
 import {
   player,
@@ -59,6 +62,49 @@ import {
 import { hookLobbyNetworkEvents } from './net_lobby_hooks.js';
 
 export { hookLobbyNetworkEvents };
+
+/**
+ * 入退室時・新セッション開始時に前セッションの床ブロック・パーティクルを完全破棄・隔離するヘルパー
+ */
+function purgeLocalWorldState() {
+  if (Array.isArray(floorBlockPool)) {
+    for (let i = 0; i < floorBlockPool.length; i++) {
+      const b = floorBlockPool[i];
+      if (b) {
+        b.active = false;
+        b.attracting = false;
+        b.stageIdx = -1;
+        b.blockId = null;
+        if (b.mesh) {
+          b.mesh.visible = false;
+          b.mesh.position.set(0, -999, 0); // 描画空間から完全に隔離
+        }
+      }
+    }
+  }
+  if (floorBlocksByStage && typeof floorBlocksByStage.clear === 'function') {
+    floorBlocksByStage.clear();
+  }
+  if (typeof resetParticlePools === 'function') {
+    resetParticlePools();
+  }
+}
+
+/**
+ * 走者が特殊アトラクション（ギミック）搭乗中であるかを判定するヘルパー
+ */
+function isPlayerOnAttraction(char) {
+  if (!char) return false;
+  return Boolean(
+    char.onSkydive ||
+    char.onElevator ||
+    char.onCurvedSlide ||
+    char.onSlide ||
+    char.onZipline ||
+    char.onTrapdoor ||
+    char.onFreefall
+  );
+}
 
 /**
  * 未入室時の exit() による無限保留（Promiseハング）および本命ルーム誤退室を防ぐ安全退出ヘルパー
@@ -156,7 +202,8 @@ function captureFullWorldSnapshot() {
   if (Array.isArray(floorBlockPool)) {
     for (let idx = 0; idx < floorBlockPool.length; idx++) {
       const b = floorBlockPool[idx];
-      if (b && b.active && !b.attracting && b.pos && b.stageIdx <= allowedStageLimit) {
+      // ★ 破棄・隔離されたブロック（pos.y <= -100）を確実に除外
+      if (b && b.active && !b.attracting && b.pos && b.pos.y > -100 && b.stageIdx <= allowedStageLimit) {
         // ★ 5要素タプル [s, x, z, t, idNum] に変換して格納
         const tuple = packBlockTuple({
           stageIdx: b.stageIdx || 0,
@@ -307,15 +354,9 @@ export const NetworkManager = {
 
   /**
    * ブロック取得イベントを2要素タプル化してキューイング
-   * @param {string|number} blockId ブロックID
-   * @param {number} stageIdx ステージ番号
-   * @param {number} poolIdx プール番号（互換用）
-   * @param {number} x X座標
-   * @param {number} z Z座標
    */
   queueBlockPick(blockId, stageIdx, poolIdx, x, z) {
     if (!this.isMultiplayerActive) return;
-    // ★ 2要素タプル [stageIdx, idNum | rawId] へ極小化して蓄積（約52B -> 約8B）
     const tuple = packPickTuple(stageIdx, blockId);
     this._pendingPicks.push(tuple);
   },
@@ -369,13 +410,11 @@ export const NetworkManager = {
 
   /**
    * 新ブロック生成レコードをタプル配列化してFIFOキューに積む
-   * @param {Array} spawnedArray ブロックレコードの配列
    */
   queueSpawnBlocks(spawnedArray) {
     if (!this.isMultiplayerActive || !this.isHost || !Array.isArray(spawnedArray) || spawnedArray.length === 0) return;
     for (let i = 0; i < spawnedArray.length; i++) {
       const b = spawnedArray[i];
-      // 5要素タプル [s, x, z, t, idNum] に変換して積む
       const tuple = packBlockTuple(b);
       this._pendingSpawns.push(tuple);
     }
@@ -571,12 +610,14 @@ export const NetworkManager = {
       await this.init();
       await safeExitCurrentRoom(null);
 
+      // ★ 新セッション作成直前にローカルの過去ブロック・パーティクルを100%パージ
+      purgeLocalWorldState();
+
       let createdRoomId = 'local_room_' + Math.floor(Math.random() * 1000);
 
       if (this.isSDKAvailable) {
         try {
           const permission = isPrivate ? 1 : 0;
-          // ★ 最大定員4名で部屋を作成
           const res = await window.AgentSDK.room.create({ max_players: 4, room_permission: permission });
 
           let isSuccess = false;
@@ -674,10 +715,7 @@ export const NetworkManager = {
       const activeScene = (typeof window !== 'undefined' && window.currentSceneRef) ? window.currentSceneRef : null;
       if (activeScene) {
         try {
-          if (floorBlocksByStage && typeof floorBlocksByStage.clear === 'function') {
-            floorBlocksByStage.clear();
-          }
-          resetParticlePools();
+          purgeLocalWorldState();
           buildWorld(activeScene, this.currentSeed);
           manageBlockSpawns(activeScene, false);
         } catch (e) {
@@ -706,6 +744,9 @@ export const NetworkManager = {
     try {
       await this.init();
       await safeExitCurrentRoom(safeRoomId);
+
+      // ★ 他の部屋へ参加する直前にローカルワールドを完全パージ
+      purgeLocalWorldState();
 
       if (this.isSDKAvailable) {
         try {
@@ -831,7 +872,13 @@ export const NetworkManager = {
         this.slots[0].portrait = this.myUser.portrait || this.slots[0].portrait || '';
       }
 
-      const hostCurrentStage = (player && typeof player.currentStage === 'number') ? player.currentStage : 0;
+      // ★【アトラクション搭乗中合流の次島オートスナップ】
+      // ホストがギミック搭乗中の場合、出発元ではなく到着先の島番号をゲストへ伝達
+      let hostCurrentStage = (player && typeof player.currentStage === 'number') ? player.currentStage : 0;
+      if (isPlayerOnAttraction(player)) {
+        const maxStageAllowed = (Array.isArray(STAGES) && STAGES.length > 0) ? (STAGES.length - 1) : (hostCurrentStage + 1);
+        hostCurrentStage = Math.min(maxStageAllowed, hostCurrentStage + 1);
+      }
 
       this._sendCustomMessage({
         event: 'ROOM_MEMBERS_SYNC',
@@ -991,8 +1038,6 @@ export const NetworkManager = {
       const outgoingKnockouts = this._pendingKnockouts.length > 0 ? [...this._pendingKnockouts] : undefined;
       const outgoingScatters = this._pendingScatters.length > 0 ? [...this._pendingScatters] : undefined;
       
-      // ★【スループット流量制限（Throttling）】
-      // 1回の100msパケットあたり最大4個まで取り出して同封。溢れた分はキューに残り次回送信へ滑らかにスライド
       let outgoingSpawns = undefined;
       if (this._pendingSpawns.length > 0) {
         outgoingSpawns = this._pendingSpawns.splice(0, 4);
@@ -1028,7 +1073,6 @@ export const NetworkManager = {
       this._pendingSkills.length = 0;
       this._pendingKnockouts.length = 0;
       this._pendingScatters.length = 0;
-      // _pendingSpawns は splice で消費するためここでは全クリアしない
       this._pendingChats.length = 0;
 
       const posMessage = {
@@ -1161,7 +1205,7 @@ export const NetworkManager = {
           });
         }
 
-        // ★ ブロック取得（pk）の新旧ハイブリッド安全デコード（2要素タプル または 旧オブジェクト）
+        // ★ ブロック取得（pk）の新旧ハイブリッド安全デコード
         const picksList = packet.pk || packet.picks;
         if (Array.isArray(picksList) && picksList.length > 0) {
           picksList.forEach(pk => {
@@ -1203,7 +1247,7 @@ export const NetworkManager = {
           });
         }
 
-        // ★ 新旧ハイブリッド対応ブロックデコード（5要素タプル または 旧オブジェクト）
+        // ★ 新旧ハイブリッド対応ブロックデコード
         const spawnsList = packet.sp;
         if (Array.isArray(spawnsList) && spawnsList.length > 0) {
           if (typeof window.applyRemoteBlocksBatch === 'function') {
@@ -1276,7 +1320,8 @@ export const NetworkManager = {
       this.currentSeed = seed;
       this._seedApplied = true;
       if (activeScene) {
-        resetParticlePools();
+        // ★ 新シード構築前に前セッションの床ブロックを完全パージ
+        purgeLocalWorldState();
         buildWorld(activeScene, seed);
 
         if (snapshot && Array.isArray(snapshot.blocks)) {
@@ -1386,7 +1431,6 @@ export const NetworkManager = {
           const targetStageObj = STAGES[hostStage] || STAGES[0];
           if (targetStageObj) {
             const centerX = targetStageObj.x || 0.0;
-            // 4走者スロット配置: 0: -1.6, 1: -4.8, 2: 1.6, 3: 4.8
             let spawnXOffset = -1.6;
             if (this.mySlot === 1) spawnXOffset = -4.8;
             else if (this.mySlot === 2) spawnXOffset = 1.6;
@@ -1470,8 +1514,12 @@ export const NetworkManager = {
       targetChar.nameplateSprite.visible = true;
     }
 
-    // ホスト端末上でゲストを受け入れる際の現在地合流スポーン（4走者均等X配置連動）
-    const hostCurrentStage = (this.isHost && player && typeof player.currentStage === 'number') ? player.currentStage : 0;
+    // ★ ホスト端末上でゲストを受け入れる際の合流スポーン（アトラクション搭乗中の次島オートスナップ連動）
+    let hostCurrentStage = (this.isHost && player && typeof player.currentStage === 'number') ? player.currentStage : 0;
+    if (this.isHost && isPlayerOnAttraction(player)) {
+      const maxStageAllowed = (Array.isArray(STAGES) && STAGES.length > 0) ? (STAGES.length - 1) : (hostCurrentStage + 1);
+      hostCurrentStage = Math.min(maxStageAllowed, hostCurrentStage + 1);
+    }
 
     if (hostCurrentStage > 0 && STAGES[hostCurrentStage]) {
       const stageObj = STAGES[hostCurrentStage];
@@ -1677,7 +1725,6 @@ export const NetworkManager = {
   broadcastRestartGame(newSeed, snapshot = null) {
     if (!this.isMultiplayerActive || !this.isHost) return;
     this.currentSeed = newSeed;
-    // ★ リスタート時は全世界が新シード値で再生成されるため、巨大スナップショットの送出を廃止し軽量シードのみ即時配信
     this._sendCustomMessage({
       event: 'RESTART_GAME',
       seed: newSeed,
@@ -1745,7 +1792,12 @@ export const NetworkManager = {
         console.warn(`[NetworkManager] Host (Slot 0) exited room. Promoting to Host...`);
         this.promoteToHost();
       } else if (this.isHost) {
-        const hostCurrentStage = (player && typeof player.currentStage === 'number') ? player.currentStage : 0;
+        let hostCurrentStage = (player && typeof player.currentStage === 'number') ? player.currentStage : 0;
+        if (isPlayerOnAttraction(player)) {
+          const maxStageAllowed = (Array.isArray(STAGES) && STAGES.length > 0) ? (STAGES.length - 1) : (hostCurrentStage + 1);
+          hostCurrentStage = Math.min(maxStageAllowed, hostCurrentStage + 1);
+        }
+
         this._sendCustomMessage({
           event: 'ROOM_MEMBERS_SYNC',
           slots: this.slots,
@@ -1768,6 +1820,9 @@ export const NetworkManager = {
     this._lastSentSnapshot = null;
     this._idleKeepAliveCounter = 0;
     this._hasCaughtUp = false;
+
+    // ★ 退室時にシーン内の古いブロック・パーティクルを100%完全パージ・隔離
+    purgeLocalWorldState();
 
     if (this.myUser && this.myUser.user_id) {
       markParticipantInactive(this.myUser.user_id);

@@ -1,23 +1,15 @@
 // blocks.js: 床ブロック管理・補充・スポーン・決定論的一意キー（blockId）マルチ同期専用モジュール
-// ★ パケット通信最適化・5要素タプル＆旧形式ハイブリッド安全デコード対応版（Phase 3 修正）：
-//   1. 【新旧ハイブリッド安全デコード (applyRemoteBlocksBatch / applyRemoteBlockSpawned)】
-//      受信パケットが5要素タプル [s, x, z, t, idNum] であっても旧JSONオブジェクトであっても、
-//      net_protocol.js の unpackBlockTuple と連動して自動判別・透過デコード。
-//      受信側での例外停止（TypeError等）をゼロ化し、100%確実に床面へブロックを実体化。
-//   2. 【Stage 0 スタートライン・ネームプレート周辺ブロックスポーン進入禁止除外ガード】
-//      spawnSingleBlock において、Stage 0 の 4走者整列ラインおよびネームプレート手前
-//      （candZ >= 2.2m かつ |candX - centerX| <= 6.0m）へのブロックスポーンを完全に禁止。
-//      走者の足元や名前の真上にブロックが重なる事象を根本予防し、綺麗なスタートエリアを形成。
-//   3. 【緑チーム（GREEN: #10b981）ブロック補充・スポーン完全対応】
-//      applyRemoteBlockSpawned および spawnSingleBlock において、
-//      teamId === 'green' の場合に sharedMats.blockGreen をバインド。
-//      BLOCK_TYPES（4色）と自動連動し、4走者全員の色のブロックが均等に散らばる島を形成。
-//   4. 【次ステージへの事前ブロック補充 (ハゲ山・目の前ポップ根絶)】
-//      走者の現在地ステージだけでなく、進行方向の先行ステージ（直列次の島および二股分岐先の左右島）へ
-//      走者が到着する前からブロックを自動補充。
-//   5. 【先行ステージブロックのプール回収保護】
-//      findSafePoolItem における activeStages 除外セットに先行ステージ（nextStageIdx）を追加。
-//   6. 【PRNG汚染遮断 ＆ ゼロアロケーション純粋算術丸めの完全維持】
+// ★ 階段エリア進入禁止防護ガード ＆ パージ後プール安全再利用版（Phase 2 修正）：
+//   1. 【階段エリア進入禁止防護ガード (applyRemoteBlockSpawned)】
+//      ホストやゲストから受信したブロック座標 (x, z) に対し、対象ステージの島半径 R および
+//      階段架橋エリア（-Z方向への突出）を幾何学的に検証。
+//      前セッションの残留ブロックや遅延パケットが新セッションの階段空間へはみ出す異常レコードを100%物理遮断。
+//   2. 【入退室パージ後プールの完全安全再配置】
+//      purgeLocalWorldState により隔離（pos.y = -999）されたブロックプールを再利用する際、
+//      古い残骸フラグ（attracting, stageIdx, blockId）を完全にクリアし、指定ステージの平地へ確実に再配置。
+//   3. 【新旧ハイブリッド安全デコード (5要素タプル / 旧オブジェクト)】の完全維持。
+//   4. 【Stage 0 スタートライン・ネームプレート周辺進入禁止除外ガード】の完全維持。
+//   5. 【4色対応（青・赤・黄・緑）＆ 次ステージ事前ブロック補充】の完全維持。
 
 import {
   BLOCK_TYPES,
@@ -122,8 +114,7 @@ function findSafePoolItem() {
 
 /**
  * ホストから新ブロック補充パケット（blockId付き）を受信した際の反映ハンドラ（単体）
- * ★ 5要素タプル・旧オブジェクト形式の双方に対応するフェイルセーフを内包
- * ★ 4色対応（青・赤・黄・緑）
+ * ★ 階段エリア進入禁止防護ガード ＆ 4色対応（青・赤・黄・緑）
  */
 export function applyRemoteBlockSpawned(stageIdx, poolIdx, x, y, z, teamId, blockId = null) {
   // 引数が5要素タプル [s, x, z, t, idNum] またはオブジェクト形式で渡された場合の自己救済展開
@@ -138,10 +129,24 @@ export function applyRemoteBlockSpawned(stageIdx, poolIdx, x, y, z, teamId, bloc
   const stageInfo = STAGES[stageIdx];
   if (!stageInfo) return;
 
+  const centerX = stageInfo.x || 0.0;
+  const distFromCenter = Math.hypot(x - centerX, z - stageInfo.z);
+
+  // ★【階段エリア進入禁止防護ガード】
+  // 1. 島の半径 R の外側（階段エリアや海面上空）にはみ出している異常座標は物理遮断
+  if (distFromCenter > stageInfo.r - 0.3) {
+    return;
+  }
+
+  // 2. 島の奥端（階段の架橋登り口エリア：Z < stage.z - R*0.70 かつ階段幅以内）への進入を遮断
+  if (z < (stageInfo.z - stageInfo.r * 0.70) && Math.abs(x - centerX) < 5.8) {
+    return;
+  }
+
   const stageBlocks = getFloorBlocksForStage(stageIdx);
   const resolvedBlockId = blockId || `b_${stageIdx}_${round2(x)}_${round2(z)}`;
 
-  // 1. 同一 blockId が既にアクティブに存在している場合は二重生成を防止
+  // 3. 同一 blockId が既にアクティブに存在している場合は二重生成を防止
   for (let i = 0; i < stageBlocks.length; i++) {
     const existing = stageBlocks[i];
     if (existing.active && existing.blockId === resolvedBlockId) {
@@ -149,7 +154,7 @@ export function applyRemoteBlockSpawned(stageIdx, poolIdx, x, y, z, teamId, bloc
     }
   }
 
-  // 2. 近接（0.45m以内）同一座標の重複ガード
+  // 4. 近接（0.45m以内）同一座標の重複ガード
   for (let i = 0; i < stageBlocks.length; i++) {
     const b = stageBlocks[i];
     if (b.active && Math.hypot(b.pos.x - x, b.pos.z - z) < 0.45) {
@@ -157,7 +162,7 @@ export function applyRemoteBlockSpawned(stageIdx, poolIdx, x, y, z, teamId, bloc
     }
   }
 
-  // 3. 安全なプールアイテムの確保
+  // 5. 安全なプールアイテムの確保
   const poolItem = findSafePoolItem();
   if (!poolItem) return;
 
@@ -169,8 +174,10 @@ export function applyRemoteBlockSpawned(stageIdx, poolIdx, x, y, z, teamId, bloc
   else if (teamId === 'green') mat = sharedMats.blockGreen;
   else mat = sharedMats.blockNeutral;
 
+  const spawnY = (y !== undefined && y > -100) ? y : (stageInfo.y + 0.25);
+
   poolItem.mesh.material = mat;
-  poolItem.mesh.position.set(x, y !== undefined ? y : (stageInfo.y + 0.25), z);
+  poolItem.mesh.position.set(x, spawnY, z);
   poolItem.mesh.rotation.set(0, Math.random() * Math.PI, 0);
   poolItem.mesh.visible = true;
 
@@ -250,6 +257,12 @@ export function spawnSingleBlock(scene, stageIdx, targetTeam = null, shouldBroad
         attempts++;
         continue;
       }
+    }
+
+    // 階段登り口（-Z端部）への進入禁止
+    if (candZ < (stageInfo.z - stageInfo.r * 0.70) && Math.abs(candX - centerX) < 5.8) {
+      attempts++;
+      continue;
     }
 
     if (skydiveB) {
