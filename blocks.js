@@ -1,18 +1,19 @@
 // blocks.js: 床ブロック管理・補充・スポーン・決定論的一意キー（blockId）マルチ同期専用モジュール
-// ★ 4人プレイ拡張版（緑チーム補充対応 ＆ 先行ステージ事前スポーン）：
-//   1. 【緑チーム（GREEN: #10b981）ブロック補充・スポーン完全対応】
+// ★ スタートライン足元進入禁止除外ガード ＆ 4人プレイ拡張版（Phase 4 修正）：
+//   1. 【Stage 0 スタートライン・ネームプレート周辺ブロックスポーン進入禁止除外ガード】
+//      spawnSingleBlock において、Stage 0 の 4走者整列ラインおよびネームプレート手前
+//      （candZ >= 2.2m かつ |candX - centerX| <= 6.0m）へのブロックスポーンを完全に禁止。
+//      走者の足元や名前の真上にブロックが重なる事象を根本予防し、綺麗なスタートエリアを形成。
+//   2. 【緑チーム（GREEN: #10b981）ブロック補充・スポーン完全対応】
 //      applyRemoteBlockSpawned および spawnSingleBlock において、
 //      teamId === 'green' の場合に sharedMats.blockGreen をバインド。
 //      BLOCK_TYPES（4色）と自動連動し、4走者全員の色のブロックが均等に散らばる島を形成。
-//   2. 【次ステージへの事前ブロック補充 (ハゲ山・目の前ポップ根絶)】
+//   3. 【次ステージへの事前ブロック補充 (ハゲ山・目の前ポップ根絶)】
 //      走者の現在地ステージだけでなく、進行方向の先行ステージ（直列次の島および二股分岐先の左右島）へ
-//      走者が到着する前からブロックを自動補充。階段登攀中や手前の島から奥を見下ろした際にも
-//      カラフルなブロックが散らばっている美しい景観を実現。
-//   3. 【先行ステージブロックのプール回収保護】
+//      走者が到着する前からブロックを自動補充。
+//   4. 【先行ステージブロックのプール回収保護】
 //      findSafePoolItem における activeStages 除外セットに先行ステージ（nextStageIdx）を追加。
-//      これから向かう次の島のブロックが古いブロックとして回収・強奪される欠陥を完全防止。
-//   4. 【PRNG汚染遮断 ＆ ゼロアロケーション純粋算術丸めの完全維持】
-//      Math.random() による世界生成PRNG保護、round2 による数値丸め、一意キー同期（spパケット）は100%維持。
+//   5. 【PRNG汚染遮断 ＆ ゼロアロケーション純粋算術丸めの完全維持】
 
 import {
   BLOCK_TYPES,
@@ -195,6 +196,7 @@ if (typeof window !== 'undefined') {
 /**
  * 単一床ブロックの出現位置判定および内部配置
  * ★ 4色対応（青・赤・黄・緑）
+ * ★ Stage 0 スタートライン足元・ネームプレート周辺除外ガード配備
  */
 export function spawnSingleBlock(scene, stageIdx, targetTeam = null, shouldBroadcastImmediately = true) {
   const stageInfo = STAGES[stageIdx];
@@ -216,6 +218,14 @@ export function spawnSingleBlock(scene, stageIdx, targetTeam = null, shouldBroad
     const theta = Math.random() * Math.PI * 2;
     const candX = centerX + Math.cos(theta) * r;
     const candZ = stageInfo.z + Math.sin(theta) * r;
+
+    // ★ Stage 0: 4走者の初期整列ライン（Z=4.0m）およびネームプレート周辺（Z >= 2.2m かつ |X| <= 6.0m）へのスポーンを禁止
+    if (stageIdx === 0) {
+      if (candZ >= 2.2 && Math.abs(candX - centerX) <= 6.0) {
+        attempts++;
+        continue;
+      }
+    }
 
     if (skydiveB) {
       const dSkySq = (candX - (skydiveB.launchPoint ? skydiveB.launchPoint.x : centerX)) ** 2 + (candZ - skydiveB.startZ) ** 2;

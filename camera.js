@@ -1,5 +1,14 @@
 // camera.js: ダイナミック並走カメラ専用モジュール
-// 通常歩行、垂直登攀、スライダー、ジップライン、エレベーター、スカイダイブ、トラップドア、着地リカバリー遷移の全カメラワークを集約
+// ★ カウントダウン待機センタリング ＆ レース追従シネマティック遷移版：
+//   1. 【カウントダウン中の4走者画面中央（45%〜55%ライン）センタリング】
+//      走者の整列位置（Z = 4.0m）に対し、従来の遠景階段注視（Z = -1.0m）から
+//      手前寄り（Z = 2.2m）へ注視点をシフト。
+//      カメラ位置も X=0（左右対称中央）、Y=16.5m、Z=17.5m に構えることで、
+//      画面下部に沈んでいた4人が画面中央に堂々と大きく整列。
+//   2. 【「GO!」到達時のシームレス・スムーズLERP復帰】
+//      カウントダウン終了と同時に、通常のレース追従カメラへ約0.8秒かけて
+//      シルクのように滑らかに自動遷移（カクつきゼロ）。
+//   3. 【通常歩行、垂直登攀、スライダー、ジップライン、エレベーター、スカイダイブ、トラップドア全機能の完全維持】
 
 import {
   SKYDIVE_CONFIG,
@@ -31,14 +40,21 @@ export function resetCameraState() {
  * @param {number} dt 
  * @param {THREE.DirectionalLight} dirLight 
  * @param {THREE.Mesh} seaMesh 
+ * @param {boolean} isCountdown カウントダウン待機中フラグ（任意）
  */
-export function updateDynamicCamera(player, camera, dt, dirLight, seaMesh) {
+export function updateDynamicCamera(player, camera, dt, dirLight, seaMesh, isCountdown = false) {
   if (!player || !camera) return;
 
   if (dirLight) {
     dirLight.position.set(player.pos.x + 30, player.pos.y + 70, player.pos.z + 25);
     dirLight.target.position.set(player.pos.x, player.pos.y, player.pos.z);
   }
+
+  // カウントダウン待機状態の判定（引数またはグローバルフラグから安全取得）
+  const isCountdownActive = Boolean(
+    isCountdown ||
+    (typeof window !== 'undefined' && window.isCountdownActive)
+  );
 
   const currentStageObj = STAGES[player.currentStage];
   const nextConn = CONNECTIONS.find(c => c.from === player.currentStage);
@@ -84,14 +100,24 @@ export function updateDynamicCamera(player, camera, dt, dirLight, seaMesh) {
   let targetLookAheadZ = player.pos.z - 5;
   let targetFOV = player.speedBoostActive ? 65 : 60;
 
-  if (attackCamTimer > 0) {
+  // ★ カウントダウン待機中の専用センタリング構図
+  if (isCountdownActive && player.currentStage === 0) {
+    const stage0Y = currentStageObj ? currentStageObj.y : 0;
+    // 4走者の横並び中心（X = 0）に対称配置
+    targetCamX = 0.0;
+    targetCamY = stage0Y + 16.5;
+    targetCamZ = player.pos.z + 13.5; // 約 17.5m
+    targetLookX = 0.0;
+    targetLookY = stage0Y + 0.9;
+    // 走者（Z=4.0m）の直近手前（Z=2.2m）を注視することで、キャラが画面中央（45%〜55%ライン）に持ち上がる
+    targetLookAheadZ = player.pos.z - 1.8;
+    targetFOV = 58;
+  } else if (attackCamTimer > 0) {
     decrementAttackCamTimer(dt);
     targetCamZ += 3.5;
     targetCamY += 2.0;
     targetFOV = 68;
-  }
-
-  if (isJumping && player.activeJumpTier) {
+  } else if (isJumping && player.activeJumpTier) {
     const jTier = player.activeJumpTier;
     const t = player.jumpProgress;
     if (jTier.id === 'mega') {

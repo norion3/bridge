@@ -1,12 +1,12 @@
 // main_hud.js: タイマー・スコア演出・リスタート権限・公式スコア送信・画面中央5秒カウントダウンHUD制御モジュール
-// ★ カウントダウン確実表示・自律フェイルセーフ生成版（Phase 1 修正）：
-//   1. 【自律フェイルセーフDOM生成 (ensureCountdownDOM)】
-//      mountAllUI のスキップやHTML直書きの有無に一切依存せず、showCountdownHUD が呼ばれた瞬間に
-//      #hud-countdown-overlay が存在しない場合は document.body へ即時動的生成・インジェクション。
-//      どのような環境でも画面中央の「5 → 4 → 3 → 2 → 1 → GO!」が100%確実に表示されるよう保証。
-//   2. 【高輝度ネオンスプリングCSS自己注入 (ensureCountdownStyles)】
-//      アニメーションキーフレームが未注入の場合でも自律的にスタイルを適用。
-//   3. 【タイマー＆スコア演出・リスタート権限制御・公式スコア送信の100%維持】
+// ★ カウントダウン視認性・オプティカルセンタリング最適化版：
+//   1. 【三点リーダー「...」の完全撤廃 ＆ 幾何・オプティカルセンター完全一致】
+//      末尾のドットによる右シフトをゼロ化し、「READY」単体化と letter-spacing 最適化により
+//      上の巨大数字と下の「READY」の垂直センター軸を完全一致。
+//   2. 【高視認性アンバーイエロー（#fde047）＆ディープ琥珀エッジ】
+//      白床面（Stage 0）でもくっきり浮き上がる濃色アウトラインとブラックドロップシャドウを配備。
+//   3. 【自律フェイルセーフDOM生成 (ensureCountdownDOM) の完全維持】
+//   4. 【タイマー＆スコア演出・リスタート権限制御・公式スコア送信の100%維持】
 
 import { player } from './character.js';
 
@@ -31,7 +31,7 @@ let lastCountdownNumber = -1;
 let countdownGoTimer = null;
 
 /**
- * カウントダウン用CSSの自律注入（フェイルセーフ）
+ * カウントダウン用CSSの自律注入（フェイルセーフ ＆ 高コントラスト・センター軸最適化）
  */
 function ensureCountdownStyles() {
   if (document.getElementById('hud-countdown-injected-styles')) return;
@@ -53,10 +53,11 @@ function ensureCountdownStyles() {
       display: flex !important;
     }
     .countdown-number {
-      font-size: 92px;
+      font-size: 96px;
       font-weight: 900;
       line-height: 1;
       color: #ffffff;
+      text-align: center;
       text-shadow:
         -4px -4px 0 #0284c7,
          4px -4px 0 #0284c7,
@@ -68,27 +69,38 @@ function ensureCountdownStyles() {
       animation: countdownPop 0.5s cubic-bezier(0.18, 0.89, 0.32, 1.28) forwards;
     }
     .countdown-go {
-      font-size: 82px;
+      font-size: 86px;
       font-weight: 900;
       letter-spacing: 0.05em;
       color: #fde047;
+      text-align: center;
       text-shadow:
         -4px -4px 0 #b45309,
          4px -4px 0 #b45309,
         -4px  4px 0 #b45309,
          4px  4px 0 #b45309,
-         0 0 40px rgba(250, 204, 21, 1.0),
-         0 8px 20px rgba(0, 0, 0, 0.75);
+         0 0 45px rgba(250, 204, 21, 1.0),
+         0 8px 22px rgba(0, 0, 0, 0.8);
       will-change: transform, opacity;
       animation: countdownGo 0.8s ease-out forwards;
     }
     .countdown-subtitle {
-      font-size: 16px;
-      font-weight: 800;
-      color: #e0f2fe;
-      letter-spacing: 0.18em;
-      text-shadow: 0 2px 8px rgba(0, 0, 0, 0.9);
-      margin-top: 10px;
+      font-size: 19px;
+      font-weight: 900;
+      line-height: 1;
+      text-align: center;
+      letter-spacing: 0.16em;
+      /* 三点リーダー撤廃に伴う字送り補正（末尾余白をなくし完全幾何中央へ） */
+      margin-right: -0.16em;
+      margin-top: 12px;
+      color: #fde047;
+      text-shadow:
+        -2.5px -2.5px 0 #78350f,
+         2.5px -2.5px 0 #78350f,
+        -2.5px  2.5px 0 #78350f,
+         2.5px  2.5px 0 #78350f,
+         0 4px 12px rgba(0, 0, 0, 0.95),
+         0 0 20px rgba(245, 158, 11, 0.7);
     }
 
     @keyframes countdownPop {
@@ -139,7 +151,7 @@ function ensureCountdownDOM() {
     overlay.id = 'hud-countdown-overlay';
     overlay.innerHTML = `
       <div id="countdown-text" class="countdown-number">5</div>
-      <div id="countdown-sub" class="countdown-subtitle">READY...</div>
+      <div id="countdown-sub" class="countdown-subtitle">READY</div>
     `;
     const targetContainer = document.getElementById('app-container') || document.body;
     targetContainer.appendChild(overlay);
@@ -192,7 +204,7 @@ export function showCountdownHUD(startNumber = 5) {
   }
 
   if (subEl) {
-    subEl.textContent = 'READY...';
+    subEl.textContent = 'READY';
     subEl.style.display = 'block';
   }
 }

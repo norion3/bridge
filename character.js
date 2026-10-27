@@ -1,12 +1,14 @@
 // character.js: 3Dキャラクター外観構築・手足メッシュ・スタックプール・トロリー・ホバー展望リフト・スカイダイブ＆トラップドア姿勢管理・足元手前側（カメラ方向）フロスト投影ネームバッジ
-// ★ 完全安定化修正版（リスタート時キャラ透明化完全根絶 ＆ 強制実体化保証 ＆ 4走者安全整列）：
-//   1. 【無敵点滅中リセット時の不可視化（透明化）バグを完全根絶】
+// ★ ネームプレート最前面描画 ＆ 強制実体化完全保証版（Phase 2 修正）：
+//   1. 【ネームプレートのブロック遮蔽完全根絶（depthTest: false ＆ renderOrder = 999）】
+//      床面に散乱したブロックがネームプレートの手前・上に重なっても、GPU深度テストで文字が隠れないよう
+//      depthTest: false を指定し、renderOrder = 999 でシーン内最前面に100%クリア描画。
+//   2. 【無敵点滅中リセット時の不可視化（透明化）バグ完全根絶の維持】
 //      resetCharacters, resetCharacterToStageZero, resetCharacterPose, bindLocalPlayerSlot 内で
 //      各キャラの meshObj.root.visible = true および scale(1.0, 1.0, 1.0) を強制適用。
-//      被弾・タックル点滅の途中でリスタートが実行されても、キャラが100%確実に実体化して整列。
-//   2. 【ReferenceError: char is not defined 根絶済みの完全維持】
-//   3. 【ガード条件の安全性（characters.length === 0 でのみリターン）の完全維持】
-//   4. 【4走者均等整列 X = [-4.8, -1.6, 1.6, 4.8] の完全維持】
+//   3. 【ReferenceError: char is not defined 根絶済みの完全維持】
+//   4. 【ガード条件の安全性（characters.length === 0 でのみリターン）の完全維持】
+//   5. 【4走者均等整列 X = [-4.8, -1.6, 1.6, 4.8] の完全維持】
 
 import {
   TEAMS,
@@ -39,7 +41,7 @@ export function setCharacterCallbacks(sound, updateHUD) {
   updateHUDRef = updateHUD;
 }
 
-// 足元の床面に美しく水平投影されるフロストネームメッシュ（アナモルフィック逆補正＆高解像度）
+// 足元の床面に美しく水平投影されるフロストネームメッシュ（アナモルフィック逆補正＆高解像度＆最前面描画）
 export function createNameplateMesh(nameText, isLocalPlayer = false) {
   const canvas = document.createElement('canvas');
   canvas.width = 512;
@@ -47,15 +49,15 @@ export function createNameplateMesh(nameText, isLocalPlayer = false) {
   const ctx = canvas.getContext('2d');
 
   // 背景：足元の島に自然に馴染むフロストカプセル
-  ctx.fillStyle = isLocalPlayer ? 'rgba(15, 23, 42, 0.60)' : 'rgba(15, 23, 42, 0.45)';
+  ctx.fillStyle = isLocalPlayer ? 'rgba(15, 23, 42, 0.65)' : 'rgba(15, 23, 42, 0.50)';
   ctx.beginPath();
   ctx.roundRect(20, 20, 472, 88, 44);
   ctx.fill();
 
   // 枠線：自キャラのみ鮮やかなシアンハイライト枠
   if (isLocalPlayer) {
-    ctx.strokeStyle = 'rgba(56, 189, 248, 0.85)';
-    ctx.lineWidth = 4.0;
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.90)';
+    ctx.lineWidth = 4.5;
     ctx.stroke();
   }
 
@@ -87,14 +89,16 @@ export function createNameplateMesh(nameText, isLocalPlayer = false) {
   const planeGeo = new THREE.PlaneGeometry(3.2, 0.85);
   planeGeo.rotateX(-Math.PI / 2);
 
+  // ★ 床ブロックや障害物に一切遮蔽されない最前面マテリアル定義
   const mat = new THREE.MeshBasicMaterial({
     map: texture,
     transparent: true,
-    depthWrite: false
+    depthWrite: false,
+    depthTest: false // ブロックが手前に置かれても文字が隠れない
   });
 
   const mesh = new THREE.Mesh(planeGeo, mat);
-  mesh.renderOrder = 4;
+  mesh.renderOrder = 999; // シーン内全メッシュの最前面にレンダリング
   return mesh;
 }
 
@@ -125,6 +129,7 @@ export function updatePlayerName(newName) {
         newMesh.geometry.dispose();
       }
       targetChar.nameplateSprite.material = newMesh.material;
+      targetChar.nameplateSprite.renderOrder = 999;
       targetChar.nameplateSprite.visible = true;
     }
   }
@@ -262,6 +267,7 @@ export function resetCharacterToStageZero(char, nameText = null, isLocal = false
       newMesh.geometry.dispose();
     }
     char.nameplateSprite.material = newMesh.material;
+    char.nameplateSprite.renderOrder = 999;
     char.nameplateSprite.visible = true;
   }
   updateNameplatePosition(char);
@@ -321,6 +327,7 @@ export function bindLocalPlayerSlot(slotIndex) {
           newMesh.geometry.dispose();
         }
         c.nameplateSprite.material = newMesh.material;
+        c.nameplateSprite.renderOrder = 999;
         c.nameplateSprite.visible = true;
       }
     } else {
@@ -347,6 +354,7 @@ export function bindLocalPlayerSlot(slotIndex) {
           newMesh.geometry.dispose();
         }
         c.nameplateSprite.material = newMesh.material;
+        c.nameplateSprite.renderOrder = 999;
         c.nameplateSprite.visible = true;
       }
     }
@@ -387,7 +395,7 @@ export function updateNameplatePosition(char) {
 
   const isShrunk = (char.shrinkTimer > 0);
   const targetX = char.pos.x;
-  const targetY = char.pos.y + 0.05;
+  const targetY = char.pos.y + 0.08;
   const targetZ = char.pos.z + (isShrunk ? 0.82 : 1.15);
 
   const curPos = char.nameplateSprite.position;

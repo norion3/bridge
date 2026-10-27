@@ -1,16 +1,20 @@
 // main.js: ゲーム全体の起動指揮・Three.js初期化・メインループ・DM招待リンク自動合流司令塔
-// ★ 完全実体化保証 ＆ カウントダウン同期安定化版（Phase 3 修正）：
-//   1. 【カウントダウン待機中の全走者不可視化（透明化）完全根絶】
+// ★ 完全実体化保証 ＆ カウントダウン同期安定化 ＆ センタリングカメラ完全連動版：
+//   1. 【カウントダウン待機カメラへの isCountdownActive 引数・グローバル同期】
+//      animate() ループ内の updateDynamicCamera 呼び出しへ第6引数として isCountdownActive を明示的に伝達。
+//      あわせて window.isCountdownActive も同期し、camera.js 側で実装された
+//      「4走者が画面中央（45%〜55%ライン）に美しく整列するシネマティック構図」を100%確実に発火。
+//   2. 【カウントダウン待機中の全走者不可視化（透明化）完全根絶】
 //      isCountdownActive === true の間、自機および全キャラ（AI・リモート問わず）に対し、
 //      毎フレーム meshObj.root.visible = true および scale(1.0, 1.0, 1.0) を強制適用。
 //      被弾・タックル点滅中にリスタートが押されても、全員が100%確実に実体化して初期島に整列。
-//   2. 【リスタート時5秒カウントダウン待機エンジン（ソロ・マルチ完全共通）】
+//   3. 【リスタート時5秒カウントダウン待機エンジン（ソロ・マルチ完全共通）】
 //      resetGame() 呼び出し時に startRestartCountdown(5.0) を起動。
 //      画面中央に 5 → 4 → 3 → 2 → 1 → GO! のネオンポップカウントダウンを表示。
 //      カウントダウン中は自機操作を完全ロック、AI思考スキップ、試合タイマー停止。
 //      GO! 到達時に全員一斉スタート！
-//   3. 【「1人で遊ぶ」TAP TO START 待機 ＆ 「マルチ」自動始動の完全分離】
-//   4. 【ゲーム始動時（launchGameEngine）でのHUD一元表示確約】
+//   4. 【「1人で遊ぶ」TAP TO START 待機 ＆ 「マルチ」自動始動の完全分離】
+//   5. 【ゲーム始動時（launchGameEngine）でのHUD一元表示確約】
 
 import { mountAllUI, UIController, EntryShield } from './dom.js';
 import { SoundEngine } from './audio.js';
@@ -136,6 +140,9 @@ let isCountdownActive = false;
 export function startRestartCountdown(duration = 5.0) {
   countdownTimer = duration;
   isCountdownActive = true;
+  if (typeof window !== 'undefined') {
+    window.isCountdownActive = true;
+  }
   showCountdownHUD(Math.ceil(duration));
 
   // 開始シグナル（ピッ音）
@@ -355,6 +362,9 @@ export function animate(currentTime) {
       if (countdownTimer <= 0) {
         countdownTimer = 0;
         isCountdownActive = false;
+        if (typeof window !== 'undefined') {
+          window.isCountdownActive = false;
+        }
         triggerCountdownGo(sound);
       } else {
         updateCountdownHUD(countdownTimer, sound);
@@ -714,8 +724,9 @@ export function animate(currentTime) {
     updateSceneEntities(scene, dt, timeSec, player, sound);
   }
 
+  // ★ カウントダウン中フラグ（isCountdownActive）を第6引数として伝達し、画面中央センタリング構図を確実に起動
   if (player && camera) {
-    updateDynamicCamera(player, camera, dt, dirLight, seaMesh);
+    updateDynamicCamera(player, camera, dt, dirLight, seaMesh, isCountdownActive);
   }
 
   if (renderer && scene && camera) renderer.render(scene, camera);
