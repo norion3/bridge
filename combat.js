@@ -1,15 +1,17 @@
-// combat.js: タックル衝突・ノックアウト・攻撃スキル・ブロック散乱専用モジュール
-// ★ Phase 1 完全安定化版（真横並走ロックオン除外バグ解消 ＆ 散乱パケット送信条件整合）：
-//   1. 【真横並走（|dz| <= 0.5m）ロックオン完全除外バグの根絶】
-//      fireHomingCrystal 内のターゲット探索ロジックにおいて、
-//      dz > 0.5（前方）と dz < -0.5（後方）の隙間（-0.5 <= dz <= 0.5）に落ち込んで
-//      ターゲットが null となり虚空へ直進して消えていたバグを解消。
-//      前後・並走問わず、同一ステージまたは射程内の最も近い相手を確実に捕捉してロックオン。
-//   2. 【散乱ブロードキャスト条件の完全整合】
-//      scatterBricks において、forceBroadcast === true の場合は char.isPlayer や isAI の
-//      条件に関わらず確実に NetworkManager.queueScatterBlocks へ登録し相手画面へ同期。
-//   3. 【タックル早期定数分岐 ＆ ゼロアロケーション純粋算術丸めの完全維持】
-//      collisionDistSq = 1.90 の早期分岐、round2 によるガベージフリー数値丸めは100%維持。
+// combat.js: タックル衝突・ノックアウト・攻撃スキル・ブロック散乱・攻撃ヒットログ弾幕連携専用モジュール
+// ★ 既存チャットUIフォーマット準拠 攻撃ヒットログ（弾幕連携）完全実装版：
+//   1. 【既存チャット先頭バッジを活用した極限ミニマルヒットログ (notifyCombatHit)】
+//      danmaku.js の先頭バッジ（チームカラー枠・背景・名前）を活用し、
+//      メッセージ本文側の攻撃者名重複を完全排除。
+//      - ホーミング弾着弾：[攻撃者バッジ] > 被弾者 HIT
+//      - サンダー落雷直撃：[攻撃者バッジ] > 被弾者 THUNDER
+//      絵文字・余計な修飾を一切排除した半角英数ミニマル表記により、
+//      レース走行中の視界を1ミリも塞がず、0.1秒で「誰が・誰に・何を当てたか」を脳に伝達。
+//   2. 【着地・被弾調停ハンドラ (applyHomingHit / applyThunderHit)】
+//      着弾時のスタン、小人化、ブロック散乱、サウンド、衝撃波、および弾幕通知を統合。
+//      ソロプレイ（VS CPU Bot）およびマルチプレイ（VS 実プレイヤー）双方で完全自動発火。
+//   3. 【真横並走（-0.5 <= dz <= 0.5）ロックオン捕捉の完全維持】
+//   4. 【散乱ブロードキャスト条件整合＆タックル早期定数判定の完全維持】
 
 import { TEAMS } from './constants.js';
 import {
@@ -31,6 +33,7 @@ import {
   thunderProjectilePool,
   floorBlockPool
 } from './particles.js';
+import { spawnDanmaku } from './danmaku.js';
 
 // --- 高速・ゼロアロケーション純粋算術丸めヘルパー（文字列インスタンス生成ゼロ） ---
 const round2 = (val) => Math.round(val * 100) / 100;
@@ -44,6 +47,90 @@ let updateHUDRef = null;
 export function setCombatCallbacks(sound, updateHUD) {
   soundRef = sound;
   updateHUDRef = updateHUD;
+}
+
+/**
+ * 攻撃アイテム着弾通知（弾幕チャット連携）
+ * 既存チャットUIの先頭チームカラーバッジ（攻撃者名）をそのまま活かし、
+ * 本文は「> 被弾者名 アクション種別」のみに絞り込んだ極限ミニマルキルログ
+ * @param {Object} shooterChar 攻撃者
+ * @param {Object} targetChar 被弾者
+ * @param {string} actionType 'HIT' | 'THUNDER'
+ */
+export function notifyCombatHit(shooterChar, targetChar, actionType = 'HIT') {
+  if (!targetChar || !shooterChar) return;
+
+  const shooterName = shooterChar.name || 'YOU';
+  const targetName = targetChar.name || 'YOU';
+  const shooterTeam = (shooterChar.team && shooterChar.team.id) ? shooterChar.team.id : 'blue';
+
+  // ★ 先頭に [shooterName] バッジが出るため、本文は「> 被弾者 アクション」のみ！
+  const logText = `> ${targetName} ${actionType}`;
+  spawnDanmaku(logText, shooterName, shooterTeam);
+}
+
+/**
+ * ホーミング弾着弾時の被弾調停 ＆ 弾幕ログ通知
+ * @param {Object} targetChar 被弾キャラクター
+ * @param {Object} shooterChar 発射キャラクター
+ * @param {THREE.Scene} scene (optional)
+ */
+export function applyHomingHit(targetChar, shooterChar, scene = null) {
+  if (!targetChar) return;
+
+  targetChar.stunTimer = 1.4;
+  targetChar.invulnerableTimer = 1.4;
+  targetChar.isStunned = true;
+  targetChar.netVelocity = { x: 0, z: 0 };
+
+  if (soundRef && soundRef.playAttackHit) {
+    soundRef.playAttackHit();
+  }
+
+  triggerLandingShockwave(targetChar.pos.x, targetChar.pos.y + 0.1, targetChar.pos.z, 2.0, 0xf43f5e);
+
+  const activeScene = scene || (typeof window !== 'undefined' ? window.currentSceneRef : null);
+  if (activeScene) {
+    scatterBricks(activeScene, targetChar, 3, true);
+  }
+
+  // ★ 弾幕チャットヒットログ通知: [shooterName] > targetName HIT
+  if (shooterChar) {
+    notifyCombatHit(shooterChar, targetChar, 'HIT');
+  }
+}
+
+/**
+ * サンダー落雷直撃時の被弾調停 ＆ 弾幕ログ通知
+ * @param {Object} targetChar 被弾キャラクター
+ * @param {Object} shooterChar 発射キャラクター
+ * @param {THREE.Scene} scene (optional)
+ */
+export function applyThunderHit(targetChar, shooterChar, scene = null) {
+  if (!targetChar) return;
+
+  targetChar.shrinkTimer = 5.0;
+  targetChar.isShrunk = true;
+  targetChar.stunTimer = 0.8;
+  targetChar.invulnerableTimer = 1.2;
+  targetChar.isStunned = true;
+  targetChar.netVelocity = { x: 0, z: 0 };
+
+  if (soundRef && soundRef.playThunderStrike) {
+    soundRef.playThunderStrike();
+  }
+
+  triggerLandingShockwave(targetChar.pos.x, targetChar.pos.y + 0.1, targetChar.pos.z, 2.4, 0xfacc15);
+
+  const activeScene = scene || (typeof window !== 'undefined' ? window.currentSceneRef : null);
+  if (activeScene) {
+    scatterBricks(activeScene, targetChar, 4, true);
+  }
+
+  // ★ 弾幕チャットヒットログ通知: [shooterName] > targetName THUNDER
+  if (shooterChar) {
+    notifyCombatHit(shooterChar, targetChar, 'THUNDER');
+  }
 }
 
 /**
@@ -160,11 +247,6 @@ export function applyRemoteKnockout(loserSlot, pushX, pushZ, targetX = null, tar
 
   // 被弾衝撃波エフェクトの表示（新接触半径に合わせて 1.8m へ調整）
   triggerLandingShockwave(loserChar.pos.x, loserChar.pos.y + 0.1, loserChar.pos.z, 1.8, 0xef4444);
-}
-
-if (typeof window !== 'undefined') {
-  window.applyRemoteScatterBlocks = applyRemoteScatterBlocks;
-  window.applyRemoteKnockout = applyRemoteKnockout;
 }
 
 /**
@@ -643,5 +725,10 @@ export function applyRemoteFireSkill(skillType, shooterSlot, targetSlot) {
 }
 
 if (typeof window !== 'undefined') {
+  window.applyRemoteScatterBlocks = applyRemoteScatterBlocks;
+  window.applyRemoteKnockout = applyRemoteKnockout;
   window.applyRemoteFireSkill = applyRemoteFireSkill;
+  window.applyHomingHit = applyHomingHit;
+  window.applyThunderHit = applyThunderHit;
+  window.notifyCombatHit = notifyCombatHit;
 }
