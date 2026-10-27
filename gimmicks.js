@@ -1,12 +1,16 @@
 // gimmicks.js: 特殊アトラクション搭乗中の物理挙動・姿勢制御・ボーナス回収・着地処理モジュール（完全分離レイヤー）
-// ★ Phase 2 実装版（ボーナス消去の保留キュー新設 ＆ 先行AI回収ブロックの遅延バインド100%消滅保証）：
-//   1. 【未バインド保留キュー（pendingConsumedBonusIds）の新設】
-//      ホスト側AIが先行して奥のスロープ白ブロック（slide / curved / skydive / zipline）を回収・送信してきた際、
-//      手前で止まっているゲスト端末側でまだ奥のステージが生成・バインドされていなくてもIDを保持。
-//   2. 【遅延バインド自動消去（flushPendingBonusConsumes）の連動】
-//      ステージが生成・ロードされた瞬間や各フレームの移動処理時に保留キューを再照合し、
-//      奥の島に現れるはずの白ブロックが取り残されず、即座に 100% 確実に非表示＆消滅することを保証。
-//   3. 既存のハッチ開放、大ジャンプ、エレベーター、S字スライダー物理は100%維持。
+// ★ ジップライン腕形状異常＆アトラクション姿勢完全リセット版（Phase 2 修正）：
+//   1. 【自機ジップライン着地時の両腕スケール明示的リセット】
+//      updateZiplineMovement において着地判定（ziplineProgress >= 1.0）に到達した際、
+//      両腕のスケールを確実に (1.0, 1.0, 1.0) へ戻し、resetCharacterPose(char) をキック。
+//      着地した瞬間に、愛らしく丸い通常の手（デザイン通りの初期造形）へ寸分違わず綺麗に復帰。
+//   2. 【リモート走者のアトラクション終了時自動姿勢リセット】
+//      applyRemoteGimmickVisuals において、相手走者がアトラクション搭乗中（ZIPLINE, ELEVATOR等）から
+//      NORMAL 状態へ復帰した瞬間を状態遷移（_lastRemoteActionState）で検知し、
+//      resetCharacterPose(char) を自動実行。相手画面での腕の浮きや伸びの残留を100%根絶。
+//   3. 【S字カーブスライダー着地時の resetCharacterPose 追加】
+//      カーブスライダー終了時にも resetCharacterPose(char) を確実に呼び出し、前傾や沈み込みを即座に解除。
+//   4. 【未バインド保留キュー（pendingConsumedBonusIds）＆遅延消滅保証の完全維持】
 
 import {
   LANES,
@@ -36,12 +40,12 @@ import {
 import { triggerLandingShockwave } from './particles.js';
 
 /**
- * ★【Phase 2 核心】ステージ未生成・遅延バインド時に消去IDを保持する保留キュー
+ * ステージ未生成・遅延バインド時に消去IDを保持する保留キュー
  */
 export const pendingConsumedBonusIds = new Set();
 
 /**
- * ★【Phase 2 核心】保留中のボーナス消去IDを現在ロードされている全ブロック配列と照合して一括消滅させる関数
+ * 保留中のボーナス消去IDを現在ロードされている全ブロック配列と照合して一括消滅させる関数
  */
 export function flushPendingBonusConsumes() {
   if (pendingConsumedBonusIds.size === 0) return;
@@ -73,14 +77,16 @@ export function flushPendingBonusConsumes() {
 
 /**
  * リモート走者（他端末またはホストAI）のアトラクション状態ビットに応じた外観・メッシュ連動
+ * ★ アトラクション搭乗から NORMAL への復帰時に resetCharacterPose を自動実行
  */
 export function applyRemoteGimmickVisuals(char, state, timeSec) {
   if (!char || !char.meshObj) return;
 
   const mo = char.meshObj;
+  const prevState = char._lastRemoteActionState || 'NORMAL';
 
   // TRAPDOOR終了時のハッチ自動閉鎖判定
-  if (char._lastRemoteActionState === 'TRAPDOOR' && state !== 'TRAPDOOR') {
+  if (prevState === 'TRAPDOOR' && state !== 'TRAPDOOR') {
     for (let sIdx = Math.max(0, char.currentStage - 1); sIdx <= char.currentStage + 1; sIdx++) {
       const stageBridges = bridgesByStage.get(sIdx) || [];
       const trapB = stageBridges.find(b => b.isTrapdoor || b.isFreefall);
@@ -92,6 +98,12 @@ export function applyRemoteGimmickVisuals(char, state, timeSec) {
       }
     }
   }
+
+  // ★ ギミック搭乗中から通常歩行（NORMAL）に切り替わった瞬間に姿勢を完全リセット
+  if (prevState !== 'NORMAL' && state === 'NORMAL') {
+    resetCharacterPose(char);
+  }
+
   char._lastRemoteActionState = state;
 
   if (state === 'SKYDIVE') {
@@ -122,6 +134,8 @@ export function applyRemoteGimmickVisuals(char, state, timeSec) {
     packCharacterLuggage(char, 0);
     mo.leftArm.position.set(-0.42, 0.82, -0.35);
     mo.rightArm.position.set(0.42, 0.82, -0.35);
+    mo.leftArm.scale.set(1.0, 1.0, 1.0);
+    mo.rightArm.scale.set(1.0, 1.0, 1.0);
     mo.leftArm.rotation.set(0.7, 0, -0.15);
     mo.rightArm.rotation.set(0.7, 0, 0.15);
     mo.leftLeg.rotation.set(0, 0, 0);
@@ -149,6 +163,8 @@ export function applyRemoteGimmickVisuals(char, state, timeSec) {
     mo.rightLeg.rotation.x = -0.35;
     mo.leftArm.rotation.x = -0.65;
     mo.rightArm.rotation.x = -0.65;
+    mo.leftArm.scale.set(1.0, 1.0, 1.0);
+    mo.rightArm.scale.set(1.0, 1.0, 1.0);
     mo.body.position.y = 0.50;
     mo.head.position.y = 1.15;
     mo.root.rotation.x = 0.22;
@@ -170,7 +186,7 @@ export function updateSkydiveMovement(scene, char, dirX, dt, soundRef, updateHUD
   const totalFlyTime = SKYDIVE_CONFIG.PHYSICS.totalDuration;
   char.skydiveProgress += dt / totalFlyTime;
 
-  // ★ 保留中ボーナス消去の定期消化
+  // 保留中ボーナス消去の定期消化
   flushPendingBonusConsumes();
 
   // スカイダイブ上のボーナスブロック回収 ＆ ブロードキャスト
@@ -353,6 +369,8 @@ export function updateElevatorMovement(char, dt, soundRef) {
     const armSwing = Math.sin(exitProgress * 14) * 0.55;
     char.meshObj.leftArm.position.set(-0.48, 0.68, 0);
     char.meshObj.rightArm.position.set(0.48, 0.68, 0);
+    char.meshObj.leftArm.scale.set(1.0, 1.0, 1.0);
+    char.meshObj.rightArm.scale.set(1.0, 1.0, 1.0);
     char.meshObj.leftArm.rotation.set(armSwing, 0, 0);
     char.meshObj.rightArm.rotation.set(-armSwing, 0, 0);
     char.meshObj.leftLeg.rotation.set(-armSwing, 0, 0);
@@ -416,6 +434,8 @@ export function updateElevatorMovement(char, dt, soundRef) {
 
     char.meshObj.leftArm.position.set(-0.42, 0.82, -0.35);
     char.meshObj.rightArm.position.set(0.42, 0.82, -0.35);
+    char.meshObj.leftArm.scale.set(1.0, 1.0, 1.0);
+    char.meshObj.rightArm.scale.set(1.0, 1.0, 1.0);
     char.meshObj.leftArm.rotation.set(0.7, 0, -0.15);
     char.meshObj.rightArm.rotation.set(0.7, 0, 0.15);
     char.meshObj.body.position.y = 0.65;
@@ -436,7 +456,7 @@ export function updateZiplineMovement(scene, char, dt, soundRef, updateHUDRef) {
   const totalFlyTime = 3.25;
   char.ziplineProgress += dt / totalFlyTime;
 
-  // ★ 保留中ボーナス消去の定期消化
+  // 保留中ボーナス消去の定期消化
   flushPendingBonusConsumes();
 
   char.meshObj.stackGroup.scale.set(0.65, 0.65, 0.65);
@@ -494,6 +514,10 @@ export function updateZiplineMovement(scene, char, dt, soundRef, updateHUDRef) {
     char.meshObj.stackGroup.rotation.x = 0;
     char.meshObj.stackGroup.position.set(0, 0.65, -0.42);
 
+    // ★ ジップライン滑走中に伸ばした両腕のスケールを明示的に原状復帰！
+    char.meshObj.leftArm.scale.set(1.0, 1.0, 1.0);
+    char.meshObj.rightArm.scale.set(1.0, 1.0, 1.0);
+
     resetCharacterPose(char);
 
     triggerLandingShockwave(char.pos.x, nextStageObj.y, landZ, 1.8);
@@ -543,7 +567,7 @@ export function updateCurvedSlideMovement(scene, char, dirX, dt, soundRef, updat
   const progressDelta = (slideSpeed * dt) / Math.max(10, b.curveLength);
   char.curvedSlideProgress += progressDelta;
 
-  // ★ 保留中ボーナス消去の定期消化
+  // 保留中ボーナス消去の定期消化
   flushPendingBonusConsumes();
 
   if (char.curvedSlideProgress >= 1.0) {
@@ -555,6 +579,9 @@ export function updateCurvedSlideMovement(scene, char, dirX, dt, soundRef, updat
     char.slideCooldown = 1.4;
     char.lastPlankIdx = -1;
     char.activeCurvedBridge = null;
+
+    // ★ スライダー終了直後の前傾・沈み込みポーズを完全リセット
+    resetCharacterPose(char);
 
     if (!char.isPlayer) {
       char.aiState = 'COLLECT';
@@ -646,9 +673,7 @@ export function updateCurvedSlideMovement(scene, char, dirX, dt, soundRef, updat
 }
 
 /**
- * ★【Phase 2 核心】他端末で消費されたボーナスブロックの強制消去ハンドラ
- * 配列内にまだ見つからない場合（相手が奥を先行していて自端末で該当ステージが未生成/未バインド時）は、
- * 保留キュー（pendingConsumedBonusIds）に登録して破棄を防止
+ * 他端末で消費されたボーナスブロックの強制消去ハンドラ
  */
 export function applyRemoteBonusConsumed(objectId) {
   if (!objectId) return;
@@ -674,7 +699,6 @@ export function applyRemoteBonusConsumed(objectId) {
     }
   }
 
-  // 自端末の配列にまだ存在していなかった場合は保留キューに保管
   if (!found) {
     pendingConsumedBonusIds.add(objectId);
   } else {

@@ -1,13 +1,14 @@
 // character.js: 3Dキャラクター外観構築・手足メッシュ・スタックプール・トロリー・ホバー展望リフト・スカイダイブ＆トラップドア姿勢管理・足元手前側（カメラ方向）フロスト投影ネームバッジ
-// ★ ネームプレート最前面描画 ＆ 強制実体化完全保証版（Phase 2 修正）：
-//   1. 【ネームプレートのブロック遮蔽完全根絶（depthTest: false ＆ renderOrder = 999）】
-//      床面に散乱したブロックがネームプレートの手前・上に重なっても、GPU深度テストで文字が隠れないよう
-//      depthTest: false を指定し、renderOrder = 999 でシーン内最前面に100%クリア描画。
-//   2. 【無敵点滅中リセット時の不可視化（透明化）バグ完全根絶の維持】
-//      resetCharacters, resetCharacterToStageZero, resetCharacterPose, bindLocalPlayerSlot 内で
-//      各キャラの meshObj.root.visible = true および scale(1.0, 1.0, 1.0) を強制適用。
-//   3. 【ReferenceError: char is not defined 根絶済みの完全維持】
-//   4. 【ガード条件の安全性（characters.length === 0 でのみリターン）の完全維持】
+// ★ ジップライン腕形状異常＆アトラクション姿勢完全リセット版（Phase 1 修正）：
+//   1. 【両腕スケール (1.0, 1.0, 1.0) の完全原状復帰（ジップライン細長腕バグ根絶）】
+//      ジップライン滑走中に頭上バーを掴むため 3.8倍 に引き伸ばされた腕（scale.y = 3.80）を、
+//      resetCharacterPose において確実に通常スケール (1.0, 1.0, 1.0) へ完全復元。
+//      着地した瞬間に、愛らしく丸い通常の手（デザイン通りの初期造形）へ寸分違わず綺麗に戻るパイプラインを確立。
+//   2. 【全パーツトランスフォーム（位置・角度・スケール）の完全原状復帰】
+//      両脚のスケール・位置・角度、および体（Y=0.65, scale=(1.0, 1.15, 0.95)）・頭（Y=1.25）を
+//      確実に初期デフォルトへ完全復元し、スライダー後の沈み込みや空中ロールの残留を物理遮断。
+//   3. 【ネームプレート最前面描画（depthTest: false ＆ renderOrder = 999）の完全維持】
+//   4. 【無敵点滅中リセット時の不可視化（透明化）バグ完全根絶の維持】
 //   5. 【4走者均等整列 X = [-4.8, -1.6, 1.6, 4.8] の完全維持】
 
 import {
@@ -295,6 +296,7 @@ export function bindLocalPlayerSlot(slotIndex) {
       if (c.meshObj.elevatorGroup) c.meshObj.elevatorGroup.visible = false;
       c.meshObj.root.visible = true;
       c.meshObj.root.scale.set(1.0, 1.0, 1.0);
+      resetCharacterPose(c);
     }
     c.onZipline = false;
     c.onSlide = false;
@@ -689,6 +691,8 @@ export function applySkydivePose(char, dirX, rollAngle) {
 
   char.meshObj.leftArm.position.set(-0.40, 0.46, -0.32);
   char.meshObj.rightArm.position.set(0.40, 0.46, -0.32);
+  char.meshObj.leftArm.scale.set(1.0, 1.0, 1.0);
+  char.meshObj.rightArm.scale.set(1.0, 1.0, 1.0);
   char.meshObj.leftArm.rotation.set(-1.42, 0, 0.18);
   char.meshObj.rightArm.rotation.set(-1.42, 0, -0.18);
 
@@ -711,6 +715,8 @@ export function applyTrapdoorPose(char, dirX, timeSec) {
   const armFlapR = Math.cos(timeSec * 30) * 0.65;
   char.meshObj.leftArm.position.set(-0.54, 0.78 + Math.sin(timeSec * 28) * 0.08, 0.05);
   char.meshObj.rightArm.position.set(0.54, 0.78 + Math.cos(timeSec * 28) * 0.08, 0.05);
+  char.meshObj.leftArm.scale.set(1.0, 1.0, 1.0);
+  char.meshObj.rightArm.scale.set(1.0, 1.0, 1.0);
   char.meshObj.leftArm.rotation.set(armFlapL, 0.2, -0.55 + armFlapR * 0.4);
   char.meshObj.rightArm.rotation.set(-armFlapR, -0.2, 0.55 - armFlapL * 0.4);
 
@@ -723,25 +729,44 @@ export function applyTrapdoorPose(char, dirX, timeSec) {
   char.meshObj.head.position.y = 1.25 + Math.sin(timeSec * 32) * 0.04;
 }
 
+/**
+ * キャラクターの姿勢・手足位置・スケール完全リセット関数
+ * ★ ジップライン終了後の両腕スケール (1.0, 1.0, 1.0) 原状復帰 ＆ 全パーツの新品デフォルト復元
+ */
 export function resetCharacterPose(char) {
   if (!char || !char.meshObj) return;
 
+  // 1. ルート姿勢とスケールの強制初期化
   char.meshObj.root.rotation.order = 'XYZ';
   char.meshObj.root.rotation.set(0, Math.PI, 0);
-
-  // ★ リセット時の確実な実体化（不可視状態の強制解除）
   char.meshObj.root.visible = true;
   char.meshObj.root.scale.set(1.0, 1.0, 1.0);
 
+  // 2. 両腕の完全復元（★ ジップライン滑走中の 3.8倍 スケールを確実に 1.0 に戻す！）
+  char.meshObj.leftArm.scale.set(1.0, 1.0, 1.0);
+  char.meshObj.rightArm.scale.set(1.0, 1.0, 1.0);
   char.meshObj.leftArm.position.set(-0.48, 0.68, 0);
   char.meshObj.rightArm.position.set(0.48, 0.68, 0);
   char.meshObj.leftArm.rotation.set(0, 0, 0);
   char.meshObj.rightArm.rotation.set(0, 0, 0);
+
+  // 3. 両脚の完全復元
+  char.meshObj.leftLeg.scale.set(1.0, 1.0, 1.0);
+  char.meshObj.rightLeg.scale.set(1.0, 1.0, 1.0);
+  char.meshObj.leftLeg.position.set(-0.20, 0.16, 0);
+  char.meshObj.rightLeg.position.set(0.20, 0.16, 0);
   char.meshObj.leftLeg.rotation.set(0, 0, 0);
   char.meshObj.rightLeg.rotation.set(0, 0, 0);
-  char.meshObj.body.position.y = 0.65;
-  char.meshObj.head.position.y = 1.25;
+
+  // 4. 体・頭の完全復元（スライダー等の沈み込み・回転の完全解除）
+  char.meshObj.body.scale.set(1.0, 1.15, 0.95);
+  char.meshObj.body.position.set(0, 0.65, 0);
+  char.meshObj.body.rotation.set(0, 0, 0);
+  char.meshObj.head.scale.set(1.0, 1.0, 1.0);
+  char.meshObj.head.position.set(0, 1.25, 0);
+  char.meshObj.head.rotation.set(0, 0, 0);
   
+  // 5. ギミック装飾メッシュの非表示化
   if (char.meshObj.trolleyGroup) char.meshObj.trolleyGroup.visible = false;
   if (char.meshObj.elevatorGroup) char.meshObj.elevatorGroup.visible = false;
   
