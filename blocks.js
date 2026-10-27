@@ -1,19 +1,23 @@
 // blocks.js: 床ブロック管理・補充・スポーン・決定論的一意キー（blockId）マルチ同期専用モジュール
-// ★ スタートライン足元進入禁止除外ガード ＆ 4人プレイ拡張版（Phase 4 修正）：
-//   1. 【Stage 0 スタートライン・ネームプレート周辺ブロックスポーン進入禁止除外ガード】
+// ★ パケット通信最適化・5要素タプル＆旧形式ハイブリッド安全デコード対応版（Phase 3 修正）：
+//   1. 【新旧ハイブリッド安全デコード (applyRemoteBlocksBatch / applyRemoteBlockSpawned)】
+//      受信パケットが5要素タプル [s, x, z, t, idNum] であっても旧JSONオブジェクトであっても、
+//      net_protocol.js の unpackBlockTuple と連動して自動判別・透過デコード。
+//      受信側での例外停止（TypeError等）をゼロ化し、100%確実に床面へブロックを実体化。
+//   2. 【Stage 0 スタートライン・ネームプレート周辺ブロックスポーン進入禁止除外ガード】
 //      spawnSingleBlock において、Stage 0 の 4走者整列ラインおよびネームプレート手前
 //      （candZ >= 2.2m かつ |candX - centerX| <= 6.0m）へのブロックスポーンを完全に禁止。
 //      走者の足元や名前の真上にブロックが重なる事象を根本予防し、綺麗なスタートエリアを形成。
-//   2. 【緑チーム（GREEN: #10b981）ブロック補充・スポーン完全対応】
+//   3. 【緑チーム（GREEN: #10b981）ブロック補充・スポーン完全対応】
 //      applyRemoteBlockSpawned および spawnSingleBlock において、
 //      teamId === 'green' の場合に sharedMats.blockGreen をバインド。
 //      BLOCK_TYPES（4色）と自動連動し、4走者全員の色のブロックが均等に散らばる島を形成。
-//   3. 【次ステージへの事前ブロック補充 (ハゲ山・目の前ポップ根絶)】
+//   4. 【次ステージへの事前ブロック補充 (ハゲ山・目の前ポップ根絶)】
 //      走者の現在地ステージだけでなく、進行方向の先行ステージ（直列次の島および二股分岐先の左右島）へ
 //      走者が到着する前からブロックを自動補充。
-//   4. 【先行ステージブロックのプール回収保護】
+//   5. 【先行ステージブロックのプール回収保護】
 //      findSafePoolItem における activeStages 除外セットに先行ステージ（nextStageIdx）を追加。
-//   5. 【PRNG汚染遮断 ＆ ゼロアロケーション純粋算術丸めの完全維持】
+//   6. 【PRNG汚染遮断 ＆ ゼロアロケーション純粋算術丸めの完全維持】
 
 import {
   BLOCK_TYPES,
@@ -35,6 +39,9 @@ import {
   bridgesByStage,
   activeMagnetBlocks
 } from './world.js';
+import {
+  unpackBlockTuple
+} from './net_protocol.js';
 
 // --- 高速・ゼロアロケーション純粋算術丸めヘルパー（文字列インスタンス生成ゼロ） ---
 const round2 = (val) => Math.round(val * 100) / 100;
@@ -115,9 +122,19 @@ function findSafePoolItem() {
 
 /**
  * ホストから新ブロック補充パケット（blockId付き）を受信した際の反映ハンドラ（単体）
+ * ★ 5要素タプル・旧オブジェクト形式の双方に対応するフェイルセーフを内包
  * ★ 4色対応（青・赤・黄・緑）
  */
 export function applyRemoteBlockSpawned(stageIdx, poolIdx, x, y, z, teamId, blockId = null) {
+  // 引数が5要素タプル [s, x, z, t, idNum] またはオブジェクト形式で渡された場合の自己救済展開
+  if (Array.isArray(stageIdx)) {
+    const unpacked = unpackBlockTuple(stageIdx);
+    return applyRemoteBlockSpawned(unpacked.stageIdx, unpacked.poolIdx || 0, unpacked.x, unpacked.y, unpacked.z, unpacked.teamId, unpacked.blockId);
+  } else if (stageIdx && typeof stageIdx === 'object' && stageIdx.stageIdx !== undefined) {
+    const obj = stageIdx;
+    return applyRemoteBlockSpawned(obj.stageIdx, obj.poolIdx || 0, obj.x, obj.y, obj.z, obj.teamId, obj.blockId);
+  }
+
   const stageInfo = STAGES[stageIdx];
   if (!stageInfo) return;
 
@@ -171,20 +188,28 @@ export function applyRemoteBlockSpawned(stageIdx, poolIdx, x, y, z, teamId, bloc
 
 /**
  * ホストからの一括（バッチ）ブロック補充パケット受信ハンドラ
+ * ★ 新規格（5要素タプル配列）と旧規格（オブジェクト配列）を自動判別して安全に展開
  */
 export function applyRemoteBlocksBatch(stageIdx, blocksArray) {
   if (!Array.isArray(blocksArray) || blocksArray.length === 0) return;
   for (let i = 0; i < blocksArray.length; i++) {
-    const b = blocksArray[i];
-    applyRemoteBlockSpawned(
-      b.stageIdx !== undefined ? b.stageIdx : stageIdx,
-      b.poolIdx,
-      b.x,
-      b.y,
-      b.z,
-      b.teamId,
-      b.blockId
-    );
+    const item = blocksArray[i];
+    if (Array.isArray(item)) {
+      // 新規格: 5要素タプル [s, x, z, t, idNum]
+      const b = unpackBlockTuple(item);
+      applyRemoteBlockSpawned(b.stageIdx, 0, b.x, undefined, b.z, b.teamId, b.blockId);
+    } else if (item && typeof item === 'object') {
+      // 旧規格フォールバック
+      applyRemoteBlockSpawned(
+        item.stageIdx !== undefined ? item.stageIdx : stageIdx,
+        item.poolIdx || 0,
+        item.x,
+        item.y,
+        item.z,
+        item.teamId,
+        item.blockId
+      );
+    }
   }
 }
 
