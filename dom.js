@@ -1,15 +1,13 @@
-// dom.js: 画面UI・HUD・ロビー・待機室・超ミニマルエントリーシールドの動的生成モジュール
-// ★ 確定仕様（ソロプレイ「1人で遊ぶ」即時起動 ＆ 超ミニマルエントリーシールド完全連動版）：
-//   1. 【「1人で遊ぶ（#btn-start-solo）」タップ即時ゲーム始動の実装】
-//      タップ時に UIController.showGame()、ロビー画面完全非表示化、スロット0バインド、
-//      launchGameEngine() を確実にキックし、1人で遊ぶが確実に起動するように修正。
-//      スマホ実機でのタップ抜けを防ぐため touchend と click の双方を確実にバインド。
-//      防壁（try-catch）により、他モジュールの例外で起動が中断される事故を物理遮断。
-//   2. 【初期スタイル強制非表示によるFOUC完全遮断】
-//      #test-lobby-overlay の初期スタイルを display: none !important; に設定。
-//      ローダー消去から判定完了までの間に素のロビー画面が露出する事故を物理的に根絶。
-//   3. 【超ミニマル・エントリーシールド（#entry-shield）の完全維持】
-//   4. 【緑チームバッジ（.slot-green: #10b981）の完全定義】
+// dom.js: 画面UI・HUD・ロビー・待機室・超ミニマルエントリーシールド・TAP TO START・カウントダウンUIの動的生成モジュール
+// ★ 確定仕様（ソロプレイ「TAP TO START」待機 ＆ リスタートカウントダウンUI完全配備版）：
+//   1. 【「1人で遊ぶ（#btn-start-solo）」タップ時の「TAP TO START」待機化】
+//      タップ時はロビー画面のみを完全に非表示化し、裏での startBtn.click() 自動実行を完全撤廃。
+//      初期島に整列したキャラを背景に画面中央に「TAP TO START」を表示してユーザーのタップを待機。
+//   2. 【mountAllUI() への #modal-start 動的生成 ＆ 即応イベントバインド】
+//      gravity_loader.html など HTML 直書きのない環境でも確実に TAP TO START モーダルが配置・作動するよう担保。
+//   3. 【画面中央カウントダウン用コンテナ（#hud-countdown-overlay）＆ネオンスプリングCSS追加】
+//      5, 4, 3, 2, 1, GO! が中央でボヨンと弾けるアニメーションと高視認性ネオンスタイルを定義。
+//   4. 【初期スタイル強制非表示によるFOUC完全遮断 ＆ 超ミニマルエントリーシールド完全維持】
 
 import { updatePlayerName, bindLocalPlayerSlot } from './character.js';
 
@@ -246,6 +244,94 @@ export function injectStyles() {
       font-size: 13px;
       color: rgba(255, 255, 255, 0.75);
     }
+
+    /* ★ 画面中央カウントダウン演出オーバーレイ（リスタート時等） */
+    #hud-countdown-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 75;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+    #hud-countdown-overlay.active {
+      display: flex !important;
+    }
+    .countdown-number {
+      font-size: 86px;
+      font-weight: 900;
+      line-height: 1;
+      color: #ffffff;
+      text-shadow:
+        -3px -3px 0 #0284c7,
+         3px -3px 0 #0284c7,
+        -3px  3px 0 #0284c7,
+         3px  3px 0 #0284c7,
+         0 0 25px rgba(56, 189, 248, 0.9),
+         0 6px 14px rgba(0, 0, 0, 0.6);
+      will-change: transform, opacity;
+      animation: countdownPop 0.5s cubic-bezier(0.18, 0.89, 0.32, 1.28) forwards;
+    }
+    .countdown-go {
+      font-size: 72px;
+      font-weight: 900;
+      letter-spacing: 0.05em;
+      color: #fde047;
+      text-shadow:
+        -3px -3px 0 #b45309,
+         3px -3px 0 #b45309,
+        -3px  3px 0 #b45309,
+         3px  3px 0 #b45309,
+         0 0 30px rgba(250, 204, 21, 0.95),
+         0 6px 16px rgba(0, 0, 0, 0.6);
+      will-change: transform, opacity;
+      animation: countdownGo 0.8s ease-out forwards;
+    }
+    .countdown-subtitle {
+      font-size: 15px;
+      font-weight: 800;
+      color: #e0f2fe;
+      letter-spacing: 0.15em;
+      text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
+      margin-top: 8px;
+    }
+
+    @keyframes countdownPop {
+      0% {
+        transform: scale(1.6);
+        opacity: 0;
+      }
+      50% {
+        transform: scale(0.92);
+        opacity: 1;
+      }
+      100% {
+        transform: scale(1.0);
+        opacity: 1;
+      }
+    }
+
+    @keyframes countdownGo {
+      0% {
+        transform: scale(0.6);
+        opacity: 0;
+      }
+      35% {
+        transform: scale(1.25);
+        opacity: 1;
+      }
+      70% {
+        transform: scale(1.0);
+        opacity: 1;
+      }
+      100% {
+        transform: scale(1.15);
+        opacity: 0;
+      }
+    }
   `;
 }
 
@@ -335,7 +421,7 @@ export function patchExistingLobbyLabels() {
           console.warn('[dom.js] updatePlayerName safe catch:', err);
         }
 
-        // 2. ソロプレイモードの確定
+        // 2. ソロプレイモードの確定（スロット0バインド）
         try {
           if (window.NetworkManager) {
             window.NetworkManager.isMultiplayerActive = false;
@@ -351,17 +437,7 @@ export function patchExistingLobbyLabels() {
           console.warn('[dom.js] bindLocalPlayerSlot safe catch:', err);
         }
 
-        // 3. ロビー画面および全オーバーレイの完全消去
-        try {
-          if (typeof UIController !== 'undefined' && typeof UIController.showGame === 'function') {
-            UIController.showGame();
-          } else if (window.UIController && typeof window.UIController.showGame === 'function') {
-            window.UIController.showGame();
-          }
-        } catch (err) {
-          console.warn('[dom.js] UIController.showGame safe catch:', err);
-        }
-
+        // 3. ロビー画面のみを完全に非表示化（#modal-start は消去せず前面に待機表示）
         const allOverlays = document.querySelectorAll('.gravity-screen-overlay, #test-lobby-overlay');
         allOverlays.forEach(ol => {
           ol.classList.remove('active-screen');
@@ -369,28 +445,12 @@ export function patchExistingLobbyLabels() {
           ol.style.setProperty('display', 'none', 'important');
         });
 
+        // 4. TAP TO START モーダルを確実に前面表示してプレイヤーのタップを待機
         const startModal = document.getElementById('modal-start');
         if (startModal) {
-          startModal.classList.add('hidden');
-          startModal.style.setProperty('display', 'none', 'important');
-        }
-
-        // 4. ゲームエンジンの起動
-        try {
-          if (typeof window.launchGameEngine === 'function') {
-            window.launchGameEngine();
-          }
-        } catch (err) {
-          console.warn('[dom.js] launchGameEngine safe catch:', err);
-        }
-
-        const startBtn = document.getElementById('btn-start');
-        if (startBtn) {
-          try {
-            startBtn.click();
-          } catch (err) {
-            console.warn('[dom.js] startBtn.click safe catch:', err);
-          }
+          startModal.classList.remove('hidden');
+          startModal.style.removeProperty('display');
+          startModal.style.setProperty('display', 'flex', 'important');
         }
       };
 
@@ -510,6 +570,58 @@ export function mountAllUI(container) {
     `;
   }
 
+  // ★ カウントダウン演出用オーバーレイの動的追加
+  if (!document.getElementById('hud-countdown-overlay')) {
+    const cdOverlay = document.createElement('div');
+    cdOverlay.id = 'hud-countdown-overlay';
+    cdOverlay.innerHTML = `
+      <div id="countdown-text" class="countdown-number">5</div>
+      <div id="countdown-sub" class="countdown-subtitle">READY...</div>
+    `;
+    container.appendChild(cdOverlay);
+  }
+
+  // ★ TAP TO START（#modal-start）の動的生成（gravity_loader.html環境対応 ＆ イベント確実バインド）
+  if (!document.getElementById('modal-start')) {
+    const modalStart = document.createElement('div');
+    modalStart.id = 'modal-start';
+    modalStart.className = 'fixed inset-0 z-30 flex items-center justify-center bg-slate-950/40 backdrop-blur-sm p-4 hidden';
+    modalStart.style.setProperty('display', 'none', 'important');
+    modalStart.innerHTML = `
+      <div class="bg-slate-900/90 border border-white/20 rounded-3xl p-6 sm:p-8 max-w-sm w-full text-center shadow-2xl flex flex-col items-center">
+        <h1 class="text-2xl sm:text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-sky-200 mb-2">階段を架けろ！</h1>
+        <p class="text-xs sm:text-sm text-slate-300 mb-6 font-medium leading-relaxed">
+          ブロックを集めて階段を架けろ！<br>
+          スワイプで自由に移動
+        </p>
+        <button id="btn-start" type="button" 
+          class="w-full py-3.5 bg-gradient-to-r from-sky-400 to-blue-600 hover:from-sky-300 hover:to-blue-500 active:scale-95 text-white font-extrabold rounded-2xl shadow-lg transition duration-150 cursor-pointer text-base">
+          TAP TO START
+        </button>
+      </div>
+    `;
+    container.appendChild(modalStart);
+
+    // 動的生成直後でも即応できるようにフォールバックリスナーを安全バインド
+    const dynamicStartBtn = modalStart.querySelector('#btn-start');
+    if (dynamicStartBtn && !dynamicStartBtn._hasDynamicBound) {
+      dynamicStartBtn._hasDynamicBound = true;
+      const onDynamicStartClick = (e) => {
+        if (e) {
+          e.preventDefault();
+          e.stopPropagation();
+        }
+        modalStart.classList.add('hidden');
+        modalStart.style.setProperty('display', 'none', 'important');
+        if (typeof window.launchGameEngine === 'function') {
+          window.launchGameEngine();
+        }
+      };
+      dynamicStartBtn.addEventListener('click', onDynamicStartClick);
+      dynamicStartBtn.addEventListener('touchend', onDynamicStartClick);
+    }
+  }
+
   if (!document.getElementById('screen-waiting')) {
     const waitScreen = document.createElement('div');
     waitScreen.id = 'screen-waiting';
@@ -600,6 +712,7 @@ export const UIController = {
       waitScreen.style.setProperty('display', 'none', 'important');
     }
 
+    // マルチプレイ等で showGame が直接呼ばれた際は #modal-start を隠してゲームHUDを表示
     const startModal = document.getElementById('modal-start');
     if (startModal) {
       startModal.classList.add('hidden');
@@ -637,9 +750,9 @@ export const UIController = {
     const hudTop = document.getElementById('hud-top-container');
     const hudRestart = document.getElementById('hud-restart-layer');
     const hudSound = document.getElementById('hud-sound-layer');
-    if (hudTop) hudTop.style.display = displayVal;
-    if (hudRestart) hudRestart.style.display = displayVal;
-    if (hudSound) hudSound.style.display = displayVal;
+    if (hudTop) hudTop.style.setProperty('display', displayVal, 'important');
+    if (hudRestart) hudRestart.style.setProperty('display', displayVal, 'important');
+    if (hudSound) hudSound.style.setProperty('display', displayVal, 'important');
   }
 };
 

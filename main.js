@@ -1,13 +1,18 @@
 // main.js: ゲーム全体の起動指揮・Three.js初期化・メインループ・DM招待リンク自動合流司令塔
-// ★ Phase 2 修正版（グローバル参照パイプライン強化 ＆ Catch-up Spawn 連携準備）：
-//   1. 【コース伸長関数の明示公開 (window.extendCourse)】
-//      network.js の途中参加処理（_applyRoomMembersSync）がホスト先行ステージへ追いつくまで
-//      決定論的コース伸長を安全に実行できるよう、window.extendCourse = extendCourse を公開。
-//   2. 【カメラインスタンスの直接参照バインド (window.currentCameraRef)】
-//      initThree において camera 生成直後に window.currentCameraRef = camera をバインド。
-//      合流時にカメラが海の上を150m以上超高速すっ飛びする不具合を抑止し、合流先の島へ即時ダイレクトスナップ可能に。
-//   3. 【main_controls.js / main_hud.js との責務分離および既存機能の100%維持】
-//      120fps/60fpsメインループ、タッチ入力・HUD連携、DM招待Auto-Joinは完全維持。
+// ★ Phase 4 カウントダウン統合 ＆ ソロ/マルチ開始フロー完全制御版：
+//   1. 【リスタート時5秒カウントダウン待機エンジン（ソロ・マルチ完全共通）】
+//      resetGame() 呼び出し時に startRestartCountdown(5.0) を起動。
+//      画面中央に 5 → 4 → 3 → 2 → 1 → GO! のネオンポップカウントダウンを表示。
+//      カウントダウン中（countdownTimer > 0）は、自機操作を完全ロックし、
+//      AIの思考ルーチン（updateAICharacter）をスキップ、試合制限時間タイマー（timeLeft）の減算を停止。
+//      GO! の到達時に全員一斉スタート！
+//   2. 【「1人で遊ぶ」TAP TO START 待機 ＆ 「マルチ」自動始動の完全分離】
+//      ・ソロ: 初期島に4人が整列した状態で TAP TO START 画面を表示してプレイヤーのタップを待機。
+//      ・マルチ: 部屋作成・参加時はモーダルを挟まず自動で即時スタート（要件準拠）。
+//   3. 【ゲーム始動時（launchGameEngine）でのHUD一元表示確約】
+//      ソロタップ時およびマルチ自動開始時の双方で UIController.showGame() を確実に実行し、
+//      スコア・タイマー・リスタートボタンの常時正常表示を100%保証。
+//   4. 【途中参加合流（Catch-up Spawn）および全モジュール連携の100%維持】
 
 import { mountAllUI, UIController, EntryShield } from './dom.js';
 import { SoundEngine } from './audio.js';
@@ -19,7 +24,8 @@ import {
   resetCharacters,
   setCharacterCallbacks,
   updateNameplatePosition,
-  refreshCharacterStackVisuals
+  refreshCharacterStackVisuals,
+  resetCharacterPose
 } from './character.js';
 import {
   STAGES,
@@ -54,7 +60,7 @@ import { NetworkManager } from './network.js';
 // ★ main_controls.js から入力操作をインポート
 import { input, setupControls } from './main_controls.js';
 
-// ★ main_hud.js からHUD・タイマー・スコア制御をインポート＆再エクスポート
+// ★ main_hud.js からHUD・タイマー・スコア制御およびカウントダウン制御をインポート＆再エクスポート
 import {
   timeLeft,
   isGameOver,
@@ -75,7 +81,11 @@ import {
   triggerScorePop,
   updateHUD,
   updateTimerHUD,
-  onTimeUp
+  onTimeUp,
+  showCountdownHUD,
+  updateCountdownHUD,
+  triggerCountdownGo,
+  hideCountdownHUD
 } from './main_hud.js';
 
 export {
@@ -92,7 +102,7 @@ export {
   extendCourse
 };
 
-// ★【Phase 2 核心】外部（network.js）からコース事前伸長をキックできるようにグローバル公開
+// 外部（network.js等）からコース事前伸長をキックできるようにグローバル公開
 if (typeof window !== 'undefined') {
   window.refreshRemoteStackVisuals = refreshCharacterStackVisuals;
   window.extendCourse = extendCourse;
@@ -117,7 +127,31 @@ let dirLight = null;
 let gameStarted = false;
 let lastRecordedHostState = null;
 
+// ★ カウントダウン待機状態管理
+let countdownTimer = 0.0;
+let isCountdownActive = false;
+
+/**
+ * リスタート用 5秒カウントダウン開始関数
+ * @param {number} duration 秒数（通常 5.0）
+ */
+export function startRestartCountdown(duration = 5.0) {
+  countdownTimer = duration;
+  isCountdownActive = true;
+  showCountdownHUD(Math.ceil(duration));
+
+  // 開始シグナル（ピッ音）
+  if (sound && typeof sound.playCountdownTick === 'function') {
+    sound.playCountdownTick(1.0);
+  }
+}
+
 export function launchGameEngine() {
+  // ★ ソロタップ時・マルチ開始時を問わず、HUD表示とゲーム画面への完全遷移を実行
+  if (typeof UIController !== 'undefined' && typeof UIController.showGame === 'function') {
+    UIController.showGame();
+  }
+
   gameStarted = true;
   setIsGameOver(false);
   if (sound) {
@@ -128,6 +162,7 @@ export function launchGameEngine() {
 
 if (typeof window !== 'undefined') {
   window.launchGameEngine = launchGameEngine;
+  window.startRestartCountdown = startRestartCountdown;
   window.onRemoteRestartReceived = (packet) => {
     if (packet && packet.seed) {
       resetGame(packet.seed, packet.snapshot);
@@ -168,6 +203,7 @@ export function resetGame(remoteSeed = null, remoteSnapshot = null) {
   buildWorld(scene, targetSeed);
   resetCharacters(STAGES);
 
+  // カメラを初期島の手前側中央へダイレクト配置
   if (camera) {
     const focusX = (player && player.pos) ? player.pos.x : 0.0;
     camera.position.set(focusX, STAGES[0].y + 24, STAGES[0].z + 12);
@@ -224,6 +260,9 @@ export function resetGame(remoteSeed = null, remoteSnapshot = null) {
   updateHUD();
   updateTimerHUD(true);
   updateRestartButtonVisibility();
+
+  // ★ リスタート時：ソロ・公開・プライベートを問わず全走者整列の5秒カウントダウンを起動
+  startRestartCountdown(5.0);
 }
 
 export function initThree() {
@@ -239,7 +278,6 @@ export function initThree() {
 
   camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1500);
   
-  // ★【Phase 2 核心】カメラ参照をグローバルに確定バインド
   if (typeof window !== 'undefined') {
     window.currentCameraRef = camera;
   }
@@ -313,8 +351,21 @@ export function animate(currentTime) {
   }
 
   if (gameStarted && !isGameOver) {
-    const moveDirX = input.active ? input.x : 0;
-    const moveDirZ = input.active ? input.y : 0;
+    // ★ 5秒カウントダウン待機制御
+    if (isCountdownActive) {
+      countdownTimer -= dt;
+      if (countdownTimer <= 0) {
+        countdownTimer = 0;
+        isCountdownActive = false;
+        triggerCountdownGo(sound);
+      } else {
+        updateCountdownHUD(countdownTimer, sound);
+      }
+    }
+
+    // カウントダウン中は自機の操作入力を完全ロック（直立静止）
+    const moveDirX = (!isCountdownActive && input.active) ? input.x : 0;
+    const moveDirZ = (!isCountdownActive && input.active) ? input.y : 0;
 
     const isMulti = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive);
     const isHost = Boolean(isMulti && window.NetworkManager.isHost);
@@ -347,7 +398,14 @@ export function animate(currentTime) {
         }
       }
 
-      updateSingleCharacter(scene, player, moveDirX, moveDirZ, dt, spawnPuffCloud, spawnSpeedStepRing);
+      // カウントダウン中は移動更新を行わず直立不動を固定
+      if (isCountdownActive) {
+        player.walkCycle = 0;
+        resetCharacterPose(player);
+        player.meshObj.root.position.copy(player.pos);
+      } else {
+        updateSingleCharacter(scene, player, moveDirX, moveDirZ, dt, spawnPuffCloud, spawnSpeedStepRing);
+      }
       updateNameplatePosition(player);
     }
 
@@ -378,9 +436,14 @@ export function animate(currentTime) {
         }
       }
 
-      const shouldRunAI = (!isMulti || isHost) && !isRemotePlayer && c.isAI === true && !c.targetNetPos;
+      // ★ カウントダウン中はAIの自律思考ルーチンを完全スキップ
+      const shouldRunAI = (!isCountdownActive) && (!isMulti || isHost) && !isRemotePlayer && c.isAI === true && !c.targetNetPos;
 
-      if (shouldRunAI) {
+      if (isCountdownActive) {
+        c.walkCycle = 0;
+        resetCharacterPose(c);
+        c.meshObj.root.position.copy(c.pos);
+      } else if (shouldRunAI) {
         updateAICharacter(scene, c, dt, spawnPuffCloud, spawnSpeedStepRing);
       } else if (c.targetNetPos) {
         const prevX = c.pos.x;
@@ -592,7 +655,9 @@ export function animate(currentTime) {
       updateNameplatePosition(c);
     }
 
-    handleTackles(scene);
+    if (!isCountdownActive) {
+      handleTackles(scene);
+    }
 
     blockSpawnTimer += dt;
     if (blockSpawnTimer > 0.5) {
@@ -624,15 +689,18 @@ export function animate(currentTime) {
       }
     }
 
-    if (!isGuest) {
-      decrementTimeLeft(dt);
-      if (timeLeft <= 0) {
-        setTimeLeft(0);
-        onTimeUp(sound);
-      }
-    } else {
-      if (timeLeft > 0) {
+    // ★ カウントダウン中は試合制限時間タイマーの減算を一時停止
+    if (!isCountdownActive) {
+      if (!isGuest) {
         decrementTimeLeft(dt);
+        if (timeLeft <= 0) {
+          setTimeLeft(0);
+          onTimeUp(sound);
+        }
+      } else {
+        if (timeLeft > 0) {
+          decrementTimeLeft(dt);
+        }
       }
     }
     updateTimerHUD();
@@ -675,6 +743,7 @@ async function checkAndHandleAutoJoin() {
         EntryShield.update(`ROOM #${shortId}`, 'ルームへ合流中...');
       }
 
+      // マルチプレイは自動スタート
       launchGameEngine();
 
       if (window.NetworkManager && typeof window.NetworkManager.joinRoom === 'function') {

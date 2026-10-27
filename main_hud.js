@@ -1,11 +1,10 @@
-// main_hud.js: タイマー・スコア演出・リスタート権限・公式スコア送信専用モジュール
-// ★ main.js からHUD制御・ランキング連携ロジックを完全分離（Package 5）
-//   1. 【GRAVITY公式スコア送信 API postMessage 連携】
-//      ゲーム終了時の確定段数を親アプリネイティブ層へ安全通知。
-//   2. 【リスタートボタン権限制御】
-//      ホスト/ソロのみ表示、ゲスト端末は強制非表示。
-//   3. 【タイマー＆スコアポップ演出】
-//      残り30秒クリティカル点滅、高速架橋時のポップクランプ制御。
+// main_hud.js: タイマー・スコア演出・リスタート権限・公式スコア送信・画面中央5秒カウントダウンHUD制御モジュール
+// ★ カウントダウンHUD完全統合版（Phase 3）：
+//   1. 【画面中央5秒カウントダウンDOM制御（showCountdownOverlay / updateCountdownHUD / triggerCountdownGo）】
+//      5, 4, 3, 2, 1 の数字切り替え時にスプリングアニメーション（countdownPop）を毎秒再トリガー。
+//      Web Audio API（playCountdownTick / playCountdownGo）と完全連携し、明瞭な電子シグナル音を再生。
+//      GO! 到達時は黄金ネオン演出（countdownGo）を再生し、約0.8秒後に自動非表示化。
+//   2. 【タイマー＆スコア演出・リスタート権限制御・公式スコア送信の100%維持】
 
 import { player } from './character.js';
 
@@ -25,12 +24,149 @@ export function setLastDisplayedSec(val) { lastDisplayedSec = val; }
 let scorePopTimer = null;
 let lastPlankPlacedTime = 0;
 
+// カウントダウン表示管理用
+let lastCountdownNumber = -1;
+let countdownGoTimer = null;
+
 export function resetHUDTimers() {
   if (scorePopTimer) {
     clearTimeout(scorePopTimer);
     scorePopTimer = null;
   }
+  if (countdownGoTimer) {
+    clearTimeout(countdownGoTimer);
+    countdownGoTimer = null;
+  }
   lastPlankPlacedTime = 0;
+  lastCountdownNumber = -1;
+  hideCountdownHUD();
+}
+
+/**
+ * カウントダウンHUD表示開始
+ * @param {number} startNumber 初期表示カウント（通常 5）
+ */
+export function showCountdownHUD(startNumber = 5) {
+  const overlay = document.getElementById('hud-countdown-overlay');
+  const textEl = document.getElementById('countdown-text');
+  const subEl = document.getElementById('countdown-sub');
+
+  if (countdownGoTimer) {
+    clearTimeout(countdownGoTimer);
+    countdownGoTimer = null;
+  }
+
+  lastCountdownNumber = startNumber;
+
+  if (overlay) {
+    overlay.classList.add('active');
+  }
+
+  if (textEl) {
+    textEl.className = 'countdown-number';
+    textEl.textContent = String(startNumber);
+    // アニメーションの再トリガー
+    textEl.style.animation = 'none';
+    void textEl.offsetWidth; // リフロー強制
+    textEl.style.animation = '';
+  }
+
+  if (subEl) {
+    subEl.textContent = 'READY...';
+    subEl.style.display = 'block';
+  }
+}
+
+/**
+ * 毎フレームのカウントダウンHUD更新（残り秒数に基づく数字切り替え・音再生）
+ * @param {number} remainingSec 残り秒数（例: 4.8, 3.2）
+ * @param {Object} sound SoundEngine インスタンス
+ */
+export function updateCountdownHUD(remainingSec, sound = null) {
+  const overlay = document.getElementById('hud-countdown-overlay');
+  if (!overlay || !overlay.classList.contains('active')) return;
+
+  const currentNumber = Math.max(1, Math.ceil(remainingSec));
+
+  if (currentNumber !== lastCountdownNumber && currentNumber >= 1) {
+    lastCountdownNumber = currentNumber;
+    const textEl = document.getElementById('countdown-text');
+    if (textEl) {
+      textEl.className = 'countdown-number';
+      textEl.textContent = String(currentNumber);
+      textEl.style.animation = 'none';
+      void textEl.offsetWidth; // リフロー強制
+      textEl.style.animation = '';
+    }
+
+    // 5〜1の電子音再生（カウントが進むごとに少しだけピッチアップ）
+    if (sound && typeof sound.playCountdownTick === 'function') {
+      const pitchMultiplier = 1.0 + (5 - currentNumber) * 0.04;
+      sound.playCountdownTick(pitchMultiplier);
+    }
+  }
+}
+
+/**
+ * 「GO!」演出トリガー＆自動フェードアウト消去
+ * @param {Object} sound SoundEngine インスタンス
+ */
+export function triggerCountdownGo(sound = null) {
+  const overlay = document.getElementById('hud-countdown-overlay');
+  const textEl = document.getElementById('countdown-text');
+  const subEl = document.getElementById('countdown-sub');
+
+  if (!overlay) return;
+
+  if (countdownGoTimer) {
+    clearTimeout(countdownGoTimer);
+  }
+
+  if (textEl) {
+    textEl.className = 'countdown-go';
+    textEl.textContent = 'GO!!';
+    textEl.style.animation = 'none';
+    void textEl.offsetWidth;
+    textEl.style.animation = '';
+  }
+
+  if (subEl) {
+    subEl.textContent = 'START!!';
+  }
+
+  // GO! 和音シグナル音再生
+  if (sound && typeof sound.playCountdownGo === 'function') {
+    sound.playCountdownGo();
+  }
+
+  // アニメーション完了（約0.8秒）後に非表示化
+  countdownGoTimer = setTimeout(() => {
+    hideCountdownHUD();
+    countdownGoTimer = null;
+  }, 820);
+}
+
+/**
+ * カウントダウンHUDの即時非表示
+ */
+export function hideCountdownHUD() {
+  const overlay = document.getElementById('hud-countdown-overlay');
+  if (overlay) {
+    overlay.classList.remove('active');
+  }
+  const textEl = document.getElementById('countdown-text');
+  if (textEl) {
+    textEl.className = 'countdown-number';
+    textEl.textContent = '';
+  }
+  lastCountdownNumber = -1;
+}
+
+if (typeof window !== 'undefined') {
+  window.showCountdownHUD = showCountdownHUD;
+  window.updateCountdownHUD = updateCountdownHUD;
+  window.triggerCountdownGo = triggerCountdownGo;
+  window.hideCountdownHUD = hideCountdownHUD;
 }
 
 /**

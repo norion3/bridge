@@ -1,4 +1,9 @@
 // Web Audio API音響エンジン（シームレス・オートスケジューリング風音合成・ジッパーノイズ完全根絶）
+// ★ カウントダウン電子音追加版（Phase 1）：
+//   1. 【playCountdownTick(pitch = 1)】: 5, 4, 3, 2, 1 用の短く澄んだ高域ピッ音（880Hz）
+//   2. 【playCountdownGo()】: GO!! 用の華やかで抜けの良いファンファーレ和音シグナル音（1760Hz）
+//   3. 既存の全SE（スライド、ダイブ、落下、落雷、収集、ファンファーレ等）およびAudioContext管理を100%維持
+
 export class SoundEngine {
   constructor() {
     this.ctx = null;
@@ -54,18 +59,16 @@ export class SoundEngine {
     }
   }
 
-  // ★ 提案内容：古いContextを安全に破棄し、クリーンなAudioContextを完全新規生成するメソッド
+  // 古いContextを安全に破棄し、クリーンなAudioContextを完全新規生成するメソッド
   rebuild() {
-    // 1. 既存の壊れた/ゾンビ化したContextを安全に破棄
     if (this.ctx) {
       try {
         this.ctx.close();
       } catch (e) {}
       this.ctx = null;
     }
-    this.noiseBuffer = null; // ノイズバッファも新コンテキスト用にリセット
+    this.noiseBuffer = null;
 
-    // 2. ユーザー操作イベントの直下でクリーンなAudioContextを完全新規生成
     const AudioContext = window.AudioContext || window.webkitAudioContext;
     if (AudioContext) {
       this.ctx = new AudioContext();
@@ -83,7 +86,6 @@ export class SoundEngine {
       this.masterGain.connect(this.compressor);
       this.compressor.connect(this.ctx.destination);
 
-      // 念のため即座にresume
       if (this.ctx.state !== 'running') {
         this.ctx.resume().catch(() => {});
       }
@@ -92,7 +94,7 @@ export class SoundEngine {
 
   getNoiseBuffer() {
     if (!this.noiseBuffer && this.ctx) {
-      const bufferSize = this.ctx.sampleRate * 4.0; // 4秒分の連続ノイズ
+      const bufferSize = this.ctx.sampleRate * 4.0;
       const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
       const data = buffer.getChannelData(0);
       for (let i = 0; i < bufferSize; i++) {
@@ -119,6 +121,68 @@ export class SoundEngine {
         osc.onended = null;
       } catch (e) {}
     };
+  }
+
+  // --- カウントダウン電子音 ---
+
+  /**
+   * カウントダウン 5, 4, 3, 2, 1 用のピッ音
+   * @param {number} pitch 
+   */
+  playCountdownTick(pitch = 1.0) {
+    if (this.muted || !this.ctx) return;
+    try {
+      const now = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(880 * pitch, now);
+      osc.frequency.exponentialRampToValueAtTime(880 * pitch, now + 0.06);
+      gain.gain.setValueAtTime(0.30, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.07);
+      osc.connect(gain);
+      gain.connect(this.masterGain);
+      this.autoDisconnect(osc, gain);
+      osc.start(now);
+      osc.stop(now + 0.08);
+    } catch (e) {}
+  }
+
+  /**
+   * カウントダウン GO! 用の爽快な高域スタート音（ポーン！）
+   */
+  playCountdownGo() {
+    if (this.muted || !this.ctx) return;
+    try {
+      const now = this.ctx.currentTime;
+      // 主音: 1760Hz
+      const osc1 = this.ctx.createOscillator();
+      const gain1 = this.ctx.createGain();
+      osc1.type = 'sine';
+      osc1.frequency.setValueAtTime(1760, now);
+      osc1.frequency.exponentialRampToValueAtTime(1760, now + 0.22);
+      gain1.gain.setValueAtTime(0.40, now);
+      gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+      osc1.connect(gain1);
+      gain1.connect(this.masterGain);
+      this.autoDisconnect(osc1, gain1);
+      osc1.start(now);
+      osc1.stop(now + 0.26);
+
+      // ハーモニー倍音: 2637Hz (E7)
+      const osc2 = this.ctx.createOscillator();
+      const gain2 = this.ctx.createGain();
+      osc2.type = 'triangle';
+      osc2.frequency.setValueAtTime(2637, now);
+      osc2.frequency.exponentialRampToValueAtTime(2637, now + 0.20);
+      gain2.gain.setValueAtTime(0.25, now);
+      gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+      osc2.connect(gain2);
+      gain2.connect(this.masterGain);
+      this.autoDisconnect(osc2, gain2);
+      osc2.start(now);
+      osc2.stop(now + 0.23);
+    } catch (e) {}
   }
 
   // --- 短発系SE ---
@@ -260,12 +324,10 @@ export class SoundEngine {
     } catch (e) {}
   }
 
-  // ★ 新規追加：落雷インパクト音（放電クラッシュ＋重低音雷鳴）
   playThunderStrike() {
     if (this.muted || !this.ctx) return;
     try {
       const now = this.ctx.currentTime;
-      // 1. バチッ！という強烈な初期放電クラッシュ音
       const osc = this.ctx.createOscillator();
       const gain = this.ctx.createGain();
       osc.type = 'sawtooth';
@@ -279,7 +341,6 @@ export class SoundEngine {
       osc.start(now);
       osc.stop(now + 0.31);
 
-      // 2. ドゴォォン！と空気を震わせる重低音落雷ノイズ
       const noise = this.getNoiseBuffer();
       if (noise) {
         const src = this.ctx.createBufferSource();
@@ -537,8 +598,6 @@ export class SoundEngine {
     } catch (e) {}
   }
 
-  // --- ★ スカイダイブ専用音響：澄み切った高域大気風音＆軽やかなエアストリーム（優雅な滑空） ---
-
   playSkydiveLaunch() {
     if (this.muted || !this.ctx) return;
     try {
@@ -567,14 +626,13 @@ export class SoundEngine {
       this.skydiveIsPlaying = true;
       const now = this.ctx.currentTime;
 
-      // 1. ノイズの高域を優しくカットした澄んだ大気風音（ざらつきを抑えた高域滑空ノイズ）
       this.skydiveGlideSource = this.ctx.createBufferSource();
       this.skydiveGlideSource.buffer = noiseBuffer;
       this.skydiveGlideSource.loop = true;
 
       this.skydiveGlideFilter = this.ctx.createBiquadFilter();
       this.skydiveGlideFilter.type = 'bandpass';
-      this.skydiveGlideFilter.Q.setValueAtTime(2.2, now); // 狭いQ値で澄んだ空気感
+      this.skydiveGlideFilter.Q.setValueAtTime(2.2, now);
 
       this.skydiveGlideFilter.frequency.setValueAtTime(950, now);
       this.skydiveGlideFilter.frequency.exponentialRampToValueAtTime(1600, now + totalDuration * 0.40);
@@ -591,7 +649,6 @@ export class SoundEngine {
       this.skydiveGlideFilter.connect(this.skydiveGlideGain);
       this.skydiveGlideGain.connect(this.masterGain);
 
-      // 2. 澄んだ空気中を飛ぶサイン波のエアストリーム（優雅な浮遊ハーモニクス）
       this.skydiveToneSource = this.ctx.createOscillator();
       this.skydiveToneGain = this.ctx.createGain();
       this.skydiveToneSource.type = 'sine';
@@ -656,13 +713,10 @@ export class SoundEngine {
     } catch (e) {}
   }
 
-  // --- ★ フリーフォール専用音響：重厚メカロック解放 ＆ 垂直ドップラー急降下突風（ヒュオオオッ！） ---
-
   playTrapdoorOpen() {
     if (this.muted || !this.ctx) return;
     try {
       const now = this.ctx.currentTime;
-      // 重厚な金属ラッチ解放音（カシャン！ガコッ！）
       const osc1 = this.ctx.createOscillator();
       const gain1 = this.ctx.createGain();
       osc1.type = 'sawtooth';
@@ -700,16 +754,14 @@ export class SoundEngine {
       this.trapdoorIsPlaying = true;
       const now = this.ctx.currentTime;
 
-      // 1. 大気を垂直に貫き、重低音から高音へ一気に駆け上がるドップラー突風（ヒュオオオッ！）
       this.trapdoorFallSource = this.ctx.createBufferSource();
       this.trapdoorFallSource.buffer = noiseBuffer;
       this.trapdoorFallSource.loop = true;
 
       this.trapdoorFallFilter = this.ctx.createBiquadFilter();
       this.trapdoorFallFilter.type = 'bandpass';
-      this.trapdoorFallFilter.Q.setValueAtTime(1.0, now); // 幅広い帯域で迫力のある突風感
+      this.trapdoorFallFilter.Q.setValueAtTime(1.0, now);
 
-      // 初速のタメ（無重力の静寂）から、重力加速度とともに2900Hzへ急激に駆け上がるドップラーカーブ
       this.trapdoorFallFilter.frequency.setValueAtTime(500, now);
       this.trapdoorFallFilter.frequency.exponentialRampToValueAtTime(800, now + 0.25);
       this.trapdoorFallFilter.frequency.exponentialRampToValueAtTime(2100, now + totalDuration * 0.60);
@@ -726,7 +778,6 @@ export class SoundEngine {
       this.trapdoorFallFilter.connect(this.trapdoorFallGain);
       this.trapdoorFallGain.connect(this.masterGain);
 
-      // 2. 重力で真下へ吸い込まれる重厚なサブベース唸り（垂直フリーフォールの迫力低域）
       this.trapdoorSubSource = this.ctx.createOscillator();
       this.trapdoorSubGain = this.ctx.createGain();
       this.trapdoorSubSource.type = 'triangle';
