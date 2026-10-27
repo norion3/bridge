@@ -1,9 +1,11 @@
-// entities.js: 飛翔体・雷・ドレイン・マグネット・演出パーティクル・浮遊雲の毎フレーム更新モジュール
-// ★ 4人対戦対応版（緑チームドレインカラー対応 ＆ スキル着弾散乱ブロードキャスト保証 ＆ O(1)スワップPOP）：
-//   1. 【緑チーム（GREEN: #10b981）ドレインブロック色バインド追加】
-//      クリスタルおよびサンダー命中時、shooterChar.team.id === 'green' の場合に
-//      sharedMats.blockGreen をバインドし、緑チームがブロックを奪った際のビジュアル抜けを根絶。
-//   2. 【散乱パケット・GPUカリング・O(1)スワップPOPの完全維持】
+// entities.js: 飛翔体・雷・ドレイン・マグネット・演出パーティクル・浮遊雲・攻撃ヒットログ弾幕連携モジュール
+// ★ 攻撃ヒットログ（弾幕チャット）完全開通版：
+//   1. 【着弾判定現場での攻撃ヒットログ通知連動 (notifyCombatHit)】
+//      - ホーミングクリスタル弾命中時（p.progress >= 1.0）: notifyCombatHit(shooterChar, hitTarget, 'HIT')
+//      - サンダー落雷直撃時（tp.progress >= 1.0）: notifyCombatHit(shooterChar, hitTarget, 'THUNDER')
+//      これにより、画面上部の弾幕レーンに [攻撃者バッジ] > 被弾者 HIT / THUNDER がリアルタイムに流れるよう完全開通。
+//   2. 【緑チーム（GREEN: #10b981）ドレインブロック色バインドの完全維持】
+//   3. 【散乱パケット・GPUカリング・O(1)スワップPOP・高速物理処理の完全維持】
 
 import {
   sharedMats,
@@ -38,6 +40,9 @@ import {
 import {
   scatterBricks
 } from './systems.js';
+import {
+  notifyCombatHit
+} from './combat.js';
 
 /**
  * シーン内の飛翔体、エフェクト、雲、アイテム演出を一括更新
@@ -142,6 +147,13 @@ export function updateSceneEntities(scene, dt, timeSec, player, sound) {
         }
 
         scatterBricks(scene, hitTarget, 3, true);
+
+        // ★【核心開通】攻撃ヒットログ通知（弾幕チャット連携: [攻撃者バッジ] > 被弾者名 HIT）
+        if (typeof notifyCombatHit === 'function') {
+          notifyCombatHit(shooterChar, hitTarget, 'HIT');
+        } else if (typeof window !== 'undefined' && typeof window.notifyCombatHit === 'function') {
+          window.notifyCombatHit(shooterChar, hitTarget, 'HIT');
+        }
 
         // ★ ドレインブロック生成（4色対応）
         const drainCount = 4;
@@ -275,6 +287,13 @@ export function updateSceneEntities(scene, dt, timeSec, player, sound) {
         }
 
         scatterBricks(scene, hitTarget, 2, true);
+
+        // ★【核心開通】攻撃ヒットログ通知（弾幕チャット連携: [攻撃者バッジ] > 被弾者名 THUNDER）
+        if (typeof notifyCombatHit === 'function') {
+          notifyCombatHit(shooterChar, hitTarget, 'THUNDER');
+        } else if (typeof window !== 'undefined' && typeof window.notifyCombatHit === 'function') {
+          window.notifyCombatHit(shooterChar, hitTarget, 'THUNDER');
+        }
 
         // ★ ドレインブロック生成（4色対応）
         const drainCount = 4;
