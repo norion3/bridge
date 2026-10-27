@@ -1,11 +1,16 @@
 // world_generator.js: 決定論的PRNG・コース伸長・二股分岐・橋/アトラクション3D構造体生成専用モジュール
-// ★ world.js から数学的生成・3Dメッシュ構築ロジックを完全分離（Package 4）
-//   1. 【Mulberry32 決定論疑似乱数】
-//      シード値共有により全端末で完全一致する浮島・高度・ギミック配置を算出。
-//   2. 【二股分岐（Pattern B）左右レーン分離の完全維持】
-//      左の橋（laneIdx: 0）と右の橋（laneIdx: 2）の固有番号割り当てを100%維持。
-//   3. 【特殊アトラクション6種の3D構造体メッシュ生成】
-//      スカイダイブ、トラップドア、エレベーター、ジップライン、S字スライダー、スロープの配置。
+// ★ 天空のロング下り階段（Downhill Skywalk）導入版（Phase 1 修正）：
+//   1. 【Stage 5 -> 6: オープン展望エレベーターで天空へ上昇】
+//      Stage 6 の到達高度を天空の高台 Y = +18.0m に設定。雲を見下ろす圧倒的な高度感を演出。
+//   2. 【Stage 6 -> 7: 決定的な一手・天空のロング下り階段 (Downhill Skywalk)】
+//      Stage 7 の着地島を海面スレスレの Y = +2.0m に設定（落差 -16.0m）。
+//      水平距離 34m（谷間約 14m）の豪快な下り傾斜階段を自動生成。
+//      下り坂でも 1枚＝1点 として通常通り段板が架かり、スコア加算と絶景ダウンヒルを両立。
+//   3. 【二股分岐（Fork Pattern B）の開始タイミング適正化 (idx === 8)】
+//      下り階段を駆け下りた後の低島（Stage 7）からスムーズに二股分岐へ移行するようインデックスを同期。
+//   4. 【isDownhill フラグの付与】
+//      CONNECTIONS および bridge オブジェクトに isDownhill フラグを付与し、Phase 2 のカメラ連携基盤を確立。
+//   5. 【決定論的PRNG・二股分岐左右レーン分離・全6大アトラクション構造体の完全維持】
 
 import {
   TRAMPOLINE_TIERS,
@@ -348,6 +353,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       launchPoint: catapult.launchPoint,
       isSkydive: true, isTrapdoor: false, isElevator: false, isZipline: false,
       isCurvedSlide: false, isSlide: false, isJump: false, isVertical: false,
+      isDownhill: false,
       bonusBlocks: []
     };
 
@@ -419,7 +425,8 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       hatchOpenProgress: 0,
       isHatchOpen: false,
       isSkydive: false, isTrapdoor: true, isElevator: false, isZipline: false,
-      isCurvedSlide: false, isSlide: false, isJump: false, isVertical: false
+      isCurvedSlide: false, isSlide: false, isJump: false, isVertical: false,
+      isDownhill: false
     };
 
     if (!bridgesByStage.has(stageIdx)) bridgesByStage.set(stageIdx, []);
@@ -437,6 +444,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       startZ, endZ, startY, endY,
       isSkydive: false, isTrapdoor: false, isElevator: true, isZipline: false,
       isCurvedSlide: false, isSlide: false, isJump: false, isVertical: false,
+      isDownhill: false,
       elevators: []
     };
 
@@ -506,6 +514,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       startZ, endZ, startPt, endPt, cableLen,
       isSkydive: false, isTrapdoor: false, isElevator: false, isZipline: true,
       isCurvedSlide: false, isSlide: false, isJump: false, isVertical: false,
+      isDownhill: false,
       bonusBlocks: []
     };
 
@@ -639,6 +648,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       startZ, endZ,
       isSkydive: false, isTrapdoor: false, isElevator: false, isZipline: false,
       isCurvedSlide: true, isSlide: false, isJump: false, isVertical: false,
+      isDownhill: false,
       curve: spline, curveLength: curveLength,
       lutSamples: lutSamples,
       bonusBlocks: []
@@ -684,6 +694,9 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
   const isStairs = (!isJump && !isSlide && !isVertical);
   const isStepBridge = (isStairs || isVertical);
 
+  // ★ 始点より終点が低い場合、下り階段（isDownhill）と判定
+  const isDownhillBridge = Boolean(isStepBridge && endY < startY);
+
   let jumpTiers = [];
   if (isJump) {
     jumpTiers = [TRAMPOLINE_TIERS.normal, TRAMPOLINE_TIERS.high, TRAMPOLINE_TIERS.mega];
@@ -727,6 +740,7 @@ export function createBridgeLinks(scene, stageIdx, nextStageIdx, prevIslandZ, ne
       stageIdx, nextStageIdx, laneIdx, planks: [], visualMeshes: [],
       startZ, endZ, isJump, isSlide, isVertical,
       isSkydive: false, isTrapdoor: false, isCurvedSlide: false, isZipline: false,
+      isDownhill: isDownhillBridge, // ★ 下り階段フラグ
       actualBridgeX: actualBridgeX,
       ghostMesh: null, solidMesh: null,
       bonusBlocks: []
@@ -911,7 +925,7 @@ export function extendCourseForkPatternB(scene) {
   scene.add(forkMeshGroup);
   stageMeshes.push({ meshGroup: forkMeshGroup, stageIdx: forkIdx });
 
-  CONNECTIONS.push({ from: forkIdx - 1, to: forkIdx, type: 'bridge' });
+  CONNECTIONS.push({ from: forkIdx - 1, to: forkIdx, type: 'bridge', isDownhill: false });
   createBridgeLinks(scene, forkIdx - 1, forkIdx, prev.z, forkZ, prev.r, forkR, prev.y, forkY, 'bridge', 0.0, false);
 
   const forkHash = Math.abs(Math.imul(forkIdx ^ 0x6D2B79F5, (currentWorldSeed + 13) | 1));
@@ -982,7 +996,7 @@ export function extendCourseForkPatternB(scene) {
   scene.add(leftMesh);
   stageMeshes.push({ meshGroup: leftMesh, stageIdx: leftStageIdx });
 
-  CONNECTIONS.push({ from: forkIdx, to: leftStageIdx, type: leftTheme.connType, branch: 'left' });
+  CONNECTIONS.push({ from: forkIdx, to: leftStageIdx, type: leftTheme.connType, branch: 'left', isDownhill: false });
   createBridgeLinks(scene, forkIdx, leftStageIdx, forkZ, leftMidZ, forkR, leftMidR, forkY, leftMidY, leftTheme.connType, leftMidX, true, 0);
 
   const leftGates = getForkThemeGates(leftTheme.role);
@@ -1019,7 +1033,7 @@ export function extendCourseForkPatternB(scene) {
   scene.add(rightMesh);
   stageMeshes.push({ meshGroup: rightMesh, stageIdx: rightStageIdx });
 
-  CONNECTIONS.push({ from: forkIdx, to: rightStageIdx, type: rightTheme.connType, branch: 'right' });
+  CONNECTIONS.push({ from: forkIdx, to: rightStageIdx, type: rightTheme.connType, branch: 'right', isDownhill: false });
   createBridgeLinks(scene, forkIdx, rightStageIdx, forkZ, rightMidZ, forkR, rightMidR, forkY, rightMidY, rightTheme.connType, rightMidX, true, 2);
 
   const rightGates = getForkThemeGates(rightTheme.role);
@@ -1055,10 +1069,10 @@ export function extendCourseForkPatternB(scene) {
   scene.add(mergeMeshGroup);
   stageMeshes.push({ meshGroup: mergeMeshGroup, stageIdx: mergeStageIdx });
 
-  CONNECTIONS.push({ from: leftStageIdx, to: mergeStageIdx, type: leftTheme.exitType, branch: 'left' });
+  CONNECTIONS.push({ from: leftStageIdx, to: mergeStageIdx, type: leftTheme.exitType, branch: 'left', isDownhill: false });
   createBridgeLinks(scene, leftStageIdx, mergeStageIdx, leftMidZ, mergeZ, leftMidR, mergeR, leftMidY, mergeY, leftTheme.exitType, leftMidX, true, 0);
 
-  CONNECTIONS.push({ from: rightStageIdx, to: mergeStageIdx, type: rightTheme.exitType, branch: 'right' });
+  CONNECTIONS.push({ from: rightStageIdx, to: mergeStageIdx, type: rightTheme.exitType, branch: 'right', isDownhill: false });
   createBridgeLinks(scene, rightStageIdx, mergeStageIdx, rightMidZ, mergeZ, rightMidR, mergeR, rightMidY, mergeY, rightTheme.exitType, rightMidX, true, 2);
 
   spawnGatesOnIsland(scene, mergeStageIdx, mergeZ, mergeY, 0.0);
@@ -1074,8 +1088,9 @@ export function extendCourse(scene) {
 
   _prngState = (currentWorldSeed + idx * 10007) | 0;
 
-  const stagesSinceLastMerge = (lastMergeStageIdx === -1) ? (idx - 6) : (idx - lastMergeStageIdx);
-  const shouldSpawnFork = (lastMergeStageIdx === -1 && idx === 6) || (lastMergeStageIdx !== -1 && stagesSinceLastMerge >= 8);
+  // ★ Stage 6（天空高台 Y=+18）と Stage 7（海面低島 Y=+2 下り階段）を挟むため、二股分岐の開始を idx === 8 に適正化
+  const stagesSinceLastMerge = (lastMergeStageIdx === -1) ? (idx - 8) : (idx - lastMergeStageIdx);
+  const shouldSpawnFork = (lastMergeStageIdx === -1 && idx === 8) || (lastMergeStageIdx !== -1 && stagesSinceLastMerge >= 8);
 
   if (shouldSpawnFork) {
     extendCourseForkPatternB(scene);
@@ -1112,6 +1127,21 @@ export function extendCourse(scene) {
     type = 'zipline';
     nextY = Math.max(7.0, prev.y - 10.5);
     distZ = 68;
+    r = 10.5;
+    lastGimmickCategory = 'descent';
+  } else if (idx === 6) {
+    // ★ Stage 5 -> 6: オープン展望エレベーターで天空へ上昇（Y = +18.0m）
+    type = 'elevator';
+    nextY = 18.0;
+    distZ = 30;
+    r = 11;
+    lastGimmickCategory = 'ascent';
+  } else if (idx === 7) {
+    // ★ Stage 6 -> 7: 【決定的な一手：天空のロング下り階段（Downhill Skywalk）】
+    // 天空の高台（Y = +18.0m）から海面スレスレの低島（Y = +2.0m）へ一気に駆け下りる
+    type = 'bridge';
+    nextY = 2.0;
+    distZ = 34;
     r = 10.5;
     lastGimmickCategory = 'descent';
   } else {
@@ -1166,7 +1196,7 @@ export function extendCourse(scene) {
     }
   }
 
-  nextY = Math.max(5.0, nextY);
+  nextY = Math.max(2.0, nextY);
   const nextZ = prev.z - distZ;
   const currentIslandX = prev.x || 0.0;
   const stageInfo = { z: nextZ, y: nextY, x: currentIslandX, r: r, type: type };
@@ -1176,7 +1206,9 @@ export function extendCourse(scene) {
   scene.add(islandMeshGroup);
   stageMeshes.push({ meshGroup: islandMeshGroup, stageIdx: idx });
 
-  CONNECTIONS.push({ from: idx - 1, to: idx, type: type });
+  // ★ 下り階段フラグの付与
+  const isConnDownhill = Boolean(type === 'bridge' && nextY < prev.y);
+  CONNECTIONS.push({ from: idx - 1, to: idx, type: type, isDownhill: isConnDownhill });
   createBridgeLinks(scene, idx - 1, idx, prev.z, nextZ, prev.r, r, prev.y, nextY, type, currentIslandX, false);
 
   if (idx >= 1) {

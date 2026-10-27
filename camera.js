@@ -1,14 +1,15 @@
 // camera.js: ダイナミック並走カメラ専用モジュール
-// ★ カウントダウン待機センタリング ＆ レース追従シネマティック遷移版：
-//   1. 【カウントダウン中の4走者画面中央（45%〜55%ライン）センタリング】
-//      走者の整列位置（Z = 4.0m）に対し、従来の遠景階段注視（Z = -1.0m）から
-//      手前寄り（Z = 2.2m）へ注視点をシフト。
-//      カメラ位置も X=0（左右対称中央）、Y=16.5m、Z=17.5m に構えることで、
-//      画面下部に沈んでいた4人が画面中央に堂々と大きく整列。
-//   2. 【「GO!」到達時のシームレス・スムーズLERP復帰】
-//      カウントダウン終了と同時に、通常のレース追従カメラへ約0.8秒かけて
-//      シルクのように滑らかに自動遷移（カクつきゼロ）。
-//   3. 【通常歩行、垂直登攀、スライダー、ジップライン、エレベーター、スカイダイブ、トラップドア全機能の完全維持】
+// ★ 天空のロング下り階段（Downhill Skywalk）シネマティックパノラマ視界導入版（Phase 2 修正）：
+//   1. 【天空のロング下り階段走行時のシネマティック注視点補正 (isDownhillSkywalk)】
+//      Stage 6 の高台（Y=+18m）から Stage 7 の低島（Y=+2m）へ駆け下りる際、
+//      注視点（LookAt）を前方奥（Z = player.pos.z - 11.5m）および下方（Y = player.pos.y - 2.2m）へシフト。
+//      カメラ高度も程よく下げ（Y = player.pos.y + 20m）、前方の水平線と着地先の島が
+//      画面中央〜上部40%ライン（黄金比）に収まる圧倒的な開放感とスピード感を演出。
+//   2. 【着地後のシームレス・スムーズ復帰】
+//      Stage 7 に上陸した瞬間、LERP補間（0.12〜0.14）によりガタつきなく
+//      通常のレース追従カメラへシルクのように自然復帰。
+//   3. 【カウントダウン待機中の4走者画面中央センタリング完全維持】
+//   4. 【全6大アトラクション（スカイダイブ、トラップドア、エレベーター、ジップライン、スライダー、ジャンプ）の完全維持】
 
 import {
   SKYDIVE_CONFIG,
@@ -67,6 +68,20 @@ export function updateDynamicCamera(player, camera, dt, dirLight, seaMesh, isCou
   const isSkydive = player.onSkydive;
   const isTrapdoor = (player.onTrapdoor || player.onFreefall);
 
+  // ★【Phase 2 核心】天空のロング下り階段（Downhill Skywalk）走行判定
+  // 現在のステージから次の島への接続が下り階段であり、島の手前〜階段を駆け下りている状態を検出
+  const isDownhillSkywalk = Boolean(
+    nextConn &&
+    nextConn.isDownhill &&
+    !isSlideRiding &&
+    !isElevator &&
+    !isSkydive &&
+    !isTrapdoor &&
+    !isJumping &&
+    !isZiplining &&
+    (currentStageObj ? player.pos.z < (currentStageObj.z - currentStageObj.r * 0.4) : true)
+  );
+
   if (wasTrapdoorLastFrame && !isTrapdoor) {
     trapdoorLandingRecoveryTimer = 1.2;
   }
@@ -103,13 +118,11 @@ export function updateDynamicCamera(player, camera, dt, dirLight, seaMesh, isCou
   // ★ カウントダウン待機中の専用センタリング構図
   if (isCountdownActive && player.currentStage === 0) {
     const stage0Y = currentStageObj ? currentStageObj.y : 0;
-    // 4走者の横並び中心（X = 0）に対称配置
     targetCamX = 0.0;
     targetCamY = stage0Y + 16.5;
-    targetCamZ = player.pos.z + 13.5; // 約 17.5m
+    targetCamZ = player.pos.z + 13.5;
     targetLookX = 0.0;
     targetLookY = stage0Y + 0.9;
-    // 走者（Z=4.0m）の直近手前（Z=2.2m）を注視することで、キャラが画面中央（45%〜55%ライン）に持ち上がる
     targetLookAheadZ = player.pos.z - 1.8;
     targetFOV = 58;
   } else if (attackCamTimer > 0) {
@@ -142,6 +155,14 @@ export function updateDynamicCamera(player, camera, dt, dirLight, seaMesh, isCou
     targetCamZ = player.pos.z + 16;
     targetLookY = player.pos.y + 4;
     targetFOV = 65;
+  } else if (isDownhillSkywalk) {
+    // ★【Phase 2 核心】天空のロング下り階段走行時のパノラマ注視点＆高度補正
+    // 目線を海面側・前方奥へ大きく抜き、前方の海と着地先の島を画面の黄金比ラインに収める
+    targetCamY = player.pos.y + 20.0 + (stackLift * 0.45);
+    targetCamZ = player.pos.z + 11.2;
+    targetLookY = player.pos.y - 2.2;
+    targetLookAheadZ = player.pos.z - 11.5;
+    targetFOV = player.speedBoostActive ? 68 : 63;
   } else if (isZiplining) {
     targetCamX = player.pos.x + 5.6;
     targetCamY = player.pos.y + 4.2;
@@ -258,7 +279,7 @@ export function updateDynamicCamera(player, camera, dt, dirLight, seaMesh, isCou
     : 0.14;
 
   const lerpFactorX = isTrapdoor ? trapdoorLerp : (isApproachingTrapdoor ? 0.20 : (isSkydive ? 0.40 : (trapdoorLandingRecoveryTimer > 0 ? 0.18 : 0.12)));
-  const lerpFactorY = isTrapdoor ? trapdoorLerp : (isApproachingTrapdoor ? 0.20 : (isSkydive ? 0.40 : (isJumping ? 0.16 : (trapdoorLandingRecoveryTimer > 0 ? 0.18 : 0.12))));
+  const lerpFactorY = isTrapdoor ? trapdoorLerp : (isApproachingTrapdoor ? 0.20 : (isSkydive ? 0.40 : (isJumping ? 0.16 : (trapdoorLandingRecoveryTimer > 0 ? 0.18 : (isDownhillSkywalk ? 0.14 : 0.12)))));
   const lerpFactorZ = isTrapdoor ? trapdoorLerp : (isApproachingTrapdoor ? 0.20 : (isSkydive ? 0.44 : (trapdoorLandingRecoveryTimer > 0 ? 0.18 : 0.12)));
 
   camera.position.x = THREE.MathUtils.lerp(camera.position.x, targetCamX, lerpFactorX);
