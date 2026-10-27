@@ -1,17 +1,16 @@
 // network.js: AgentSDK公式仕様完全準拠 ＆ 10Hz POS 送受信ループ ＆ 自律ホスト昇格 ＆ スナップショット復元司令塔
-// ★ 入退室ライフサイクル完全クリーンパージ ＆ アトラクション搭乗中次島オートスナップ版（Phase 1 修正）：
-//   1. 【入退室時・セッション遷移時の完全クリーン・パージ (purgeLocalWorldState)】
-//      createRoom, joinRoom, exitRoom, および _applyRoomMembersSync (新シード受信時) において、
-//      floorBlockPool (400個) をすべて active=false, visible=false, position(0, -999, 0) に隔離初期化。
-//      floorBlocksByStage.clear() および resetParticlePools() を確実に実行。
-//      出入りを繰り返しても前セッションの島ブロックが残らず、新セッションの階段に突き刺さる描画崩壊を100%根絶。
-//   2. 【アトラクション搭乗中合流の次島オートスナップ (isPlayerOnAttraction)】
-//      ホストがエレベーター、スカイダイブ、スライダー、ジップライン、トラップドア等に乗っている最中に
-//      ゲストが入室してきた場合、通知する hostStage を「出発元」ではなく「到着先の島 (currentStage + 1)」へ自動補正。
-//      ゲストを到着先の島の安全な平地へ先行スポーンさせ、ホストの着地を美しく迎える完璧な同期リンクを実現。
-//   3. 【スナップショット内ブロック収集の隔離ガード (pos.y > -100)】
-//      captureFullWorldSnapshot において、非アクティブ・描画隔離されたブロックの混入を物理遮断。
-//   4. 【ブロック取得タプル化 (pk) ＆ 補充タプル化 (sp) ＆ 10Hz POS流量制限の完全維持】
+// ★ 出入り時海上浮遊・直立取り残されバグ完全根絶版（Phase 2 修正）：
+//   1. 【リモートスロットバインド（_bindRemoteSlot）の旧座標完全パージ ＆ 安全平地スナップ】
+//      相手が退室・再入室した際、前セッションや直前まで受信していた「海の上空の古い座標（pos, targetNetPos）」を即座に破棄。
+//      ギミック搭乗フラグ（onZipline, onSkydive等）とトロリー・リフトメッシュを完全非表示化し、
+//      受入島の安全な平地（4走者整列X座標: [-4.8, -1.6, 1.6, 4.8]）へ強制スナップ。
+//      resetCharacterPose(targetChar) を実行し、受信パイプラインを100%クリーンな初期状態からリスタート。
+//   2. 【退室時（_restoreSlotToAI）のアトラクション空中取り残され安全引き戻し】
+//      相手がジップライン中や空中で抜けた際、海上空中に置き去りにならないよう、
+//      所属ステージの中央平地へ座標を引き戻してAI化し、海の上で棒立ちになる事故を物理的に遮断。
+//   3. 【入退室時・セッション遷移時の完全クリーン・パージ (purgeLocalWorldState) の完全維持】
+//   4. 【アトラクション搭乗中合流の次島オートスナップ (isPlayerOnAttraction) の完全維持】
+//   5. 【ブロック取得タプル化 (pk) ＆ 補充タプル化 (sp) ＆ 10Hz POS流量制限の完全維持】
 
 import {
   player,
@@ -20,7 +19,8 @@ import {
   updatePlayerName,
   bindLocalPlayerSlot,
   refreshCharacterStackVisuals,
-  resetCharacterToStageZero
+  resetCharacterToStageZero,
+  resetCharacterPose
 } from './character.js';
 import {
   STAGES,
@@ -550,6 +550,29 @@ export const NetworkManager = {
       char.forkBranchChoice = undefined;
       char.botSlideOffsetTarget = 0;
 
+      // ★ ギミック搭乗フラグの解除と海上置き去りの引き戻し
+      char.onZipline = false;
+      char.onSlide = false;
+      char.onCurvedSlide = false;
+      char.onElevator = false;
+      char.onSkydive = false;
+      char.onTrapdoor = false;
+      char.onFreefall = false;
+
+      const currentStageObj = STAGES[char.currentStage] || STAGES[0];
+      if (currentStageObj) {
+        const centerX = currentStageObj.x || 0.0;
+        let defaultX = -1.6;
+        if (i === 1) defaultX = -4.8;
+        else if (i === 2) defaultX = 1.6;
+        else if (i === 3) defaultX = 4.8;
+        char.pos.set(centerX + defaultX, currentStageObj.y, currentStageObj.z + 1.8);
+        if (char.meshObj && char.meshObj.root) {
+          char.meshObj.root.position.copy(char.pos);
+        }
+      }
+
+      resetCharacterPose(char);
       refreshCharacterStackVisuals(char);
 
       if (char.nameplateSprite) {
@@ -1480,6 +1503,9 @@ export const NetworkManager = {
     notifyRestartButtonVisibility();
   },
 
+  /**
+   * リモートスロットバインド（安全初期化 ＆ 旧座標・海上浮遊残骸の完全パージ）
+   */
   _bindRemoteSlot(slotIndex, playerName) {
     const targetChar = characters[slotIndex];
     if (!targetChar) return;
@@ -1492,6 +1518,33 @@ export const NetworkManager = {
     targetChar.aiDirZ = 0;
     targetChar.targetBlock = null;
     targetChar.searchCooldown = 999999;
+
+    // ★ ギミック搭乗フラグの完全クリア（海上直立フリーズ防止）
+    targetChar.onSlide = false;
+    targetChar.onCurvedSlide = false;
+    targetChar.curvedSlideProgress = 0;
+    targetChar.curvedSlideOffset = 0;
+    targetChar.slideCooldown = 0;
+    targetChar.onZipline = false;
+    targetChar.ziplineProgress = 0;
+    targetChar.activeZipline = null;
+    targetChar.onElevator = false;
+    targetChar.elevatorProgress = 0;
+    targetChar.activeElevator = null;
+    targetChar.elevatorExiting = false;
+    targetChar.elevatorExitTimer = 0;
+    targetChar.onSkydive = false;
+    targetChar.skydiveProgress = 0;
+    targetChar.activeSkydive = null;
+    targetChar.onTrapdoor = false;
+    targetChar.trapdoorProgress = 0;
+    targetChar.activeTrapdoor = null;
+    targetChar.onFreefall = false;
+    targetChar.freefallProgress = 0;
+    targetChar.activeFreefall = null;
+
+    targetChar.remoteActionState = 'NORMAL';
+    targetChar._lastRemoteActionState = 'NORMAL';
 
     if (this.slots && this.slots[slotIndex]) {
       this.slots[slotIndex].isAI = false;
@@ -1514,7 +1567,7 @@ export const NetworkManager = {
       targetChar.nameplateSprite.visible = true;
     }
 
-    // ★ ホスト端末上でゲストを受け入れる際の合流スポーン（アトラクション搭乗中の次島オートスナップ連動）
+    // ★ ホスト端末上でゲストを受け入れる際、または再入室時の受入島平地への安全スナップ
     let hostCurrentStage = (this.isHost && player && typeof player.currentStage === 'number') ? player.currentStage : 0;
     if (this.isHost && isPlayerOnAttraction(player)) {
       const maxStageAllowed = (Array.isArray(STAGES) && STAGES.length > 0) ? (STAGES.length - 1) : (hostCurrentStage + 1);
@@ -1539,6 +1592,7 @@ export const NetworkManager = {
       if (targetChar.meshObj && targetChar.meshObj.root) {
         targetChar.meshObj.root.position.copy(targetChar.pos);
         targetChar.meshObj.root.rotation.set(0, Math.PI, 0);
+        targetChar.meshObj.root.visible = true;
       }
     } else {
       if (typeof resetCharacterToStageZero === 'function') {
@@ -1558,18 +1612,27 @@ export const NetworkManager = {
         if (targetChar.meshObj && targetChar.meshObj.root) {
           targetChar.meshObj.root.position.copy(targetChar.pos);
           targetChar.meshObj.root.rotation.set(0, Math.PI, 0);
+          targetChar.meshObj.root.visible = true;
         }
       }
     }
 
+    // ★ 前セッションの海の上空の古い targetNetPos を確実に上書き初期化
     if (!targetChar.targetNetPos) {
       targetChar.targetNetPos = new THREE.Vector3();
     }
     targetChar.targetNetPos.copy(targetChar.pos);
+    targetChar.targetNetRotY = Math.PI;
     targetChar.netVelocity = { x: 0, z: 0 };
     targetChar.lastPacketTime = performance.now();
+
+    resetCharacterPose(targetChar);
+    refreshCharacterStackVisuals(targetChar);
   },
 
+  /**
+   * スロットAI復元（空中・海上の置き去り座標安全引き戻し）
+   */
   _restoreSlotToAI(slotIndex) {
     const targetChar = characters[slotIndex];
     if (!targetChar) return;
@@ -1583,6 +1646,7 @@ export const NetworkManager = {
 
     targetChar.netVelocity = { x: 0, z: 0 };
     targetChar.remoteActionState = 'NORMAL';
+    targetChar._lastRemoteActionState = 'NORMAL';
 
     targetChar.unstuckTimer = 0;
     targetChar.stuckCheckTimer = 0;
@@ -1598,6 +1662,34 @@ export const NetworkManager = {
     targetChar.botSlideOffsetTarget = 0;
     targetChar.searchCooldown = (targetChar.team && targetChar.team.id === 'red') ? 0 : 0.06;
 
+    // ★ ギミック搭乗フラグの強制解除と安全平地への引き戻し（海上直立フリーズ防止）
+    targetChar.onZipline = false;
+    targetChar.onSlide = false;
+    targetChar.onCurvedSlide = false;
+    targetChar.onElevator = false;
+    targetChar.onSkydive = false;
+    targetChar.onTrapdoor = false;
+    targetChar.onFreefall = false;
+
+    const currentStageObj = STAGES[targetChar.currentStage] || STAGES[0];
+    if (currentStageObj) {
+      const centerX = currentStageObj.x || 0.0;
+      let defaultX = -1.6;
+      if (slotIndex === 1) defaultX = -4.8;
+      else if (slotIndex === 2) defaultX = 1.6;
+      else if (slotIndex === 3) defaultX = 4.8;
+
+      const safeSpawnZ = currentStageObj.z + 1.8;
+      targetChar.pos.set(centerX + defaultX, currentStageObj.y, safeSpawnZ);
+
+      if (targetChar.meshObj && targetChar.meshObj.root) {
+        targetChar.meshObj.root.position.copy(targetChar.pos);
+        targetChar.meshObj.root.rotation.set(0, Math.PI, 0);
+        targetChar.meshObj.root.visible = true;
+      }
+    }
+
+    resetCharacterPose(targetChar);
     refreshCharacterStackVisuals(targetChar);
 
     if (targetChar.nameplateSprite) {

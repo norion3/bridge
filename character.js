@@ -1,15 +1,18 @@
-// character.js: 3Dキャラクター外観構築・手足メッシュ・スタックプール・トロリー・ホバー展望リフト・スカイダイブ＆トラップドア姿勢管理・足元手前側（カメラ方向）フロスト投影ネームバッジ
-// ★ ジップライン腕形状異常＆アトラクション姿勢完全リセット版（Phase 1 修正）：
-//   1. 【両腕スケール (1.0, 1.0, 1.0) の完全原状復帰（ジップライン細長腕バグ根絶）】
-//      ジップライン滑走中に頭上バーを掴むため 3.8倍 に引き伸ばされた腕（scale.y = 3.80）を、
-//      resetCharacterPose において確実に通常スケール (1.0, 1.0, 1.0) へ完全復元。
-//      着地した瞬間に、愛らしく丸い通常の手（デザイン通りの初期造形）へ寸分違わず綺麗に戻るパイプラインを確立。
-//   2. 【全パーツトランスフォーム（位置・角度・スケール）の完全原状復帰】
-//      両脚のスケール・位置・角度、および体（Y=0.65, scale=(1.0, 1.15, 0.95)）・頭（Y=1.25）を
-//      確実に初期デフォルトへ完全復元し、スライダー後の沈み込みや空中ロールの残留を物理遮断。
-//   3. 【ネームプレート最前面描画（depthTest: false ＆ renderOrder = 999）の完全維持】
-//   4. 【無敵点滅中リセット時の不可視化（透明化）バグ完全根絶の維持】
-//   5. 【4走者均等整列 X = [-4.8, -1.6, 1.6, 4.8] の完全維持】
+// character.js: 3Dキャラクター外観構築・手足メッシュ・スタックプール・トロリー・ホバー展望リフト・スカイダイブ後方姿勢＆トラップドアあがき姿勢管理・足元手前側（カメラ方向）フロスト投影ネームバッジ
+// ★ スカイダイブ後方姿勢復元 ＆ トラップドアあがき伸長 ＆ 着地時丸手原状復帰版（Phase 1 修正）：
+//   1. 【スカイダイブ飛行中の後方ストリームライン姿勢の完全復元 (applySkydivePose)】
+//      前傾姿勢（頭から急降下）に合わせ、両腕を頭上ではなく「後方（+Z方向、背中・腰・お尻の後ろ）」へ
+//      スッと引き、縦に約2.4倍伸長（scale: 0.70, 2.40, 0.70）。
+//      風圧を背中へ受け流して時速80km超で滑空する、鳥人間・ダイバー本来の爽快な飛行フォームを完全復活。
+//   2. 【トラップドア急降下中のあがきバタバタ腕の完全復元 (applyTrapdoorPose)】
+//      垂直自由落下のパニック演出として、腕を縦に約1.8倍伸長（scale: 0.85, 1.80, 0.85）させ、
+//      高周波（30Hz）で上下に激しくパタパタ羽ばたかせるダイナミックなアクションを復元。
+//   3. 【着地時の通常丸い手 (1.0, 1.0, 1.0) 完全原状復帰 (resetCharacterPose)】
+//      島に降り立った瞬間に、両腕スケールを確実に (1.0, 1.0, 1.0) に戻し、
+//      デザイン通りの愛らしく丸い通常の手へ100%寸分違わず復帰。
+//   4. 【ネームプレート最前面描画（depthTest: false ＆ renderOrder = 999）の完全維持】
+//   5. 【無敵点滅中リセット時の不可視化（透明化）バグ完全根絶の維持】
+//   6. 【4走者均等整列 X = [-4.8, -1.6, 1.6, 4.8] の完全維持】
 
 import {
   TEAMS,
@@ -685,16 +688,22 @@ export function setStackGhostMode(char, isGhost) {
   char.isGhostStacked = false;
 }
 
+/**
+ * スカイダイブ飛行中の姿勢制御
+ * ★ 両腕を後方（背中・腰・お尻の後ろ）へピシッと伸ばしたダイビング姿勢の完全復元
+ */
 export function applySkydivePose(char, dirX, rollAngle) {
   char.meshObj.root.rotation.order = 'YXZ';
-  char.meshObj.root.rotation.set(1.1, Math.PI, rollAngle);
+  // 前傾姿勢（約65度）で頭から急降下滑空
+  char.meshObj.root.rotation.set(1.15, Math.PI, rollAngle);
 
-  char.meshObj.leftArm.position.set(-0.40, 0.46, -0.32);
-  char.meshObj.rightArm.position.set(0.40, 0.46, -0.32);
-  char.meshObj.leftArm.scale.set(1.0, 1.0, 1.0);
-  char.meshObj.rightArm.scale.set(1.0, 1.0, 1.0);
-  char.meshObj.leftArm.rotation.set(-1.42, 0, 0.18);
-  char.meshObj.rightArm.rotation.set(-1.42, 0, -0.18);
+  // ★ 腕を後方（+Z方向、背中・お尻の後ろ）へ引き、縦に約2.4倍伸長
+  char.meshObj.leftArm.position.set(-0.42, 0.40, 0.28);
+  char.meshObj.rightArm.position.set(0.42, 0.40, 0.28);
+  char.meshObj.leftArm.scale.set(0.70, 2.40, 0.70);
+  char.meshObj.rightArm.scale.set(0.70, 2.40, 0.70);
+  char.meshObj.leftArm.rotation.set(-1.45, 0, 0.22);
+  char.meshObj.rightArm.rotation.set(-1.45, 0, -0.22);
 
   const timeSec = performance.now() * 0.001;
   const flutter = Math.sin(timeSec * 28) * 0.12;
@@ -705,20 +714,25 @@ export function applySkydivePose(char, dirX, rollAngle) {
   char.meshObj.head.position.y = 1.10;
 }
 
+/**
+ * トラップドア落下中の姿勢制御
+ * ★ 垂直急降下パニック・あがきバタバタ伸長腕（1.8倍）の完全復元
+ */
 export function applyTrapdoorPose(char, dirX, timeSec) {
   char.meshObj.root.rotation.order = 'XYZ';
   
   const bodyShake = Math.sin(timeSec * 32) * 0.08;
   char.meshObj.root.rotation.set(0.08 + bodyShake, Math.PI, -dirX * 0.15 + Math.cos(timeSec * 28) * 0.06);
 
-  const armFlapL = Math.sin(timeSec * 30) * 0.65;
-  const armFlapR = Math.cos(timeSec * 30) * 0.65;
-  char.meshObj.leftArm.position.set(-0.54, 0.78 + Math.sin(timeSec * 28) * 0.08, 0.05);
-  char.meshObj.rightArm.position.set(0.54, 0.78 + Math.cos(timeSec * 28) * 0.08, 0.05);
-  char.meshObj.leftArm.scale.set(1.0, 1.0, 1.0);
-  char.meshObj.rightArm.scale.set(1.0, 1.0, 1.0);
-  char.meshObj.leftArm.rotation.set(armFlapL, 0.2, -0.55 + armFlapR * 0.4);
-  char.meshObj.rightArm.rotation.set(-armFlapR, -0.2, 0.55 - armFlapL * 0.4);
+  // ★ 激しい上下バタバタ（Flap）＆ 風圧であおられる腕の伸長（1.8倍）
+  const armFlapL = Math.sin(timeSec * 30) * 0.75;
+  const armFlapR = Math.cos(timeSec * 30) * 0.75;
+  char.meshObj.leftArm.position.set(-0.52, 0.82 + Math.sin(timeSec * 28) * 0.10, 0.05);
+  char.meshObj.rightArm.position.set(0.52, 0.82 + Math.cos(timeSec * 28) * 0.10, 0.05);
+  char.meshObj.leftArm.scale.set(0.85, 1.80, 0.85);
+  char.meshObj.rightArm.scale.set(0.85, 1.80, 0.85);
+  char.meshObj.leftArm.rotation.set(armFlapL, 0.25, -0.65 + armFlapR * 0.45);
+  char.meshObj.rightArm.rotation.set(-armFlapR, -0.25, 0.65 - armFlapL * 0.45);
 
   const legKickL = Math.sin(timeSec * 34) * 0.75;
   const legKickR = Math.sin(timeSec * 34 + Math.PI) * 0.75;
@@ -731,7 +745,7 @@ export function applyTrapdoorPose(char, dirX, timeSec) {
 
 /**
  * キャラクターの姿勢・手足位置・スケール完全リセット関数
- * ★ ジップライン終了後の両腕スケール (1.0, 1.0, 1.0) 原状復帰 ＆ 全パーツの新品デフォルト復元
+ * ★ 着地時・リセット時の通常丸い手 (1.0, 1.0, 1.0) 完全原状復帰 ＆ 全パーツの新品デフォルト復元
  */
 export function resetCharacterPose(char) {
   if (!char || !char.meshObj) return;
@@ -742,7 +756,7 @@ export function resetCharacterPose(char) {
   char.meshObj.root.visible = true;
   char.meshObj.root.scale.set(1.0, 1.0, 1.0);
 
-  // 2. 両腕の完全復元（★ ジップライン滑走中の 3.8倍 スケールを確実に 1.0 に戻す！）
+  // 2. 両腕の完全復元（★ 飛行中・落下中・ジップライン中のスケール伸長を確実に 1.0 に戻す！）
   char.meshObj.leftArm.scale.set(1.0, 1.0, 1.0);
   char.meshObj.rightArm.scale.set(1.0, 1.0, 1.0);
   char.meshObj.leftArm.position.set(-0.48, 0.68, 0);

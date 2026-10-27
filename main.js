@@ -1,20 +1,15 @@
 // main.js: ゲーム全体の起動指揮・Three.js初期化・メインループ・DM招待リンク自動合流司令塔
-// ★ 完全実体化保証 ＆ カウントダウン同期安定化 ＆ センタリングカメラ完全連動版：
-//   1. 【カウントダウン待機カメラへの isCountdownActive 引数・グローバル同期】
-//      animate() ループ内の updateDynamicCamera 呼び出しへ第6引数として isCountdownActive を明示的に伝達。
-//      あわせて window.isCountdownActive も同期し、camera.js 側で実装された
-//      「4走者が画面中央（45%〜55%ライン）に美しく整列するシネマティック構図」を100%確実に発火。
-//   2. 【カウントダウン待機中の全走者不可視化（透明化）完全根絶】
-//      isCountdownActive === true の間、自機および全キャラ（AI・リモート問わず）に対し、
-//      毎フレーム meshObj.root.visible = true および scale(1.0, 1.0, 1.0) を強制適用。
-//      被弾・タックル点滅中にリスタートが押されても、全員が100%確実に実体化して初期島に整列。
-//   3. 【リスタート時5秒カウントダウン待機エンジン（ソロ・マルチ完全共通）】
-//      resetGame() 呼び出し時に startRestartCountdown(5.0) を起動。
-//      画面中央に 5 → 4 → 3 → 2 → 1 → GO! のネオンポップカウントダウンを表示。
-//      カウントダウン中は自機操作を完全ロック、AI思考スキップ、試合タイマー停止。
-//      GO! 到達時に全員一斉スタート！
-//   4. 【「1人で遊ぶ」TAP TO START 待機 ＆ 「マルチ」自動始動の完全分離】
-//   5. 【ゲーム始動時（launchGameEngine）でのHUD一元表示確約】
+// ★ リモート走者海上浮遊オートレスキュー ＆ 完全実体化保証 ＆ カウントダウン同期安定化版（Phase 3 修正）：
+//   1. 【リモート走者の「海上・虚空浮遊オートレスキュー」配備】
+//      animate() ループ内の他走者更新において、リモート走者（c.isRemote === true）が
+//      アトラクション搭乗中（ZIPLINE, SKYDIVE等）でないにもかかわらず、
+//      所属ステージの島半径外かつ橋・階段の上でもない海面上空（虚空）に0.6秒以上取り残されている異常を検知。
+//      自動的に所属ステージの中央平地（4走者整列X座標: [-4.8, -1.6, 1.6, 4.8]）へ即時ワープ救出。
+//      targetNetPos も安全平地へ同期リセットし、海の上に直立不動で置き去りになる事故（画像4）を物理的に完全遮断。
+//   2. 【カウントダウン待機カメラへの isCountdownActive 引数・グローバル同期の完全維持】
+//   3. 【カウントダウン待機中の全走者不可視化（透明化）完全根絶の維持】
+//   4. 【リスタート時5秒カウントダウン待機エンジン（ソロ・マルチ完全共通）の維持】
+//   5. 【「1人で遊ぶ」TAP TO START 待機 ＆ 「マルチ」自動始動の完全分離の維持】
 
 import { mountAllUI, UIController, EntryShield } from './dom.js';
 import { SoundEngine } from './audio.js';
@@ -152,7 +147,6 @@ export function startRestartCountdown(duration = 5.0) {
 }
 
 export function launchGameEngine() {
-  // ★ ソロタップ時・マルチ開始時を問わず、HUD表示とゲーム画面への完全遷移を実行
   if (typeof UIController !== 'undefined' && typeof UIController.showGame === 'function') {
     UIController.showGame();
   }
@@ -519,6 +513,78 @@ export function animate(currentTime) {
 
         const remState = c.remoteActionState || 'NORMAL';
         applyRemoteGimmickVisuals(c, remState, timeSec);
+
+        // ★【Phase 3 核心】リモート走者の海上・虚空浮遊オートレスキュー
+        // アトラクション中（ZIPLINE, SKYDIVE等）でないにもかかわらず、
+        // 所属ステージの島半径外かつ橋・階段の上でもない海面上空に放置されている異常を検知して即時救出
+        const isAttractionRiding = Boolean(
+          remState !== 'NORMAL' ||
+          c.onZipline ||
+          c.onSkydive ||
+          c.onElevator ||
+          c.onTrapdoor ||
+          c.onFreefall ||
+          c.onSlide ||
+          c.onCurvedSlide ||
+          c.isJumping
+        );
+
+        if (!isAttractionRiding) {
+          const currentStg = STAGES[c.currentStage] || STAGES[0];
+          if (currentStg) {
+            const centerX = currentStg.x || 0.0;
+            const distCenter = Math.hypot(c.pos.x - centerX, c.pos.z - currentStg.z);
+
+            // 島の安全半径（R + 2.5m）を超えて外側にいる場合
+            if (distCenter > (currentStg.r + 2.5)) {
+              let isOnBridge = false;
+              const stageBridges = bridgesByStage.get(c.currentStage);
+              if (stageBridges && stageBridges.length > 0) {
+                for (let bi = 0; bi < stageBridges.length; bi++) {
+                  const br = stageBridges[bi];
+                  if (!br) continue;
+                  const minZ = Math.min(br.startZ, br.endZ) - 2.5;
+                  const maxZ = Math.max(br.startZ, br.endZ) + 2.5;
+                  if (c.pos.z >= minZ && c.pos.z <= maxZ) {
+                    const brX = br.launchPoint ? br.launchPoint.x : centerX;
+                    if (Math.abs(c.pos.x - brX) < 6.5) {
+                      isOnBridge = true;
+                      break;
+                    }
+                  }
+                }
+              }
+
+              // 橋の上でもない海の上に浮いている場合
+              if (!isOnBridge) {
+                c.voidRescueTimer = (c.voidRescueTimer || 0) + dt;
+                if (c.voidRescueTimer > 0.6) {
+                  c.voidRescueTimer = 0;
+                  let defaultX = -1.6;
+                  if (cIdx === 1) defaultX = -4.8;
+                  else if (cIdx === 2) defaultX = 1.6;
+                  else if (cIdx === 3) defaultX = 4.8;
+
+                  c.pos.set(centerX + defaultX, currentStg.y, currentStg.z + 1.8);
+                  if (c.targetNetPos) {
+                    c.targetNetPos.copy(c.pos);
+                  }
+                  if (c.meshObj && c.meshObj.root) {
+                    c.meshObj.root.position.copy(c.pos);
+                  }
+                  resetCharacterPose(c);
+                  console.warn(`[main.js] リモート走者 Slot ${cIdx} の海上浮遊を検知。Stage ${c.currentStage} 平地へオートレスキュー完了`);
+                }
+              } else {
+                c.voidRescueTimer = 0;
+              }
+            } else {
+              c.voidRescueTimer = 0;
+            }
+          }
+        } else {
+          c.voidRescueTimer = 0;
+        }
 
         if (remState === 'TRAPDOOR') {
           const stageBridges = bridgesByStage.get(c.currentStage);
