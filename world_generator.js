@@ -1,18 +1,14 @@
 // world_generator.js: 決定論的PRNG・コース伸長・二股分岐・橋/アトラクション3D構造体生成専用モジュール
-// ★ 天空の超ロング緩傾斜下り階段 ＆ 複数回出現 ＆ 下りネオンガイド完全導入版：
-//   1. 【超ロング・緩傾斜スカイウォーク（長くて緩やかな至福の坂道）】
-//      Stage 6 -> 7 の数値を「水平 54m / 落差 -11.0m（Y=+17m -> +6m）」へ大幅刷新。
-//      傾斜角を約 11.5度（歩道橋や緩やかなスロープ並み）に抑え、段数を約 52段 へ拡大。
-//      前方のパノラマ視界を広々と見渡しながら、ト・ン・ト・ン・ト・ンと爽快に駆け下りるロング滑走を実現。
-//   2. 【一目で下り階段と分かる3大ビジュアルサインの自動配置】
-//      isDownhillBridge 判定時、階段入り口の床面に「光る下向きシェブロン（▼▼▼）」を投影。
-//      さらに階段外周両サイドに傾斜に沿って下る「ネオンガイドレール（手すり＆支柱）」を生成し、
-//      見下ろし視点でも奥に向かって線が沈み込むパースペクティブを強調して錯覚を完全解消。
-//   3. 【5分間のレース中に2〜3回リズミカルに出現（頻度改革）】
-//      DESCENT_GIMMICKS 抽選バッグに正式に 'downhill' を追加。
-//      後半（Stage 8以降）のランダムループでも緩やかな超ロング下り階段が選ばれるようになり、
-//      5分間のレース全体のテンポとメリハリが劇的に向上。
-//   4. 【二股分岐（Fork Pattern B: idx === 8）との完全同期＆決定論的PRNGの100%維持】
+// ★ ホスト交代・再入室時ステージ構成完全同期 ＆ 超ロング緩傾斜下り階段対応版：
+//   1. 【setWorldSeed 内での resetGimmickBags 自動実行（完全同期化）】
+//      シード値設定時（buildWorld 呼出時）に、二股分岐履歴（lastMergeStageIdx = -1）および
+//      ギミック抽選バッグ（descentBag / ascentBag / lastGimmickCategory）を確実にクリーンリセット。
+//      再入室端末でもホスト端末と寸分違わず同じタイミング（idx === 8）で二股分岐（Fork Pattern B）が生成され、
+//      ゲート・島・接続ギミック（階段 vs ジップライン等）の不一致を根本根絶。
+//   2. 【超ロング・緩傾斜スカイウォーク（長くて緩やかな至福の坂道）の維持】
+//      Stage 6 -> 7（水平 54m / 落差 -11.0m / 傾斜約11.5度 / 約52段）。
+//   3. 【下り階段専用の3大ビジュアルサイン（光る下向きシェブロン ▼▼▼ ＆ ネオンガイドレール）の維持】
+//   4. 【DESCENT_GIMMICKS 抽選バッグへの 'downhill' 登録による後半複数回出現の維持】
 
 import {
   TRAMPOLINE_TIERS,
@@ -75,9 +71,36 @@ setModifierGatesReference(modifierGates);
 export let currentWorldSeed = 12345678;
 let _prngState = 12345678;
 
+// ★ 抽選バッグに正式に 'downhill'（長くて緩やかな下り階段）を追加
+export const DESCENT_GIMMICKS = ['slide', 'skydive', 'trapdoor', 'curved_slide', 'zipline', 'downhill'];
+export const ASCENT_GIMMICKS = ['elevator', 'vertical', 'jump', 'bridge'];
+export let descentBag = [];
+export let ascentBag = [];
+export let lastGimmickCategory = 'descent';
+export let lastMergeStageIdx = -1;
+
+/**
+ * ギミック抽選バッグおよび分岐インデックスのクリーンリセット関数
+ */
+export function resetGimmickBags() {
+  descentBag.length = 0;
+  ascentBag.length = 0;
+  lastGimmickCategory = 'descent';
+  lastMergeStageIdx = -1;
+}
+
+/**
+ * シード値設定 ＆ コース生成器の内部状態完全初期化
+ * ★ buildWorld 呼び出し時に必ずバッグと分岐履歴をクリアし、前セッションのゴミ残留を物理遮断
+ */
 export function setWorldSeed(seed = null) {
   currentWorldSeed = (seed !== null && seed !== undefined) ? (seed >>> 0) : ((Math.random() * 0xFFFFFFFF) >>> 0);
   _prngState = currentWorldSeed;
+
+  // ★ これを呼ぶことで、再入室時にも lastMergeStageIdx が確実に -1 にリセットされ、
+  //    ホスト端末と完全に同一のタイミング（idx === 8）で二股分岐が生成される！
+  resetGimmickBags();
+
   return currentWorldSeed;
 }
 
@@ -97,21 +120,6 @@ export function getDeterministicItemType(stageIdx) {
 }
 
 const dummyPlankObj = new THREE.Object3D();
-
-// ★ 抽選バッグに正式に 'downhill'（長くて緩やかな下り階段）を追加！
-export const DESCENT_GIMMICKS = ['slide', 'skydive', 'trapdoor', 'curved_slide', 'zipline', 'downhill'];
-export const ASCENT_GIMMICKS = ['elevator', 'vertical', 'jump', 'bridge'];
-export let descentBag = [];
-export let ascentBag = [];
-export let lastGimmickCategory = 'descent';
-export let lastMergeStageIdx = -1;
-
-export function resetGimmickBags() {
-  descentBag.length = 0;
-  ascentBag.length = 0;
-  lastGimmickCategory = 'descent';
-  lastMergeStageIdx = -1;
-}
 
 function getNextDescentGimmick() {
   if (descentBag.length === 0) {

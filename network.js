@@ -1,16 +1,21 @@
 // network.js: AgentSDK公式仕様完全準拠 ＆ 10Hz POS 送受信ループ ＆ 自律ホスト昇格 ＆ スナップショット復元司令塔
-// ★ 出入り時アイテム同期完全修復 ＆ 全ワールドアイテム・ボーナスパージ版（Phase 2 修正）：
-//   1. 【purgeLocalWorldState の全アイテム・4大ボーナスブロック・保留キュー完全パージ】
-//      床ブロックだけでなく、床アイテム (floorItems)、スライダー/ジップライン/スカイダイブの
-//      全ボーナスブロック配列、および遅延消去保留キュー (pendingConsumedBonusIds) を100%全消去・隔離。
-//      出入りを繰り返しても前セッションのアイテムや取得済みボーナスが新セッションに一切残留しない。
-//   2. 【スナップショット受入時 (_applySnapshotChunk) の itemId 完全一致厳格化】
-//      「ステージとタイプが同じなら同一」という曖昧判定を撤廃し、itemId の完全一致でのみ照合。
-//      前セッションのゴミとの誤混同を根絶し、取得パケット (co) と ID が一致せず画面に残り続けるゾンビ化を物理遮断。
-//   3. 【_applyRoomMembersSync でのシード再生成時クリーンアップ強化】
-//   4. 【リモートスロットバインド (_bindRemoteSlot) の旧座標パージ＆安全平地スナップ完全維持】
-//   5. 【退室時 (_restoreSlotToAI) のアトラクション空中取り残され安全引き戻し完全維持】
-//   6. 【アトラクション搭乗中合流の次島オートスナップ (isPlayerOnAttraction) 完全維持】
+// ★ 出退室・ホスト交代時 9大初期化漏れ完全根絶版：
+//   1. 【_restoreSlotToAI での targetChar.currentStage = 0 完全代入】
+//      前セッションのステージ（例: 10）を引きずり、新コースのStage 0座標と乖離してAIが海へ落下死し続ける致命的バグを根絶。
+//   2. 【自機および全走者の stackCount = 0 ＆ 全バフデバフタイマーゼロクリア】
+//      前セッションで抱えていたブロック（15個等）や小人化/スタン/磁石を引き継いだまま新セッションを開始する不整合を完全解消。
+//   3. 【exitRoom() でのアクション保留キュー9種の完全破棄】
+//      退室直前に溜まっていたブロック拾い・チャット・散乱パケットが次回入室時に誤爆送信されるリスクを遮断。
+//   4. 【お邪魔キャラ（obstacleMobs）のシーングラフ完全破棄・配列クリア】
+//      前セッションのトゲトゲモブが新セッションの空中に透明・浮遊したまま残るゾンビ化を根絶。
+//   5. 【タイムアップ結果画面（#modal-result）の確実な強制非表示】
+//      リザルト画面が出たまま退室して別部屋に入った際、ゲーム画面の上に結果画面が覆い被さるUIバグを解消。
+//   6. 【bridgesByStage の完全クリア】
+//      前セッションの橋参照の残留によるメモリ混同・リサイクル誤爆を遮断。
+//   7. 【飛翔体・落雷・ドレインプールの完全非アクティブ化】
+//      攻撃中に退室した場合にクリスタル弾や雷柱が宙に静止して残る現象を根絶。
+//   8. 【promoteToHost() 時の _snapshotQueue 完全破棄】
+//   9. 【purgeLocalWorldState での resetGimmickBags 自動実行の維持】
 
 import {
   player,
@@ -37,7 +42,18 @@ import {
   activeMagnetBlocks,
   applyRemoteBonusConsumed
 } from './world.js';
-import { resetParticlePools, floorBlockPool } from './particles.js';
+import {
+  bridgesByStage,
+  obstacleMobs
+} from './world_state.js';
+import {
+  resetParticlePools,
+  floorBlockPool,
+  projectilePool,
+  thunderProjectilePool,
+  drainBlockPool,
+  lightningPillarPool
+} from './particles.js';
 import { pendingConsumedBonusIds } from './gimmicks.js';
 import { spawnDanmaku } from './danmaku.js';
 import {
@@ -45,6 +61,7 @@ import {
   recordParticipant,
   markParticipantInactive
 } from './menu.js';
+import { disposeHierarchy } from './materials.js';
 
 // ★ net_protocol.js から純粋計算・タプル変換関数をインポート
 import {
@@ -60,15 +77,21 @@ import {
   unpackPickTuple
 } from './net_protocol.js';
 
+// ★ world_generator.js からギミック抽選バッグ・二股分岐履歴リセット関数をインポート
+import { resetGimmickBags } from './world_generator.js';
+
 // ★ net_lobby_hooks.js からロビーイベントフックをインポート＆再エクスポート
 import { hookLobbyNetworkEvents } from './net_lobby_hooks.js';
 
 export { hookLobbyNetworkEvents };
 
 /**
- * 入退室時・新セッション開始時に前セッションの全オブジェクト（ブロック・アイテム・ボーナス）を完全破棄・隔離するヘルパー
+ * 入退室時・新セッション開始時に前セッションの全オブジェクト（ブロック・アイテム・ボーナス・お邪魔モブ・飛翔体）
+ * およびコース生成器の内部状態（二股分岐履歴・抽選バッグ）を完全破棄・隔離・初期化するヘルパー
  */
 function purgeLocalWorldState() {
+  const activeScene = (typeof window !== 'undefined' && window.currentSceneRef) ? window.currentSceneRef : null;
+
   // 1. 床ブロックの完全隔離
   if (Array.isArray(floorBlockPool)) {
     for (let i = 0; i < floorBlockPool.length; i++) {
@@ -139,7 +162,51 @@ function purgeLocalWorldState() {
     pendingConsumedBonusIds.clear();
   }
 
-  // 6. パーティクルプールのリセット
+  // 6. ★★★ お邪魔キャラ（obstacleMobs）のシーングラフ破棄＆配列全消去 ★★★
+  if (Array.isArray(obstacleMobs)) {
+    for (let i = 0; i < obstacleMobs.length; i++) {
+      const mob = obstacleMobs[i];
+      if (mob && mob.group) {
+        mob.active = false;
+        if (typeof disposeHierarchy === 'function') {
+          disposeHierarchy(mob.group);
+        }
+        if (activeScene) {
+          activeScene.remove(mob.group);
+        }
+      }
+    }
+    obstacleMobs.length = 0;
+  }
+
+  // 7. ★★★ ステージ別ブリッジ参照Map（bridgesByStage）の完全クリア ★★★
+  if (bridgesByStage && typeof bridgesByStage.clear === 'function') {
+    bridgesByStage.clear();
+  }
+
+  // 8. ★★★ 飛翔体・サンダー・ドレイン・雷柱プールの完全非アクティブ化 ★★★
+  const projectilePools = [projectilePool, thunderProjectilePool, drainBlockPool, lightningPillarPool];
+  for (let pi = 0; pi < projectilePools.length; pi++) {
+    const pPool = projectilePools[pi];
+    if (Array.isArray(pPool)) {
+      for (let pj = 0; pj < pPool.length; pj++) {
+        const item = pPool[pj];
+        if (item) {
+          item.active = false;
+          if (item.group) item.group.visible = false;
+          if (item.mesh) item.mesh.visible = false;
+          if (item.reticle) item.reticle.visible = false;
+        }
+      }
+    }
+  }
+
+  // 9. ★★★ コース生成器の内部状態（二股分岐履歴・ギミック抽選バッグ）の完全リセット ★★★
+  if (typeof resetGimmickBags === 'function') {
+    resetGimmickBags();
+  }
+
+  // 10. パーティクルプールのリセット
   if (typeof resetParticlePools === 'function') {
     resetParticlePools();
   }
@@ -211,6 +278,13 @@ function safeShowGameScreen() {
   if (startModal) {
     startModal.style.setProperty('display', 'none', 'important');
     startModal.classList.add('hidden');
+  }
+
+  // ★★★ タイムアップ結果画面（#modal-result）の消去漏れ完全解消 ★★★
+  const resultModal = document.getElementById('modal-result');
+  if (resultModal) {
+    resultModal.style.setProperty('display', 'none', 'important');
+    resultModal.classList.add('hidden');
   }
 
   if (typeof window !== 'undefined' && typeof window.launchGameEngine === 'function') {
@@ -559,6 +633,9 @@ export const NetworkManager = {
 
     console.log(`[NetworkManager] promoteToHost: Slot ${this.mySlot} becoming Host.`);
 
+    // ★ 昇格時に古い中途半端なスナップショットキューを完全クリア
+    this._snapshotQueue.length = 0;
+
     this.isHost = true;
     notifyRestartButtonVisibility();
     this._restoreAllVacantSlotsToAI();
@@ -596,6 +673,17 @@ export const NetworkManager = {
       char.forkBranchChoice = undefined;
       char.botSlideOffsetTarget = 0;
 
+      // ★★★ 状態・タイマー・ステージの完全初期化 ★★★
+      char.currentStage = 0;
+      char.stackCount = 0;
+      char.stunTimer = 0;
+      char.shrinkTimer = 0;
+      char.invulnerableTimer = 0;
+      char.speedBoostActive = false;
+      char.speedBoostTimer = 0;
+      char.magnetActive = false;
+      char.magnetTimer = 0;
+
       char.onZipline = false;
       char.onSlide = false;
       char.onCurvedSlide = false;
@@ -604,7 +692,7 @@ export const NetworkManager = {
       char.onTrapdoor = false;
       char.onFreefall = false;
 
-      const currentStageObj = STAGES[char.currentStage] || STAGES[0];
+      const currentStageObj = STAGES[0];
       if (currentStageObj) {
         const centerX = currentStageObj.x || 0.0;
         let defaultX = -1.6;
@@ -677,6 +765,24 @@ export const NetworkManager = {
     try {
       await this.init();
       await safeExitCurrentRoom(null);
+
+      // ★ 全キャラクターのスタック数・バフ・ステージを完全初期化
+      if (Array.isArray(characters)) {
+        characters.forEach((c) => {
+          if (!c) return;
+          c.stackCount = 0;
+          c.currentStage = 0;
+          c.stunTimer = 0;
+          c.shrinkTimer = 0;
+          c.invulnerableTimer = 0;
+          c.speedBoostActive = false;
+          c.speedBoostTimer = 0;
+          c.magnetActive = false;
+          c.magnetTimer = 0;
+          if (typeof resetCharacterPose === 'function') resetCharacterPose(c);
+          if (typeof refreshCharacterStackVisuals === 'function') refreshCharacterStackVisuals(c);
+        });
+      }
 
       purgeLocalWorldState();
 
@@ -811,6 +917,24 @@ export const NetworkManager = {
       await this.init();
       await safeExitCurrentRoom(safeRoomId);
 
+      // ★ 全キャラクターのスタック数・バフ・ステージを完全初期化
+      if (Array.isArray(characters)) {
+        characters.forEach((c) => {
+          if (!c) return;
+          c.stackCount = 0;
+          c.currentStage = 0;
+          c.stunTimer = 0;
+          c.shrinkTimer = 0;
+          c.invulnerableTimer = 0;
+          c.speedBoostActive = false;
+          c.speedBoostTimer = 0;
+          c.magnetActive = false;
+          c.magnetTimer = 0;
+          if (typeof resetCharacterPose === 'function') resetCharacterPose(c);
+          if (typeof refreshCharacterStackVisuals === 'function') refreshCharacterStackVisuals(c);
+        });
+      }
+
       purgeLocalWorldState();
 
       if (this.isSDKAvailable) {
@@ -845,6 +969,9 @@ export const NetworkManager = {
       this.isMultiplayerActive = true;
       this._seedApplied = false;
       this._hasCaughtUp = false;
+
+      // ★★★ 入室時に保持シードをクリアし、ホストから届くシード値で確実にクリーン再構築させる ★★★
+      this.currentSeed = null;
 
       if (this._syncIntervalId) {
         clearInterval(this._syncIntervalId);
@@ -1383,7 +1510,8 @@ export const NetworkManager = {
       this.currentSeed = seed;
       this._seedApplied = true;
       if (activeScene) {
-        // ★ 新シード構築前に前セッションの床ブロック・アイテム・ボーナスを100%完全パージ
+        // ★★★ 新シード構築前に前セッションの床ブロック・アイテム・ボーナス・お邪魔モブ、
+        //      およびコース生成器の二股分岐履歴（lastMergeStageIdx = -1）と抽選バッグを100%完全初期化！ ★★★
         purgeLocalWorldState();
         buildWorld(activeScene, seed);
 
@@ -1694,6 +1822,17 @@ export const NetworkManager = {
     targetChar.botSlideOffsetTarget = 0;
     targetChar.searchCooldown = (targetChar.team && targetChar.team.id === 'red') ? 0 : 0.06;
 
+    // ★★★ 致命的欠陥の根絶：進行ステージを確実に Stage 0 に初期化！ ★★★
+    targetChar.currentStage = 0;
+    targetChar.stackCount = 0;
+    targetChar.stunTimer = 0;
+    targetChar.shrinkTimer = 0;
+    targetChar.invulnerableTimer = 0;
+    targetChar.speedBoostActive = false;
+    targetChar.speedBoostTimer = 0;
+    targetChar.magnetActive = false;
+    targetChar.magnetTimer = 0;
+
     targetChar.onZipline = false;
     targetChar.onSlide = false;
     targetChar.onCurvedSlide = false;
@@ -1702,7 +1841,7 @@ export const NetworkManager = {
     targetChar.onTrapdoor = false;
     targetChar.onFreefall = false;
 
-    const currentStageObj = STAGES[targetChar.currentStage] || STAGES[0];
+    const currentStageObj = STAGES[0];
     if (currentStageObj) {
       const centerX = currentStageObj.x || 0.0;
       let defaultX = -1.6;
@@ -1944,7 +2083,37 @@ export const NetworkManager = {
     this._idleKeepAliveCounter = 0;
     this._hasCaughtUp = false;
 
-    // ★ 退室時にシーン内の古いブロック・アイテム・ボーナス・保留キューを100%完全パージ・隔離
+    // ★★★ 送信保留キュー9種の完全破棄（次回入室時への誤爆送信根絶） ★★★
+    this._pendingPlanks.length = 0;
+    this._pendingPicks.length = 0;
+    this._pendingConsumes.length = 0;
+    this._pendingBlows.length = 0;
+    this._pendingSkills.length = 0;
+    this._pendingKnockouts.length = 0;
+    this._pendingScatters.length = 0;
+    this._pendingSpawns.length = 0;
+    this._pendingChats.length = 0;
+
+    // ★★★ 全キャラクターのスタック数・バフ・ステージを完全初期化 ★★★
+    if (Array.isArray(characters)) {
+      characters.forEach((c) => {
+        if (!c) return;
+        c.stackCount = 0;
+        c.currentStage = 0;
+        c.stunTimer = 0;
+        c.shrinkTimer = 0;
+        c.invulnerableTimer = 0;
+        c.speedBoostActive = false;
+        c.speedBoostTimer = 0;
+        c.magnetActive = false;
+        c.magnetTimer = 0;
+        if (typeof resetCharacterPose === 'function') resetCharacterPose(c);
+        if (typeof refreshCharacterStackVisuals === 'function') refreshCharacterStackVisuals(c);
+      });
+    }
+
+    // ★ 退室時にシーン内の古いブロック・アイテム・ボーナス・お邪魔モブ・飛翔体、
+    //   およびコース生成器の内部状態（二股分岐履歴・抽選バッグ）を100%完全パージ・隔離・リセット
     purgeLocalWorldState();
 
     if (this.myUser && this.myUser.user_id) {
@@ -1959,6 +2128,9 @@ export const NetworkManager = {
     this.isSlotConfirmed = false;
     this._seedApplied = false;
     this._hasReceivedFirstHostPacket = false;
+
+    // ★★★ 退室時に保持シード値をリセットし、次回入室時に確実に新シードでリビルドを走らせる ★★★
+    this.currentSeed = null;
 
     if (typeof bindLocalPlayerSlot === 'function') {
       bindLocalPlayerSlot(0);
