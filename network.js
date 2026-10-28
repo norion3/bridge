@@ -1,21 +1,14 @@
 // network.js: AgentSDK公式仕様完全準拠 ＆ 10Hz POS 送受信ループ ＆ 自律ホスト昇格 ＆ スナップショット復元司令塔
-// ★ 出退室・ホスト交代時 9大初期化漏れ完全根絶版：
-//   1. 【_restoreSlotToAI での targetChar.currentStage = 0 完全代入】
-//      前セッションのステージ（例: 10）を引きずり、新コースのStage 0座標と乖離してAIが海へ落下死し続ける致命的バグを根絶。
-//   2. 【自機および全走者の stackCount = 0 ＆ 全バフデバフタイマーゼロクリア】
-//      前セッションで抱えていたブロック（15個等）や小人化/スタン/磁石を引き継いだまま新セッションを開始する不整合を完全解消。
-//   3. 【exitRoom() でのアクション保留キュー9種の完全破棄】
-//      退室直前に溜まっていたブロック拾い・チャット・散乱パケットが次回入室時に誤爆送信されるリスクを遮断。
-//   4. 【お邪魔キャラ（obstacleMobs）のシーングラフ完全破棄・配列クリア】
-//      前セッションのトゲトゲモブが新セッションの空中に透明・浮遊したまま残るゾンビ化を根絶。
-//   5. 【タイムアップ結果画面（#modal-result）の確実な強制非表示】
-//      リザルト画面が出たまま退室して別部屋に入った際、ゲーム画面の上に結果画面が覆い被さるUIバグを解消。
-//   6. 【bridgesByStage の完全クリア】
-//      前セッションの橋参照の残留によるメモリ混同・リサイクル誤爆を遮断。
-//   7. 【飛翔体・落雷・ドレインプールの完全非アクティブ化】
-//      攻撃中に退室した場合にクリスタル弾や雷柱が宙に静止して残る現象を根絶。
-//   8. 【promoteToHost() 時の _snapshotQueue 完全破棄】
-//   9. 【purgeLocalWorldState での resetGimmickBags 自動実行の維持】
+// ★ 完全独立決定論ハッシュ・リスタート防護 ＆ プール完全隔離版：
+//   1. 【リスタート時の Catch-up 誤爆完全防止】
+//      RESTART_GAME 受信時および broadcastRestartGame 時に、全端末で _hasCaughtUp = true を確約し、
+//      通信遅延パケット（古い hostStage）による誤ったステージワープを物理遮断。
+//   2. 【floorBlockPool 全400個の強制隔離（pos.y = -999）＆完全パージ】
+//      purgeLocalWorldState において、全ブロックの blockId, stageIdx を完全消去し、
+//      再利用時に奥の虚空（Z=-300m）にブロックが残留するゴースト化を100%根絶。
+//   3. 【お邪魔モブ・飛翔体・保留キューの完全破棄】
+//   4. 【自機および全走者の stackCount = 0 ＆ 全バフデバフタイマーゼロクリア】
+//   5. 【タイムアップ結果画面（#modal-result）の強制非表示】
 
 import {
   player,
@@ -92,7 +85,7 @@ export { hookLobbyNetworkEvents };
 function purgeLocalWorldState() {
   const activeScene = (typeof window !== 'undefined' && window.currentSceneRef) ? window.currentSceneRef : null;
 
-  // 1. 床ブロックの完全隔離
+  // 1. 床ブロックの完全隔離（全400個のID・ステージ番号を完全抹消し、y=-999mへ物理隔離）
   if (Array.isArray(floorBlockPool)) {
     for (let i = 0; i < floorBlockPool.length; i++) {
       const b = floorBlockPool[i];
@@ -112,7 +105,7 @@ function purgeLocalWorldState() {
     floorBlocksByStage.clear();
   }
 
-  // 2. ★ 床アイテム（floorItems）の完全消去・非表示化（ゾンビアイテムの根絶）
+  // 2. 床アイテム（floorItems）の完全消去・非表示化（ゾンビアイテムの根絶）
   if (Array.isArray(floorItems)) {
     for (let i = 0; i < floorItems.length; i++) {
       const it = floorItems[i];
@@ -130,7 +123,7 @@ function purgeLocalWorldState() {
     floorItems.length = 0;
   }
 
-  // 3. ★ 4大ボーナスブロック全配列の完全リセット（最初から消えているバグの防止）
+  // 3. 4大ボーナスブロック全配列の完全リセット（最初から消えているバグの防止）
   const bonusArrays = [slideBonusBlocks, curvedSlideBonusBlocks, ziplineBonusBlocks, skydiveBonusBlocks];
   for (let a = 0; a < bonusArrays.length; a++) {
     const arr = bonusArrays[a];
@@ -152,17 +145,17 @@ function purgeLocalWorldState() {
     }
   }
 
-  // 4. ★ 吸引中ブロックリストのクリア
+  // 4. 吸引中ブロックリストのクリア
   if (Array.isArray(activeMagnetBlocks)) {
     activeMagnetBlocks.length = 0;
   }
 
-  // 5. ★ 遅延消去保留キューの完全クリア（前セッションの消滅IDによる汚染防止）
+  // 5. 遅延消去保留キューの完全クリア（前セッションの消滅IDによる汚染防止）
   if (pendingConsumedBonusIds && typeof pendingConsumedBonusIds.clear === 'function') {
     pendingConsumedBonusIds.clear();
   }
 
-  // 6. ★★★ お邪魔キャラ（obstacleMobs）のシーングラフ破棄＆配列全消去 ★★★
+  // 6. お邪魔キャラ（obstacleMobs）のシーングラフ破棄＆配列全消去
   if (Array.isArray(obstacleMobs)) {
     for (let i = 0; i < obstacleMobs.length; i++) {
       const mob = obstacleMobs[i];
@@ -179,12 +172,12 @@ function purgeLocalWorldState() {
     obstacleMobs.length = 0;
   }
 
-  // 7. ★★★ ステージ別ブリッジ参照Map（bridgesByStage）の完全クリア ★★★
+  // 7. ステージ別ブリッジ参照Map（bridgesByStage）の完全クリア
   if (bridgesByStage && typeof bridgesByStage.clear === 'function') {
     bridgesByStage.clear();
   }
 
-  // 8. ★★★ 飛翔体・サンダー・ドレイン・雷柱プールの完全非アクティブ化 ★★★
+  // 8. 飛翔体・サンダー・ドレイン・雷柱プールの完全非アクティブ化
   const projectilePools = [projectilePool, thunderProjectilePool, drainBlockPool, lightningPillarPool];
   for (let pi = 0; pi < projectilePools.length; pi++) {
     const pPool = projectilePools[pi];
@@ -201,7 +194,7 @@ function purgeLocalWorldState() {
     }
   }
 
-  // 9. ★★★ コース生成器の内部状態（二股分岐履歴・ギミック抽選バッグ）の完全リセット ★★★
+  // 9. コース生成器の内部状態の完全リセット
   if (typeof resetGimmickBags === 'function') {
     resetGimmickBags();
   }
@@ -280,7 +273,6 @@ function safeShowGameScreen() {
     startModal.classList.add('hidden');
   }
 
-  // ★★★ タイムアップ結果画面（#modal-result）の消去漏れ完全解消 ★★★
   const resultModal = document.getElementById('modal-result');
   if (resultModal) {
     resultModal.style.setProperty('display', 'none', 'important');
@@ -633,7 +625,6 @@ export const NetworkManager = {
 
     console.log(`[NetworkManager] promoteToHost: Slot ${this.mySlot} becoming Host.`);
 
-    // ★ 昇格時に古い中途半端なスナップショットキューを完全クリア
     this._snapshotQueue.length = 0;
 
     this.isHost = true;
@@ -673,7 +664,6 @@ export const NetworkManager = {
       char.forkBranchChoice = undefined;
       char.botSlideOffsetTarget = 0;
 
-      // ★★★ 状態・タイマー・ステージの完全初期化 ★★★
       char.currentStage = 0;
       char.stackCount = 0;
       char.stunTimer = 0;
@@ -766,7 +756,6 @@ export const NetworkManager = {
       await this.init();
       await safeExitCurrentRoom(null);
 
-      // ★ 全キャラクターのスタック数・バフ・ステージを完全初期化
       if (Array.isArray(characters)) {
         characters.forEach((c) => {
           if (!c) return;
@@ -917,7 +906,6 @@ export const NetworkManager = {
       await this.init();
       await safeExitCurrentRoom(safeRoomId);
 
-      // ★ 全キャラクターのスタック数・バフ・ステージを完全初期化
       if (Array.isArray(characters)) {
         characters.forEach((c) => {
           if (!c) return;
@@ -970,7 +958,6 @@ export const NetworkManager = {
       this._seedApplied = false;
       this._hasCaughtUp = false;
 
-      // ★★★ 入室時に保持シードをクリアし、ホストから届くシード値で確実にクリーン再構築させる ★★★
       this.currentSeed = null;
 
       if (this._syncIntervalId) {
@@ -1150,7 +1137,6 @@ export const NetworkManager = {
       }
     } else if (chunk.t === 'items' && activeScene) {
       chunk.list.forEach(si => {
-        // ★【重要修正】曖昧判定を撤廃し itemId 完全一致でのみ照合。古いアイテムとのID混同・ゾンビ化を完全防止
         const existing = floorItems.find(li => li.active && li.itemId === si.itemId);
         if (!existing) {
           const newItem = spawnItem(activeScene, si.stageIdx, si.type);
@@ -1484,6 +1470,11 @@ export const NetworkManager = {
           break;
 
         case 'RESTART_GAME':
+          // ★★★ リスタート受信時の Catch-up 誤爆防止 ★★★
+          // リスタート信号を受信した瞬間、全端末で Catch-up 完了フラグを確約し、
+          // 通信遅延で届いた古い hostStage による位置飛び・誤伸長を完全に遮断する！
+          this._hasCaughtUp = true;
+          this.currentSeed = packet.seed || this.currentSeed;
           if (typeof window.onRemoteRestartReceived === 'function') {
             window.onRemoteRestartReceived(packet);
           }
@@ -1510,8 +1501,6 @@ export const NetworkManager = {
       this.currentSeed = seed;
       this._seedApplied = true;
       if (activeScene) {
-        // ★★★ 新シード構築前に前セッションの床ブロック・アイテム・ボーナス・お邪魔モブ、
-        //      およびコース生成器の二股分岐履歴（lastMergeStageIdx = -1）と抽選バッグを100%完全初期化！ ★★★
         purgeLocalWorldState();
         buildWorld(activeScene, seed);
 
@@ -1545,7 +1534,6 @@ export const NetworkManager = {
           });
         }
 
-        // ★【重要修正】itemId 完全一致でのみ照合。古いアイテムの残骸との重複・ゾンビ化を完全防止
         if (snapshot && Array.isArray(snapshot.items) && activeScene) {
           snapshot.items.forEach(si => {
             const existing = floorItems.find(li => li.active && li.itemId === si.itemId);
@@ -1608,6 +1596,7 @@ export const NetworkManager = {
           updatePlayerName(myRealName);
         }
 
+        // ★★★ 途中合流（Catch-up）判定：ホストが実際に進行中（hostStage > 0）かつ自分が未合流の場合のみ発火
         if (!this.isHost && !this._hasCaughtUp && typeof hostStage === 'number' && hostStage > 0 && player) {
           this._hasCaughtUp = true;
 
@@ -1822,7 +1811,6 @@ export const NetworkManager = {
     targetChar.botSlideOffsetTarget = 0;
     targetChar.searchCooldown = (targetChar.team && targetChar.team.id === 'red') ? 0 : 0.06;
 
-    // ★★★ 致命的欠陥の根絶：進行ステージを確実に Stage 0 に初期化！ ★★★
     targetChar.currentStage = 0;
     targetChar.stackCount = 0;
     targetChar.stunTimer = 0;
@@ -1987,6 +1975,8 @@ export const NetworkManager = {
   broadcastRestartGame(newSeed, snapshot = null) {
     if (!this.isMultiplayerActive || !this.isHost) return;
     this.currentSeed = newSeed;
+    // ★ ホスト自身も Catch-up 完了フラグを確約
+    this._hasCaughtUp = true;
     this._sendCustomMessage({
       event: 'RESTART_GAME',
       seed: newSeed,
@@ -2083,7 +2073,6 @@ export const NetworkManager = {
     this._idleKeepAliveCounter = 0;
     this._hasCaughtUp = false;
 
-    // ★★★ 送信保留キュー9種の完全破棄（次回入室時への誤爆送信根絶） ★★★
     this._pendingPlanks.length = 0;
     this._pendingPicks.length = 0;
     this._pendingConsumes.length = 0;
@@ -2094,7 +2083,6 @@ export const NetworkManager = {
     this._pendingSpawns.length = 0;
     this._pendingChats.length = 0;
 
-    // ★★★ 全キャラクターのスタック数・バフ・ステージを完全初期化 ★★★
     if (Array.isArray(characters)) {
       characters.forEach((c) => {
         if (!c) return;
@@ -2112,8 +2100,6 @@ export const NetworkManager = {
       });
     }
 
-    // ★ 退室時にシーン内の古いブロック・アイテム・ボーナス・お邪魔モブ・飛翔体、
-    //   およびコース生成器の内部状態（二股分岐履歴・抽選バッグ）を100%完全パージ・隔離・リセット
     purgeLocalWorldState();
 
     if (this.myUser && this.myUser.user_id) {
@@ -2129,7 +2115,6 @@ export const NetworkManager = {
     this._seedApplied = false;
     this._hasReceivedFirstHostPacket = false;
 
-    // ★★★ 退室時に保持シード値をリセットし、次回入室時に確実に新シードでリビルドを走らせる ★★★
     this.currentSeed = null;
 
     if (typeof bindLocalPlayerSlot === 'function') {
