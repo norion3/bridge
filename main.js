@@ -1,906 +1,630 @@
-// main.js: ゲーム全体の起動指揮・Three.js初期化・メインループ・DM招待リンク自動合流司令塔
-// ★ リモート走者海上浮遊オートレスキュー ＆ 完全実体化保証 ＆ カウントダウン同期安定化版（Phase 3 修正）：
-//   1. 【リモート走者の「海上・虚空浮遊オートレスキュー」配備】
-//      animate() ループ内の他走者更新において、リモート走者（c.isRemote === true）が
-//      アトラクション搭乗中（ZIPLINE, SKYDIVE等）でないにもかかわらず、
-//      所属ステージの島半径外かつ橋・階段の上でもない海面上空（虚空）に0.6秒以上取り残されている異常を検知。
-//      自動的に所属ステージの中央平地（4走者整列X座標: [-4.8, -1.6, 1.6, 4.8]）へ即時ワープ救出。
-//      targetNetPos も安全平地へ同期リセットし、海の上に直立不動で置き去りになる事故（画像4）を物理的に完全遮断。
-//   2. 【カウントダウン待機カメラへの isCountdownActive 引数・グローバル同期の完全維持】
-//   3. 【カウントダウン待機中の全走者不可視化（透明化）完全根絶の維持】
-//   4. 【リスタート時5秒カウントダウン待機エンジン（ソロ・マルチ完全共通）の維持】
-//   5. 【「1人で遊ぶ」TAP TO START 待機 ＆ 「マルチ」自動始動の完全分離の維持】
+/**
+ * ==============================================================================
+ * 『くねくねバトル オンライン』Phase 5 メインオーケストレーター (main.js)
+ * ・AgentSDK 8人マルチプレイ ＆ 42体AI（計50体）完全結合
+ * ・Host-Authoritative AI（ホスト主権AI ＆ ゲスト受信補間）
+ * ・マルチプレイロビー（公開/プライベート部屋作成・参加・一覧更新）
+ * ・マッチング待機室（参加者スロット同期 ＆ ホストゲーム開始権限）
+ * ・10Hz 送出ループ（自機 ＋ ホスト管理AI 14体時分割インターリーブ相乗り）
+ * ・餌取得・散布肉片同期 ＆ ゼロアロケーション空間ハッシュ衝突判定
+ * ==============================================================================
+ */
 
-import { mountAllUI, UIController, EntryShield } from './dom.js';
-import { SoundEngine } from './audio.js';
-import { seaTexture } from './materials.js';
+import { injectStyles } from './style.js';
+injectStyles();
+
+import { mountDOM } from './dom.js';
+mountDOM();
+
 import {
-  player,
-  characters,
-  setupCharacters,
-  resetCharacters,
-  setCharacterCallbacks,
-  updateNameplatePosition,
-  refreshCharacterStackVisuals,
-  resetCharacterPose
-} from './character.js';
-import {
-  STAGES,
-  buildWorld,
-  cleanupOldData,
-  manageBlockSpawns,
-  extendCourse,
-  seaMesh,
-  bridgesByStage,
-  floorBlocksByStage,
-  floorItems,
-  spawnItem
-} from './world.js';
-import {
-  initParticlePools,
-  spawnPuffCloud,
-  spawnSpeedStepRing,
-  floorBlockPool,
-  resetParticlePools
-} from './particles.js';
-import {
-  setSystemCallbacks,
-  updateSingleCharacter,
-  handleTackles
-} from './systems.js';
-import { updateAICharacter } from './ai.js';
-import { updateDynamicCamera, resetCameraState } from './camera.js';
-import { updateSceneEntities } from './entities.js';
-import { applyRemoteGimmickVisuals, flushPendingBonusConsumes } from './gimmicks.js';
+    MAP_SIZE,
+    TOTAL_SNAKES,
+    SAFE_INSET_TOP_GRAVITY,
+    SAFE_INSET_TOP_WEB,
+    SNAKE_COLORS
+} from './constants.js';
+
+import { Sound } from './audio.js';
+import { InputManager } from './input.js';
+import { HUDManager } from './hud.js';
+import { Danmaku } from './danmaku.js';
+import { Menu } from './menu.js';
+
+import { Snake } from './snake.js';
+import { SpatialCollisionEngine } from './combat.js';
+import { WorldManager } from './world.js';
+import { AIManager } from './ai.js';
 import { NetworkManager } from './network.js';
 
-// ★ main_controls.js から入力操作をインポート
-import { input, setupControls } from './main_controls.js';
+// --- プラットフォーム環境検知 ---
+export const PlatformDetector = {
+    inGravity: false,
+    hasAgentSDK: false,
+    check() {
+        this.hasAgentSDK = typeof window.AgentSDK !== 'undefined';
+        this.inGravity = this.hasAgentSDK || (window.parent && window.parent !== window) || /gravity/i.test(navigator.userAgent);
+    }
+};
+PlatformDetector.check();
 
-// ★ main_hud.js からHUD・タイマー・スコア制御およびカウントダウン制御をインポート＆再エクスポート
-import {
-  timeLeft,
-  isGameOver,
-  placedPlankCount,
-  lastDisplayedSec,
-  setTimeLeft,
-  decrementTimeLeft,
-  setIsGameOver,
-  setPlacedPlankCount,
-  incPlacedPlankCount,
-  setLastDisplayedSec,
-  resetHUDTimers,
-  updateRestartButtonVisibility,
-  submitGravityScore,
-  applyRemoteTimeSync,
-  applyRemoteTimeUp,
-  applyGravityTopInset,
-  triggerScorePop,
-  updateHUD,
-  updateTimerHUD,
-  onTimeUp,
-  showCountdownHUD,
-  updateCountdownHUD,
-  triggerCountdownGo,
-  hideCountdownHUD
-} from './main_hud.js';
+// --- 画面リサイズとセーフエリア管理 ---
+function updateLayout() {
+    const canvas = document.getElementById('game-canvas');
+    if (!canvas) return;
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
 
-export {
-  updateRestartButtonVisibility,
-  submitGravityScore,
-  applyRemoteTimeSync,
-  applyRemoteTimeUp,
-  applyGravityTopInset,
-  triggerScorePop,
-  updateHUD,
-  updateTimerHUD,
-  onTimeUp,
-  setupControls,
-  extendCourse
+    const root = document.documentElement;
+    if (PlatformDetector.inGravity) {
+        root.style.setProperty('--safe-top', `${SAFE_INSET_TOP_GRAVITY}px`);
+        root.style.setProperty('--safe-bottom', '24px');
+    } else {
+        root.style.setProperty('--safe-top', `${SAFE_INSET_TOP_WEB}px`);
+        root.style.setProperty('--safe-bottom', '20px');
+    }
+}
+window.addEventListener('resize', updateLayout);
+updateLayout();
+
+// --- iOS WebKit ブラウザジェスチャー遮断 ---
+document.addEventListener('gesturestart', (e) => e.preventDefault(), { passive: false });
+document.addEventListener('gesturechange', (e) => e.preventDefault(), { passive: false });
+document.addEventListener('gestureend', (e) => e.preventDefault(), { passive: false });
+
+// --- ゲームエンジンコア初期化 ---
+const canvas = document.getElementById('game-canvas');
+const ctx = canvas.getContext('2d', { alpha: false });
+
+const input = new InputManager();
+input.init(canvas, (isBoosting) => {
+    if (isBoosting) {
+        Sound.startBoostSound();
+    } else {
+        Sound.stopBoostSound();
+    }
+});
+
+const hud = new HUDManager();
+hud.init();
+
+Danmaku.init();
+
+const collisionEngine = new SpatialCollisionEngine();
+const world = new WorldManager();
+const aiManager = new AIManager();
+
+// --- エンティティ管理 ---
+let player = new Snake(true, 0, 'あなた', SNAKE_COLORS[0], 'normal');
+let remoteSnakes = new Map(); // slot (1..49) -> Snake instance
+let allSnakes = [];
+let sortedSnakes = [];
+
+let gameState = 'lobby'; // 'lobby' | 'waiting' | 'playing' | 'gameover'
+let gameStartTime = Date.now();
+let frameCount = 0;
+let cameraScale = 1.0;
+
+// グローバル参照（network.js から 10Hz POS 送信時に参照）
+window.localPlayerInstance = player;
+window.allAISnakesInstance = aiManager.ais;
+
+// --- 画面状態遷移ヘルパー ---
+export const UIController = {
+    showLobby() {
+        gameState = 'lobby';
+        const lobby = document.getElementById('lobby-overlay');
+        const waiting = document.getElementById('waiting-overlay');
+        const overScreen = document.getElementById('over-screen');
+        const hudEl = document.getElementById('hud');
+
+        if (lobby) lobby.style.display = 'flex';
+        if (waiting) waiting.style.display = 'none';
+        if (overScreen) overScreen.style.display = 'none';
+        if (hudEl) hudEl.style.display = 'none';
+
+        this.refreshLobbyGreeting();
+    },
+
+    showWaitingRoom(roomId) {
+        gameState = 'waiting';
+        const lobby = document.getElementById('lobby-overlay');
+        const waiting = document.getElementById('waiting-overlay');
+        const tag = document.getElementById('waiting-room-tag');
+        const startBtn = document.getElementById('btn-waiting-start');
+
+        if (lobby) lobby.style.display = 'none';
+        if (waiting) waiting.style.display = 'flex';
+        if (tag) tag.innerText = `ROOM #${String(roomId).slice(-5)}`;
+
+        if (startBtn) {
+            startBtn.style.display = NetworkManager.isHost ? 'block' : 'none';
+        }
+
+        this.updateWaitingMembersList();
+    },
+
+    showGame() {
+        gameState = 'playing';
+        const lobby = document.getElementById('lobby-overlay');
+        const waiting = document.getElementById('waiting-overlay');
+        const overScreen = document.getElementById('over-screen');
+        const hudEl = document.getElementById('hud');
+
+        if (lobby) lobby.style.display = 'none';
+        if (waiting) waiting.style.display = 'none';
+        if (overScreen) overScreen.style.display = 'none';
+        if (hudEl) hudEl.style.display = 'flex';
+    },
+
+    refreshLobbyGreeting() {
+        const greeting = document.getElementById('lobby-greeting');
+        if (greeting && NetworkManager.myUser) {
+            greeting.innerText = `ようこそ ${NetworkManager.myUser.name} さん`;
+        }
+    },
+
+    updateWaitingMembersList() {
+        const listEl = document.getElementById('waiting-members-list');
+        if (!listEl) return;
+
+        listEl.innerHTML = NetworkManager.slots.slice(0, 8).map(s => {
+            const isMe = s.slot === NetworkManager.mySlot;
+            const isHost = s.slot === 0;
+            const badgeText = isMe ? 'YOU' : (s.isAI ? 'CPU' : `P${s.slot + 1}`);
+
+            return `
+                <div class="waiting-slot">
+                    <div class="waiting-slot-left">
+                        <div class="waiting-slot-badge" style="background-color: ${s.color};">${badgeText}</div>
+                        <div class="waiting-slot-name">${s.name} ${isMe ? '(あなた)' : ''}</div>
+                    </div>
+                    ${isHost ? '<div class="waiting-slot-host">HOST</div>' : ''}
+                </div>
+            `;
+        }).join('');
+    }
 };
 
-// 外部（network.js等）からコース事前伸長をキックできるようにグローバル公開
-if (typeof window !== 'undefined') {
-  window.refreshRemoteStackVisuals = refreshCharacterStackVisuals;
-  window.extendCourse = extendCourse;
-}
-
-export const IS_GRAVITY_APP = typeof window !== 'undefined' && !!window.AgentSDK;
-
-export const NetworkState = {
-  isMultiplayer: false,
-  isHost: true,
-  roomId: null,
-  myUserId: 'local_player'
-};
-
-const sound = new SoundEngine();
-
-let scene = null;
-let camera = null;
-let renderer = null;
-let dirLight = null;
-
-let gameStarted = false;
-let lastRecordedHostState = null;
-
-// ★ カウントダウン待機状態管理
-let countdownTimer = 0.0;
-let isCountdownActive = false;
-
-/**
- * リスタート用 5秒カウントダウン開始関数
- * @param {number} duration 秒数（通常 5.0）
- */
-export function startRestartCountdown(duration = 5.0) {
-  countdownTimer = duration;
-  isCountdownActive = true;
-  if (typeof window !== 'undefined') {
-    window.isCountdownActive = true;
-  }
-  showCountdownHUD(Math.ceil(duration));
-
-  // 開始シグナル（ピッ音）
-  if (sound && typeof sound.playCountdownTick === 'function') {
-    sound.playCountdownTick(1.0);
-  }
-}
-
-export function launchGameEngine() {
-  if (typeof UIController !== 'undefined' && typeof UIController.showGame === 'function') {
+// --- ゲーム初期化 ---
+function initGame() {
     UIController.showGame();
-  }
 
-  gameStarted = true;
-  setIsGameOver(false);
-  if (sound) {
-    sound.init();
-  }
-  updateRestartButtonVisibility();
+    gameStartTime = Date.now();
+    frameCount = 0;
+
+    // 自機リセット
+    const spawnX = MAP_SIZE / 2 + (Math.random() - 0.5) * 4000;
+    const spawnY = MAP_SIZE / 2 + (Math.random() - 0.5) * 4000;
+    player.reset(spawnX, spawnY);
+    player.name = NetworkManager.myUser.name || 'あなた';
+    player.color = SNAKE_COLORS[NetworkManager.mySlot % SNAKE_COLORS.length];
+
+    // AI 42体初期化（ホスト端末のみ物理シミュレーション）
+    aiManager.init(42, player.x, player.y);
+    window.allAISnakesInstance = aiManager.ais;
+
+    // リモートスネーク初期化
+    remoteSnakes.clear();
+
+    // 全スネーク配列構築
+    allSnakes = [player, ...aiManager.ais];
+    sortedSnakes = [...allSnakes];
+
+    // ワールドリセット
+    world.clear();
+
+    // 走者一覧更新
+    Menu.updateParticipants(NetworkManager.slots.filter(s => !s.isAI));
 }
 
-if (typeof window !== 'undefined') {
-  window.launchGameEngine = launchGameEngine;
-  window.startRestartCountdown = startRestartCountdown;
-  window.onRemoteRestartReceived = (packet) => {
-    if (packet && packet.seed) {
-      resetGame(packet.seed, packet.snapshot);
-    } else {
-      resetGame();
+// --- マルチプレイ通信コールバック登録 ---
+NetworkManager.setCallbacks({
+    // 他プレイヤー / ホストAIのスネーク座標受信
+    onRemoteSnakeUpdate(data) {
+        if (data.slot === NetworkManager.mySlot) return;
+
+        let remote = remoteSnakes.get(data.slot);
+        if (!remote) {
+            const isPlayerSlot = data.slot < 8;
+            const color = SNAKE_COLORS[data.slot % SNAKE_COLORS.length];
+            const name = NetworkManager.slots[data.slot] ? NetworkManager.slots[data.slot].name : (isPlayerSlot ? `P${data.slot + 1}` : `CPU ${data.slot - 7}`);
+
+            remote = new Snake(false, data.slot, name, color, 'normal');
+            remote.reset(data.x, data.y);
+            remoteSnakes.set(data.slot, remote);
+
+            // allSnakes に追加（既存AIスロットと置換または追加）
+            if (!allSnakes.includes(remote)) {
+                allSnakes.push(remote);
+            }
+        }
+
+        // 状態同期 ＆ 補間ターゲット設定
+        remote.targetNetX = data.x;
+        remote.targetNetY = data.y;
+        remote.targetAngle = data.angle;
+        remote.speed = data.speed;
+        remote.targetLength = data.length;
+        remote.score = data.score;
+        remote.isBoosting = data.isBoosting;
+        remote.isDead = data.isDead;
+        remote.kills = data.kills;
+        remote.recalculateSize();
+    },
+
+    // 餌取得同期
+    onFoodPicked(pick) {
+        const key = `${pick.gx}_${pick.gy}`;
+        const list = world.foodGrid.get(key);
+        if (list && list[pick.index]) {
+            list.splice(pick.index, 1);
+        }
+    },
+
+    // 散布肉片同期
+    onDropSpawned(drop) {
+        world.dropFoods.push({
+            x: drop.x,
+            y: drop.y,
+            val: drop.val,
+            size: 7,
+            isBig: true,
+            color: SNAKE_COLORS[drop.colorIdx % SNAKE_COLORS.length]
+        });
+    },
+
+    // シード値受信（ワールド同期）
+    onSeedReceived(seed) {
+        world.clear();
+        Danmaku.push('同期', 'ワールドシードを同期しました', '#00e5ff', true);
     }
-  };
+});
+
+// --- UIイベントバインド ---
+
+// 1. ロビー画面
+const btnLobbySolo = document.getElementById('btn-lobby-solo');
+if (btnLobbySolo) {
+    btnLobbySolo.onclick = () => {
+        NetworkManager.isMultiplayerActive = false;
+        NetworkManager.isHost = true;
+        NetworkManager.mySlot = 0;
+        initGame();
+    };
 }
 
-export function resetGame(remoteSeed = null, remoteSnapshot = null) {
-  const resultModal = document.getElementById('modal-result');
-  if (resultModal) {
-    resultModal.classList.add('hidden');
-    resultModal.style.display = 'none';
-  }
-  setIsGameOver(false);
-  setPlacedPlankCount(0);
-  setTimeLeft(300);
-  setLastDisplayedSec(-1);
-
-  resetCameraState();
-  resetHUDTimers();
-
-  const scoreEl = document.getElementById('hud-score');
-  if (scoreEl) scoreEl.classList.remove('score-pop', 'score-clamped');
-
-  const timerEl = document.getElementById('hud-timer');
-  if (timerEl) timerEl.classList.remove('timer-critical');
-
-  const isMulti = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive);
-  const isHost = Boolean(isMulti && window.NetworkManager.isHost);
-
-  let targetSeed = remoteSeed;
-  if (!targetSeed) {
-    targetSeed = Math.floor(Math.random() * 90000000) + 10000000;
-  }
-
-  buildWorld(scene, targetSeed);
-  resetCharacters(STAGES);
-
-  // カメラを初期島の手前側中央へダイレクト配置
-  if (camera) {
-    const focusX = (player && player.pos) ? player.pos.x : 0.0;
-    camera.position.set(focusX, STAGES[0].y + 24, STAGES[0].z + 12);
-    camera.lookAt(focusX, STAGES[0].y, STAGES[0].z - 5);
-  }
-
-  if (!isHost && isMulti && remoteSnapshot) {
-    if (Array.isArray(remoteSnapshot.blocks)) {
-      floorBlockPool.forEach(b => {
-        b.active = false;
-        b.mesh.visible = false;
-        b.attracting = false;
-      });
-      if (floorBlocksByStage && typeof floorBlocksByStage.forEach === 'function') {
-        floorBlocksByStage.forEach(bucket => { bucket.length = 0; });
-      }
-
-      remoteSnapshot.blocks.forEach(b => {
-        if (typeof window.applyRemoteBlockSpawned === 'function') {
-          window.applyRemoteBlockSpawned(b.stageIdx, b.poolIdx, b.x, b.y, b.z, b.teamId, b.blockId);
+const btnLobbyPublic = document.getElementById('btn-lobby-public');
+if (btnLobbyPublic) {
+    btnLobbyPublic.onclick = async () => {
+        btnLobbyPublic.innerText = '作成中...';
+        const roomId = await NetworkManager.createRoom(false);
+        btnLobbyPublic.innerText = '公開ルーム作成';
+        if (roomId) {
+            UIController.showWaitingRoom(roomId);
         }
-      });
-    }
-
-    if (Array.isArray(remoteSnapshot.planks)) {
-      remoteSnapshot.planks.forEach(p => {
-        if (typeof window.applyRemotePlankBuilt === 'function') {
-          window.applyRemotePlankBuilt(p.stageIdx, p.laneIdx, p.plankIdx, p.teamId);
-        }
-      });
-    }
-
-    if (Array.isArray(remoteSnapshot.items) && scene) {
-      remoteSnapshot.items.forEach(si => {
-        const existing = floorItems.find(li => li.active && (li.itemId === si.itemId || (li.stageIdx === si.stageIdx && li.type === si.type)));
-        if (!existing) {
-          spawnItem(scene, si.stageIdx, si.type);
-        }
-      });
-    }
-  } else {
-    for (let i = 0; i < 30; i++) {
-      manageBlockSpawns(scene, false);
-    }
-
-    if (isMulti && isHost && window.NetworkManager && typeof window.NetworkManager.broadcastRestartGame === 'function') {
-      const snap = (typeof window.NetworkManager.captureWorldSnapshot === 'function')
-        ? window.NetworkManager.captureWorldSnapshot()
-        : null;
-      window.NetworkManager.broadcastRestartGame(targetSeed, snap);
-    }
-  }
-
-  updateHUD();
-  updateTimerHUD(true);
-  updateRestartButtonVisibility();
-
-  // ★ リスタート時：ソロ・公開・プライベートを問わず全走者整列の5秒カウントダウンを起動
-  startRestartCountdown(5.0);
+    };
 }
 
-export function initThree() {
-  const container = document.getElementById('canvas-container');
-  if (!container) return;
-
-  scene = new THREE.Scene();
-  if (typeof window !== 'undefined') {
-    window.currentSceneRef = scene;
-  }
-  scene.background = new THREE.Color(0x7dd3fc);
-  scene.fog = new THREE.FogExp2(0x7dd3fc, 0.0032);
-
-  camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1500);
-  
-  if (typeof window !== 'undefined') {
-    window.currentCameraRef = camera;
-  }
-
-  renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-  renderer.shadowMap.enabled = true;
-  container.appendChild(renderer.domElement);
-
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x0284c7, 0.95));
-  dirLight = new THREE.DirectionalLight(0xffffff, 0.95);
-  dirLight.position.set(30, 70, 25);
-  dirLight.castShadow = true;
-  dirLight.shadow.mapSize.width = 1024;
-  dirLight.shadow.mapSize.height = 1024;
-  dirLight.shadow.camera.left = -22;
-  dirLight.shadow.camera.right = 22;
-  dirLight.shadow.camera.top = 22;
-  dirLight.shadow.camera.bottom = -22;
-  dirLight.shadow.camera.near = 10;
-  dirLight.shadow.camera.far = 135;
-  dirLight.shadow.bias = -0.0006;
-  scene.add(dirLight);
-  scene.add(dirLight.target);
-
-  initParticlePools(scene);
-  buildWorld(scene);
-  setupCharacters(scene, STAGES);
-  setCharacterCallbacks(sound, updateHUD);
-  setSystemCallbacks(sound, updateHUD, () => {
-    incPlacedPlankCount();
-    updateHUD();
-    triggerScorePop();
-  });
-
-  for (let i = 0; i < 60; i++) manageBlockSpawns(scene, isGameOver);
-
-  setupControls(sound, {
-    onResetGame: () => resetGame(),
-    onLaunchGame: () => launchGameEngine(),
-    onRestartVisibilityUpdate: () => updateRestartButtonVisibility()
-  });
-
-  applyGravityTopInset(IS_GRAVITY_APP);
-
-  window.addEventListener('resize', () => {
-    if (!camera || !renderer) return;
-    camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    applyGravityTopInset(IS_GRAVITY_APP);
-  });
+const btnLobbyPrivate = document.getElementById('btn-lobby-private');
+if (btnLobbyPrivate) {
+    btnLobbyPrivate.onclick = async () => {
+        btnLobbyPrivate.innerText = '作成中...';
+        const roomId = await NetworkManager.createRoom(true);
+        btnLobbyPrivate.innerText = 'プライベート作成';
+        if (roomId) {
+            UIController.showWaitingRoom(roomId);
+        }
+    };
 }
 
-let lastTime = performance.now();
-let blockSpawnTimer = 0;
-let cleanupTimer = 0;
-let courseCheckTimer = 0;
+const btnRefreshRooms = document.getElementById('btn-refresh-rooms');
+if (btnRefreshRooms) {
+    btnRefreshRooms.onclick = async () => {
+        btnRefreshRooms.innerText = '更新中...';
+        const rooms = await NetworkManager.getPublicRooms();
+        btnRefreshRooms.innerText = '更新';
 
-export function animate(currentTime) {
-  requestAnimationFrame(animate);
-  const dt = Math.min((currentTime - lastTime) / 1000, 0.05);
-  lastTime = currentTime;
+        const container = document.getElementById('room-list-container');
+        if (!container) return;
 
-  const timeSec = currentTime * 0.001;
-
-  if (seaTexture) {
-    seaTexture.offset.y += dt * 0.012;
-    seaTexture.offset.x += Math.sin(timeSec * 0.4) * 0.0003;
-  }
-
-  if (gameStarted && !isGameOver) {
-    // ★ 5秒カウントダウン待機制御
-    if (isCountdownActive) {
-      countdownTimer -= dt;
-      if (countdownTimer <= 0) {
-        countdownTimer = 0;
-        isCountdownActive = false;
-        if (typeof window !== 'undefined') {
-          window.isCountdownActive = false;
-        }
-        triggerCountdownGo(sound);
-      } else {
-        updateCountdownHUD(countdownTimer, sound);
-      }
-    }
-
-    // カウントダウン中は自機の操作入力を完全ロック（直立静止）
-    const moveDirX = (!isCountdownActive && input.active) ? input.x : 0;
-    const moveDirZ = (!isCountdownActive && input.active) ? input.y : 0;
-
-    const isMulti = (typeof window !== 'undefined' && window.NetworkManager && window.NetworkManager.isMultiplayerActive);
-    const isHost = Boolean(isMulti && window.NetworkManager.isHost);
-    const isGuest = Boolean(isMulti && !isHost);
-
-    if (lastRecordedHostState !== isHost) {
-      lastRecordedHostState = isHost;
-      updateRestartButtonVisibility();
-    }
-
-    if (player) {
-      if (typeof window !== 'undefined') {
-        window.localPlayerInstance = player;
-      }
-
-      if (player.dockBounceTimer > 0) {
-        player.dockBounceTimer -= dt;
-        if (player.dockBounceTimer <= 0) {
-          player.dockBounceTimer = 0;
-          if (player.meshObj && player.meshObj.stackGroup) {
-            player.meshObj.stackGroup.scale.set(1.0, 1.0, 1.0);
-          }
-        } else {
-          const bp = player.dockBounceTimer / 0.15;
-          const sy = 1.0 + Math.sin(bp * Math.PI) * 0.22;
-          const sxz = 1.0 + Math.sin(bp * Math.PI) * 0.12;
-          if (player.meshObj && player.meshObj.stackGroup) {
-            player.meshObj.stackGroup.scale.set(sxz, sy, sxz);
-          }
-        }
-      }
-
-      // ★ カウントダウン中は移動更新を行わず直立不動 ＆ 100%確実な実体化（不可視バグ防止）
-      if (isCountdownActive) {
-        player.walkCycle = 0;
-        resetCharacterPose(player);
-        if (player.meshObj && player.meshObj.root) {
-          player.meshObj.root.position.copy(player.pos);
-          player.meshObj.root.visible = true;
-          player.meshObj.root.scale.set(1.0, 1.0, 1.0);
-        }
-      } else {
-        updateSingleCharacter(scene, player, moveDirX, moveDirZ, dt, spawnPuffCloud, spawnSpeedStepRing);
-      }
-      updateNameplatePosition(player);
-    }
-
-    for (let cIdx = 0; cIdx < characters.length; cIdx++) {
-      const c = characters[cIdx];
-      if (c === player || c.isPlayer) continue;
-
-      const slotData = (isMulti && window.NetworkManager && Array.isArray(window.NetworkManager.slots))
-        ? window.NetworkManager.slots[cIdx]
-        : null;
-
-      const isHumanSlot = isMulti && slotData && !slotData.isAI;
-      const hasReceivedNetPos = Boolean(c.targetNetPos && isMulti);
-      const isRemotePlayer = Boolean(c.isRemote || isHumanSlot || hasReceivedNetPos);
-
-      if ((hasReceivedNetPos || isHumanSlot) && (!c.isRemote || c.isAI)) {
-        c.isRemote = true;
-        c.isAI = false;
-      }
-
-      if (isHost && slotData && slotData.isAI) {
-        if (c.targetNetPos) {
-          c.targetNetPos = null;
-        }
-        if (c.isRemote || !c.isAI) {
-          c.isRemote = false;
-          c.isAI = true;
-        }
-      }
-
-      // ★ カウントダウン中はAIの自律思考ルーチンを完全スキップ ＆ 強制実体化（透明化防止）
-      const shouldRunAI = (!isCountdownActive) && (!isMulti || isHost) && !isRemotePlayer && c.isAI === true && !c.targetNetPos;
-
-      if (isCountdownActive) {
-        c.walkCycle = 0;
-        resetCharacterPose(c);
-        if (c.meshObj && c.meshObj.root) {
-          c.meshObj.root.position.copy(c.pos);
-          c.meshObj.root.visible = true;
-          c.meshObj.root.scale.set(1.0, 1.0, 1.0);
-        }
-      } else if (shouldRunAI) {
-        updateAICharacter(scene, c, dt, spawnPuffCloud, spawnSpeedStepRing);
-      } else if (c.targetNetPos) {
-        const prevX = c.pos.x;
-        const prevZ = c.pos.z;
-
-        if (c.stunTimer > 0) {
-          c.stunTimer -= dt;
-          if (c.stunTimer <= 0) {
-            c.stunTimer = 0;
-            c.isStunned = false;
-          }
+        if (!rooms || rooms.length === 0) {
+            container.innerHTML = '<div class="room-list-empty">公開ルームはありません</div>';
+            return;
         }
 
-        if (c.shrinkTimer > 0) {
-          c.shrinkTimer -= dt;
-          if (c.shrinkTimer <= 0) {
-            c.shrinkTimer = 0;
-            c.isShrunk = false;
-          }
-        }
-        const isRemoteShrunk = Boolean(c.isShrunk || (c.shrinkTimer && c.shrinkTimer > 0));
-        const targetScale = isRemoteShrunk ? 0.42 : 1.0;
-        if (c._lastAppliedScale !== targetScale) {
-          c._lastAppliedScale = targetScale;
-          c.meshObj.root.scale.set(targetScale, targetScale, targetScale);
-        }
+        container.innerHTML = rooms.map(r => `
+            <div class="room-item">
+                <div class="room-item-info">
+                    <span class="room-item-id">ROOM #${String(r.room_id).slice(-5)}</span>
+                    <span class="room-item-count">参加者: ${r.gamer_num || 1} / 8名</span>
+                </div>
+                <button type="button" class="btn-join-room" data-room="${r.room_id}">参加</button>
+            </div>
+        `).join('');
 
-        if (c.invulnerableTimer > 0) {
-          c.invulnerableTimer -= dt;
-          if (c.invulnerableTimer <= 0) {
-            c.invulnerableTimer = 0;
-            c.isInvulnerable = false;
-          }
-        }
-        const isInvuln = Boolean(c.isInvulnerable || (c.invulnerableTimer && c.invulnerableTimer > 0));
-        if (isInvuln) {
-          c.meshObj.root.visible = (Math.floor(currentTime / 90) % 2 === 0);
-        } else {
-          c.meshObj.root.visible = true;
-        }
-
-        const dist3DSq = (c.targetNetPos.x - c.pos.x) ** 2 + (c.targetNetPos.y - c.pos.y) ** 2 + (c.targetNetPos.z - c.pos.z) ** 2;
-
-        if (dist3DSq > 25.0) {
-          c.pos.copy(c.targetNetPos);
-        } else {
-          const lerpFactor = Math.min(1.0, dt * 14.0);
-          c.pos.x = THREE.MathUtils.lerp(c.pos.x, c.targetNetPos.x, lerpFactor);
-          c.pos.y = THREE.MathUtils.lerp(c.pos.y, c.targetNetPos.y, lerpFactor);
-          c.pos.z = THREE.MathUtils.lerp(c.pos.z, c.targetNetPos.z, lerpFactor);
-        }
-        c.meshObj.root.position.copy(c.pos);
-
-        if (c.targetNetRotY !== undefined) {
-          c.meshObj.root.rotation.y = THREE.MathUtils.lerp(c.meshObj.root.rotation.y, c.targetNetRotY, Math.min(1.0, dt * 14.0));
-        }
-
-        const remState = c.remoteActionState || 'NORMAL';
-        applyRemoteGimmickVisuals(c, remState, timeSec);
-
-        // ★【Phase 3 核心】リモート走者の海上・虚空浮遊オートレスキュー
-        // アトラクション中（ZIPLINE, SKYDIVE等）でないにもかかわらず、
-        // 所属ステージの島半径外かつ橋・階段の上でもない海面上空に放置されている異常を検知して即時救出
-        const isAttractionRiding = Boolean(
-          remState !== 'NORMAL' ||
-          c.onZipline ||
-          c.onSkydive ||
-          c.onElevator ||
-          c.onTrapdoor ||
-          c.onFreefall ||
-          c.onSlide ||
-          c.onCurvedSlide ||
-          c.isJumping
-        );
-
-        if (!isAttractionRiding) {
-          const currentStg = STAGES[c.currentStage] || STAGES[0];
-          if (currentStg) {
-            const centerX = currentStg.x || 0.0;
-            const distCenter = Math.hypot(c.pos.x - centerX, c.pos.z - currentStg.z);
-
-            // 島の安全半径（R + 2.5m）を超えて外側にいる場合
-            if (distCenter > (currentStg.r + 2.5)) {
-              let isOnBridge = false;
-              const stageBridges = bridgesByStage.get(c.currentStage);
-              if (stageBridges && stageBridges.length > 0) {
-                for (let bi = 0; bi < stageBridges.length; bi++) {
-                  const br = stageBridges[bi];
-                  if (!br) continue;
-                  const minZ = Math.min(br.startZ, br.endZ) - 2.5;
-                  const maxZ = Math.max(br.startZ, br.endZ) + 2.5;
-                  if (c.pos.z >= minZ && c.pos.z <= maxZ) {
-                    const brX = br.launchPoint ? br.launchPoint.x : centerX;
-                    if (Math.abs(c.pos.x - brX) < 6.5) {
-                      isOnBridge = true;
-                      break;
-                    }
-                  }
+        container.querySelectorAll('.btn-join-room').forEach(btn => {
+            btn.onclick = async () => {
+                const rid = btn.dataset.room;
+                btn.innerText = '入室中...';
+                const success = await NetworkManager.joinRoom(rid);
+                if (success) {
+                    UIController.showWaitingRoom(rid);
+                } else {
+                    btn.innerText = '満員';
                 }
-              }
-
-              // 橋の上でもない海の上に浮いている場合
-              if (!isOnBridge) {
-                c.voidRescueTimer = (c.voidRescueTimer || 0) + dt;
-                if (c.voidRescueTimer > 0.6) {
-                  c.voidRescueTimer = 0;
-                  let defaultX = -1.6;
-                  if (cIdx === 1) defaultX = -4.8;
-                  else if (cIdx === 2) defaultX = 1.6;
-                  else if (cIdx === 3) defaultX = 4.8;
-
-                  c.pos.set(centerX + defaultX, currentStg.y, currentStg.z + 1.8);
-                  if (c.targetNetPos) {
-                    c.targetNetPos.copy(c.pos);
-                  }
-                  if (c.meshObj && c.meshObj.root) {
-                    c.meshObj.root.position.copy(c.pos);
-                  }
-                  resetCharacterPose(c);
-                  console.warn(`[main.js] リモート走者 Slot ${cIdx} の海上浮遊を検知。Stage ${c.currentStage} 平地へオートレスキュー完了`);
-                }
-              } else {
-                c.voidRescueTimer = 0;
-              }
-            } else {
-              c.voidRescueTimer = 0;
-            }
-          }
-        } else {
-          c.voidRescueTimer = 0;
-        }
-
-        if (remState === 'TRAPDOOR') {
-          const stageBridges = bridgesByStage.get(c.currentStage);
-          if (stageBridges) {
-            const trapB = stageBridges.find(b => b.isTrapdoor);
-            if (trapB && !trapB.isHatchOpen) {
-              trapB.isHatchOpen = true;
-            }
-          }
-        }
-
-        if (remState === 'JUMP' && c.prevRemoteActionState !== 'JUMP') {
-          const stageBridges = bridgesByStage.get(c.currentStage);
-          if (stageBridges) {
-            for (let bi = 0; bi < stageBridges.length; bi++) {
-              const b = stageBridges[bi];
-              if (b && Array.isArray(b.planks)) {
-                for (let pi = 0; pi < b.planks.length; pi++) {
-                  const plank = b.planks[pi];
-                  if (plank && plank.isJumpPad && plank.netMesh) {
-                    plank.netMesh.scale.set(1.15, 0.2, 1.15);
-                    plank.netMesh.position.y = 0.35;
-                    setTimeout(() => {
-                      if (plank.netMesh) {
-                        plank.netMesh.scale.set(1.0, 1.0, 1.0);
-                        plank.netMesh.position.y = 0.50;
-                      }
-                    }, 180);
-                  }
-                }
-              }
-            }
-          }
-        }
-        c.prevRemoteActionState = remState;
-
-        const stepDist = Math.hypot(c.pos.x - prevX, c.pos.z - prevZ);
-        const hasNetVelocity = c.netVelocity && (Math.abs(c.netVelocity.x) > 0.08 || Math.abs(c.netVelocity.z) > 0.08);
-
-        if (c.meshObj.footAura) {
-          if (c.speedBoostActive) {
-            c.meshObj.footAura.visible = true;
-            const auraPulse = 1.0 + Math.sin(currentTime * 0.008) * 0.12;
-            c.meshObj.footAura.scale.set(auraPulse, auraPulse, auraPulse);
-          } else {
-            c.meshObj.footAura.visible = false;
-          }
-        }
-
-        if (c.speedBoostActive && remState === 'NORMAL' && stepDist > 0.015) {
-          c.puffTimer = (c.puffTimer || 0) + dt;
-          if (c.puffTimer > 0.085) {
-            c.puffTimer = 0;
-            const backDist = 0.45;
-            const rotY = (c.targetNetRotY !== undefined) ? c.targetNetRotY : c.meshObj.root.rotation.y;
-            const puffX = c.pos.x - Math.sin(rotY) * backDist;
-            const puffZ = c.pos.z - Math.cos(rotY) * backDist;
-            spawnPuffCloud(puffX, c.pos.y, puffZ);
-            spawnSpeedStepRing(c.pos.x, c.pos.y, c.pos.z);
-          }
-        }
-
-        if (c.meshObj.magnetAura) {
-          if (c.magnetActive) {
-            c.meshObj.magnetAura.visible = true;
-            const pulseT = (currentTime * 0.0032) % 1.0;
-            const inwardScale = 2.6 * (1.0 - pulseT) + 0.35;
-            c.meshObj.magnetAura.scale.set(inwardScale, inwardScale, inwardScale);
-            c.meshObj.magnetAura.material.opacity = pulseT * 0.85;
-          } else {
-            c.meshObj.magnetAura.visible = false;
-          }
-        }
-
-        const isRemoteStunned = Boolean(c.isStunned || (c.stunTimer && c.stunTimer > 0));
-
-        if (isRemoteStunned) {
-          c.meshObj.root.rotation.z = Math.sin(currentTime * 0.02) * 0.4;
-          c.meshObj.root.rotation.x = 0;
-          c.meshObj.leftLeg.rotation.x = 0;
-          c.meshObj.rightLeg.rotation.x = 0;
-          c.meshObj.leftArm.rotation.x = 0;
-          c.meshObj.rightArm.rotation.x = 0;
-        } else if (remState === 'JUMP') {
-          c.meshObj.root.rotation.z = 0;
-          c.meshObj.root.rotation.x += dt * -12.5;
-          c.meshObj.leftArm.rotation.z = -0.75;
-          c.meshObj.rightArm.rotation.z = 0.75;
-          c.meshObj.leftLeg.rotation.z = -0.30;
-          c.meshObj.rightLeg.rotation.z = 0.30;
-        } else if (remState === 'NORMAL') {
-          c.meshObj.root.rotation.z = 0;
-          c.meshObj.root.rotation.x = (c.speedBoostActive) ? 0.20 : 0;
-
-          c.meshObj.leftArm.rotation.z = 0;
-          c.meshObj.rightArm.rotation.z = 0;
-          c.meshObj.leftLeg.rotation.z = 0;
-          c.meshObj.rightLeg.rotation.z = 0;
-
-          c.meshObj.body.position.y = 0.65;
-          c.meshObj.head.position.y = 1.25;
-
-          if (stepDist > 0.005 || hasNetVelocity) {
-            const walkSpeedMult = c.speedBoostActive ? 1.75 : 1.0;
-            const effectiveStep = Math.max(stepDist, dt * 1.8);
-            c.walkCycle = (c.walkCycle || 0) + effectiveStep * 5.5 * walkSpeedMult;
-            const swing = Math.sin(c.walkCycle) * 0.75;
-            c.meshObj.leftLeg.rotation.x = swing;
-            c.meshObj.rightLeg.rotation.x = -swing;
-            c.meshObj.leftArm.rotation.x = -swing * 0.8;
-            c.meshObj.rightArm.rotation.x = swing * 0.8;
-          } else {
-            c.meshObj.leftLeg.rotation.x = THREE.MathUtils.lerp(c.meshObj.leftLeg.rotation.x, 0, 0.2);
-            c.meshObj.rightLeg.rotation.x = THREE.MathUtils.lerp(c.meshObj.rightLeg.rotation.x, 0, 0.2);
-            c.meshObj.leftArm.rotation.x = THREE.MathUtils.lerp(c.meshObj.leftArm.rotation.x, 0, 0.2);
-            c.meshObj.rightArm.rotation.x = THREE.MathUtils.lerp(c.meshObj.rightArm.rotation.x, 0, 0.2);
-          }
-        }
-      } else if (!c.targetNetPos) {
-        c.meshObj.leftLeg.rotation.x = 0;
-        c.meshObj.rightLeg.rotation.x = 0;
-        c.meshObj.leftArm.rotation.x = 0;
-        c.meshObj.rightArm.rotation.x = 0;
-      }
-
-      if (c.prevStackCount === undefined) {
-        c.prevStackCount = c.stackCount || 0;
-      } else if ((c.stackCount || 0) > c.prevStackCount) {
-        c.dockBounceTimer = 0.15;
-      }
-      c.prevStackCount = c.stackCount || 0;
-
-      if (c.dockBounceTimer > 0) {
-        c.dockBounceTimer -= dt;
-        if (c.dockBounceTimer <= 0) {
-          c.dockBounceTimer = 0;
-          if (c.meshObj && c.meshObj.stackGroup) {
-            c.meshObj.stackGroup.scale.set(1.0, 1.0, 1.0);
-          }
-        } else {
-          const bp = c.dockBounceTimer / 0.15;
-          const sy = 1.0 + Math.sin(bp * Math.PI) * 0.22;
-          const sxz = 1.0 + Math.sin(bp * Math.PI) * 0.12;
-          if (c.meshObj && c.meshObj.stackGroup) {
-            c.meshObj.stackGroup.scale.set(sxz, sy, sxz);
-          }
-        }
-      }
-
-      updateNameplatePosition(c);
-    }
-
-    if (!isCountdownActive) {
-      handleTackles(scene);
-    }
-
-    blockSpawnTimer += dt;
-    if (blockSpawnTimer > 0.5) {
-      if (!isGuest) {
-        manageBlockSpawns(scene, isGameOver);
-      }
-      blockSpawnTimer = 0;
-    }
-
-    cleanupTimer += dt;
-    if (cleanupTimer > 2.0) {
-      cleanupOldData(scene);
-      cleanupTimer = 0;
-    }
-
-    courseCheckTimer += dt;
-    if (courseCheckTimer > 0.25) {
-      courseCheckTimer = 0;
-      let maxStage = 0;
-      for (let cIdx = 0; cIdx < characters.length; cIdx++) {
-        const charStage = characters[cIdx].currentStage || 0;
-        if (charStage > maxStage) {
-          maxStage = charStage;
-        }
-      }
-      if (maxStage >= STAGES.length - 4) {
-        extendCourse(scene);
-        flushPendingBonusConsumes();
-      }
-    }
-
-    // ★ カウントダウン中は試合制限時間タイマーの減算を一時停止
-    if (!isCountdownActive) {
-      if (!isGuest) {
-        decrementTimeLeft(dt);
-        if (timeLeft <= 0) {
-          setTimeLeft(0);
-          onTimeUp(sound);
-        }
-      } else {
-        if (timeLeft > 0) {
-          decrementTimeLeft(dt);
-        }
-      }
-    }
-    updateTimerHUD();
-
-    updateSceneEntities(scene, dt, timeSec, player, sound);
-  }
-
-  // ★ カウントダウン中フラグ（isCountdownActive）を第6引数として伝達し、画面中央センタリング構図を確実に起動
-  if (player && camera) {
-    updateDynamicCamera(player, camera, dt, dirLight, seaMesh, isCountdownActive);
-  }
-
-  if (renderer && scene && camera) renderer.render(scene, camera);
+            };
+        });
+    };
 }
 
-async function checkAndHandleAutoJoin() {
-  if (typeof window === 'undefined') return;
+// 2. マッチング待機室画面
+const btnWaitingStart = document.getElementById('btn-waiting-start');
+if (btnWaitingStart) {
+    btnWaitingStart.onclick = () => {
+        if (!NetworkManager.isHost) return;
+        initGame();
+    };
+}
 
-  try {
-    if (typeof EntryShield !== 'undefined' && EntryShield.show) {
-      EntryShield.show('CONNECTING...', 'ルームへ合流中...');
-    }
-
-    if (window.NetworkManager && typeof window.NetworkManager.init === 'function') {
-      await window.NetworkManager.init();
-    }
-
-    let targetRoomId = '';
-    if (window.AgentSDK && window.AgentSDK.room && typeof window.AgentSDK.room.getRoomId === 'function') {
-      const res = await window.AgentSDK.room.getRoomId();
-      targetRoomId = (res && typeof res.room_id === 'string')
-        ? res.room_id
-        : (res && res.data && typeof res.data.room_id === 'string' ? res.data.room_id : '');
-    }
-
-    if (targetRoomId && targetRoomId !== '') {
-      const shortId = targetRoomId.length > 5 ? targetRoomId.slice(-5) : targetRoomId;
-      console.log(`[AutoJoin] DM招待リンクを検知: Room #${targetRoomId} へ自動入室します`);
-
-      if (typeof EntryShield !== 'undefined' && EntryShield.update) {
-        EntryShield.update(`ROOM #${shortId}`, 'ルームへ合流中...');
-      }
-
-      // マルチプレイは自動スタート
-      launchGameEngine();
-
-      if (window.NetworkManager && typeof window.NetworkManager.joinRoom === 'function') {
-        const success = await window.NetworkManager.joinRoom(targetRoomId);
-        if (success) {
-          setTimeout(() => {
-            if (typeof EntryShield !== 'undefined' && EntryShield.hide) {
-              EntryShield.hide();
-            }
-          }, 350);
-        } else {
-          console.warn('[AutoJoin] 自動入室に失敗しました（満員・解散など）。ロビー画面へ戻します。');
-          if (typeof EntryShield !== 'undefined' && EntryShield.hide) {
-            EntryShield.hide();
-          }
-          if (typeof UIController !== 'undefined' && typeof UIController.showLobby === 'function') {
-            UIController.showLobby();
-          } else if (window.UIController && typeof window.UIController.showLobby === 'function') {
-            window.UIController.showLobby();
-          }
-        }
-      } else {
-        if (typeof EntryShield !== 'undefined' && EntryShield.hide) EntryShield.hide();
-        if (typeof UIController !== 'undefined' && typeof UIController.showLobby === 'function') UIController.showLobby();
-      }
-    } else {
-      console.log('[AutoJoin] 通常起動のためロビー待機');
-      if (typeof EntryShield !== 'undefined' && EntryShield.hide) {
-        EntryShield.hide();
-      }
-      if (typeof UIController !== 'undefined' && typeof UIController.showLobby === 'function') {
+const btnWaitingLeave = document.getElementById('btn-waiting-leave');
+if (btnWaitingLeave) {
+    btnWaitingLeave.onclick = async () => {
+        await NetworkManager.exitRoom();
         UIController.showLobby();
-      } else if (window.UIController && typeof window.UIController.showLobby === 'function') {
-        window.UIController.showLobby();
-      }
-    }
-  } catch (err) {
-    console.warn('[AutoJoin] 自動入室判定エラー:', err);
-    if (typeof EntryShield !== 'undefined' && EntryShield.hide) {
-      EntryShield.hide();
-    }
-    if (typeof UIController !== 'undefined' && typeof UIController.showLobby === 'function') {
-      UIController.showLobby();
-    } else if (window.UIController && typeof window.UIController.showLobby === 'function') {
-      window.UIController.showLobby();
-    }
-  }
+    };
 }
 
-export function bootGame() {
-  if (window._gameEngineBooted) return;
-  window._gameEngineBooted = true;
-  try {
-    const appContainer = document.getElementById('app-container') || document.body;
-    if (!document.getElementById('canvas-container')) {
-      mountAllUI(appContainer);
-    }
+// 3. インゲーム・カスタム着せ替え
+Menu.init((face, color) => {
+    player.face = face;
+    player.color = color;
+    Danmaku.push('システム', 'アバターを変更しました', '#ffdd00', true);
+});
 
-    if (typeof EntryShield !== 'undefined' && EntryShield.show) {
-      EntryShield.show('CONNECTING...', 'ルームへ合流中...');
-    }
-
-    initThree();
-    animate(performance.now());
-
-    checkAndHandleAutoJoin();
-  } catch (err) {
-    console.error("Game boot failed:", err);
-  }
+// 4. サウンド切替
+const soundBtn = document.getElementById('btn-sound');
+if (soundBtn) {
+    soundBtn.onclick = (e) => {
+        e.stopPropagation();
+        const isMuted = Sound.toggleMute();
+        soundBtn.classList.toggle('sound-on', !isMuted);
+        const iconOff = document.getElementById('icon-sound-off');
+        const iconOn = document.getElementById('icon-sound-on');
+        if (iconOff) iconOff.style.display = isMuted ? 'block' : 'none';
+        if (iconOn) iconOn.style.display = isMuted ? 'none' : 'block';
+    };
 }
 
-if (document.readyState === 'complete' || document.readyState === 'interactive') {
-  bootGame();
-} else {
-  document.addEventListener('DOMContentLoaded', bootGame);
-  window.addEventListener('load', bootGame);
+// 5. リザルト画面
+const btnRetry = document.getElementById('btn-retry');
+if (btnRetry) {
+    btnRetry.onclick = () => {
+        if (NetworkManager.isMultiplayerActive) {
+            UIController.showWaitingRoom(NetworkManager.currentRoomId);
+        } else {
+            initGame();
+        }
+    };
 }
+
+const btnSubmit = document.getElementById('btn-submit-score');
+if (btnSubmit) {
+    btnSubmit.onclick = () => {
+        try {
+            if (window.parent) {
+                window.parent.postMessage({
+                    type: 'gameOver',
+                    score: Math.floor(player.score)
+                }, '*');
+                Danmaku.push('システム', '得点を送信しました！', '#34d399', true);
+            }
+        } catch (err) {
+            console.warn('Score submission error:', err);
+        }
+    };
+}
+
+// ゲームオーバー処理
+function handleGameOver() {
+    gameState = 'gameover';
+    Sound.stopBoostSound();
+    Sound.playCrash();
+
+    const overScreen = document.getElementById('over-screen');
+    if (!overScreen) return;
+
+    const rank = sortedSnakes.filter(s => !s.isDead).findIndex(s => s === player) + 1 || sortedSnakes.length;
+    const duration = Math.floor((Date.now() - gameStartTime) / 1000);
+
+    document.getElementById('res-rank').innerText = `${rank} 位`;
+    document.getElementById('res-score').innerText = Math.floor(player.score);
+    document.getElementById('res-kills').innerText = player.kills;
+    document.getElementById('res-time').innerText = `${duration} 秒`;
+    document.getElementById('res-size').innerText = Math.floor(player.maxSize);
+
+    overScreen.style.display = 'flex';
+}
+
+// --- DM招待リンク自動合流チェック ---
+async function checkAutoJoinLink() {
+    try {
+        await NetworkManager.init();
+        UIController.refreshLobbyGreeting();
+
+        if (window.AgentSDK && window.AgentSDK.room && typeof window.AgentSDK.room.getRoomId === 'function') {
+            const res = await window.AgentSDK.room.getRoomId();
+            const targetRoomId = (res && typeof res.room_id === 'string')
+                ? res.room_id
+                : (res && res.data && typeof res.data.room_id === 'string' ? res.data.room_id : '');
+
+            if (targetRoomId && targetRoomId !== '') {
+                console.log(`[AutoJoin] DM招待リンク検知: Room #${targetRoomId} へ自動合流開始`);
+                const success = await NetworkManager.joinRoom(targetRoomId);
+                if (success) {
+                    UIController.showWaitingRoom(targetRoomId);
+                    return;
+                }
+            }
+        }
+    } catch (err) {
+        console.warn('[AutoJoin] 自動合流エラー:', err);
+    }
+    UIController.showLobby();
+}
+
+// --- メインゲームループ ---
+function gameLoop() {
+    requestAnimationFrame(gameLoop);
+    frameCount++;
+
+    if (gameState === 'playing') {
+        // 1. 自機物理更新
+        let inputAngle = null;
+        if (input.active && (input.x !== 0 || input.y !== 0)) {
+            inputAngle = Math.atan2(input.y, input.x);
+        }
+        player.updatePhysics(inputAngle, input.boost);
+
+        // 2. リモートスネークの滑らかな線形補間（推測航法）
+        remoteSnakes.forEach(remote => {
+            if (remote.isDead) return;
+            if (remote.targetNetX !== undefined && remote.targetNetY !== undefined) {
+                const distSq = (remote.targetNetX - remote.x) ** 2 + (remote.targetNetY - remote.y) ** 2;
+                if (distSq > 160000) {
+                    remote.x = remote.targetNetX;
+                    remote.y = remote.targetNetY;
+                } else {
+                    remote.x += (remote.targetNetX - remote.x) * 0.25;
+                    remote.y += (remote.targetNetY - remote.y) * 0.25;
+                }
+            }
+            remote.updatePhysics(remote.targetAngle, remote.isBoosting);
+        });
+
+        // 3. AI更新（Host-Authoritative: ホストまたはソロのみ実行）
+        if (!NetworkManager.isMultiplayerActive || NetworkManager.isHost) {
+            aiManager.update(player, allSnakes, frameCount);
+        }
+
+        // 4. 視界カリング計算
+        const viewRange = (canvas.width / cameraScale) * 1.5;
+        for (let i = 0; i < allSnakes.length; i++) {
+            const s = allSnakes[i];
+            if (s === player) continue;
+            const dist = Math.hypot(s.x - player.x, s.y - player.y);
+            s.isVisible = dist < viewRange;
+        }
+
+        // 5. 動的チャンク餌生成 ＆ パーティクル更新
+        world.updateChunks(player.x, player.y, viewRange);
+        world.updateParticles();
+
+        // 6. 餌捕食判定
+        for (let i = 0; i < allSnakes.length; i++) {
+            const s = allSnakes[i];
+            if (s.isDead || !s.isVisible) continue;
+            world.checkFoodConsumption(s, (eater, food) => {
+                if (eater.isPlayer) {
+                    if (food.isBig) Sound.playEatBig();
+                    else Sound.playEatSmall();
+                }
+            });
+        }
+
+        // 7. 空間ハッシュ衝突判定
+        collisionEngine.registerBodies(allSnakes);
+        collisionEngine.checkHeadCollisions(allSnakes, (killer, victim) => {
+            world.spawnDeathDrop(victim);
+            if (victim.isPlayer) {
+                handleGameOver();
+            } else if (killer.isPlayer) {
+                Sound.playCrash();
+                Danmaku.push('撃破！', `${victim.name} を倒した！ (+150)`, '#ff3366');
+            }
+        });
+
+        // 8. 定期ソート ＆ ランキングHUD更新（10フレーム周期）
+        if (frameCount % 10 === 0) {
+            sortedSnakes = [...allSnakes].sort((a, b) => b.score - a.score);
+            const myRank = sortedSnakes.filter(s => !s.isDead).findIndex(s => s === player) + 1;
+            const totalAlive = sortedSnakes.filter(s => !s.isDead).length;
+            hud.updateStats(myRank || 1, totalAlive, player.score);
+
+            const listEl = document.getElementById('leaderboard-list');
+            if (listEl && listEl.parentElement.style.display !== 'none') {
+                const topList = sortedSnakes.filter(s => !s.isDead).slice(0, 8);
+                listEl.innerHTML = topList.map((s, idx) => `
+                    <div style="display:flex; justify-content:space-between; color:${s === player ? '#ffdd00' : '#ffffff'}; font-weight:${s === player ? 'bold' : 'normal'};">
+                        <span>${idx + 1}. ${s.name}</span>
+                        <span>${Math.floor(s.score)}</span>
+                    </div>
+                `).join('');
+            }
+        }
+    }
+
+    // カメラズーム計算
+    const baseTargetScale = 60.0 / (60.0 + (player.size - 12) * 0.85);
+    const finalTargetScale = baseTargetScale * input.zoomMultiplier;
+    cameraScale += (finalTargetScale - cameraScale) * 0.05;
+
+    // --- 描画処理 ---
+    ctx.fillStyle = '#0b051a';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    if (gameState === 'playing' || gameState === 'gameover') {
+        ctx.save();
+        ctx.translate(canvas.width / 2, canvas.height / 2);
+        ctx.scale(cameraScale, cameraScale);
+        ctx.translate(-player.x, -player.y);
+
+        const viewW = canvas.width / cameraScale;
+        const viewH = canvas.height / cameraScale;
+        const cameraLeft = player.x - viewW / 2;
+        const cameraTop = player.y - viewH / 2;
+
+        // 宇宙グリッド線
+        const step = 200;
+        const startX = Math.floor(cameraLeft / step) * step;
+        const endX = startX + viewW + step * 2;
+        const startY = Math.floor(cameraTop / step) * step;
+        const endY = startY + viewH + step * 2;
+
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        for (let x = startX; x < endX; x += step) {
+            ctx.moveTo(x, startY); ctx.lineTo(x, endY);
+        }
+        for (let y = startY; y < endY; y += step) {
+            ctx.moveTo(startX, y); ctx.lineTo(endX, y);
+        }
+        ctx.stroke();
+
+        // 宇宙外壁境界線
+        ctx.strokeStyle = '#ff0055';
+        ctx.lineWidth = 8;
+        ctx.strokeRect(0, 0, MAP_SIZE, MAP_SIZE);
+
+        // 餌 ＆ パーティクル描画
+        world.draw(ctx, cameraLeft, cameraTop, viewW, viewH, frameCount);
+
+        // スネーク描画
+        for (let i = sortedSnakes.length - 1; i >= 0; i--) {
+            const s = sortedSnakes[i];
+            if (s === player || s.isVisible) {
+                s.draw(ctx, frameCount, cameraScale);
+            }
+        }
+
+        ctx.restore();
+
+        // ミニマップ直接描画
+        const safeTop = PlatformDetector.inGravity ? SAFE_INSET_TOP_GRAVITY : SAFE_INSET_TOP_WEB;
+        hud.drawRadar(ctx, canvas.width, safeTop, player, sortedSnakes, MAP_SIZE);
+    }
+}
+
+// 起動シーケンス開始
+checkAutoJoinLink();
+requestAnimationFrame(gameLoop);
